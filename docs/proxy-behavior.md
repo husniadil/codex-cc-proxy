@@ -150,6 +150,14 @@ optional ceiling the operator sets. The client cannot choose that ceiling: it
 does not know whose quota it is spending, and effort is the largest lever on
 what a turn costs.
 
+Two ceilings apply, and the lower wins. The operator's is a cost decision. The
+model's comes from the catalog, which states the efforts each one accepts —
+they differ, and the client asked for a *tier*, so it cannot know that the model
+behind it stops at `xhigh` while another goes to `max`. Forwarding an effort the
+model does not support fails the turn for a reason the client could neither
+anticipate nor fix. A model whose efforts the catalog never listed caps nothing:
+unknown is not a limit.
+
 The ceiling caps and never raises. A request asking for less keeps its own
 choice, because capping a maximum is not a request to spend more. With no
 request effort at all the ceiling still applies — an operator who capped effort

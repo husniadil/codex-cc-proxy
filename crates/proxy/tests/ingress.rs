@@ -1610,3 +1610,123 @@ async fn an_unknown_window_does_not_refuse_anything() {
 
     assert_eq!(response.status(), 200, "an unknown window must not refuse");
 }
+
+/// §2.7 — effort is capped by what the model accepts, not only by the operator.
+///
+/// The client asks for a tier, not a model, so it cannot know that the model
+/// behind that tier stops at `xhigh` while another goes to `max`. Forwarding an
+/// effort the model does not support fails the turn for a reason the client
+/// could not have anticipated or fixed.
+#[tokio::test]
+async fn effort_is_capped_by_what_the_model_supports() {
+    let catalog = codex_cc_proxy::catalog::Catalog::parse(
+        r#"{"models":[{
+            "slug": "modest-model",
+            "context_window": 272000,
+            "supported_reasoning_levels": [
+                { "effort": "low" },
+                { "effort": "medium" },
+                { "effort": "high" }
+            ]
+        }]}"#,
+    )
+    .unwrap();
+
+    let upstream = ReplayServer::start(Behavior::Events(vec![
+        json!({ "type": "response.created", "response": { "id": "resp_1" } }),
+        completed(),
+    ]))
+    .await;
+
+    let state = AppState {
+        // No operator ceiling: the model's own limit is the only one.
+        effort_ceiling: None,
+        catalog: Arc::new(catalog),
+        transport: Arc::new(HttpTransport::new(upstream.url.clone())),
+        conduits: None,
+        models: Arc::new(vec![ModelMapping {
+            requested: "sonnet".to_owned(),
+            upstream: "modest-model".to_owned(),
+        }]),
+        recorder: None,
+        record_ingress: false,
+        sessions: Arc::new(codex_cc_proxy::session::SessionStore::new()),
+    };
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, router(state)).await;
+    });
+
+    let _ = reqwest::Client::new()
+        .post(format!("http://{addr}/v1/messages"))
+        .json(&json!({
+            "model": "sonnet",
+            "max_tokens": 32,
+            // More than this model offers.
+            "output_config": { "effort": "max" },
+            "messages": [{ "role": "user", "content": "hello" }],
+        }))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+
+    let sent = upstream.requests();
+    assert_eq!(
+        sent[0]["reasoning"]["effort"],
+        json!("high"),
+        "the request should have been capped to what the model accepts"
+    );
+}
+
+/// A model whose efforts the catalog never listed caps nothing. Unknown is not
+/// a limit, and inventing one would refuse effort the model may well support.
+#[tokio::test]
+async fn an_unlisted_model_does_not_cap_effort() {
+    let upstream = ReplayServer::start(Behavior::Events(vec![
+        json!({ "type": "response.created", "response": { "id": "resp_1" } }),
+        completed(),
+    ]))
+    .await;
+
+    let state = AppState {
+        effort_ceiling: None,
+        catalog: Arc::new(codex_cc_proxy::catalog::Catalog::fallback()),
+        transport: Arc::new(HttpTransport::new(upstream.url.clone())),
+        conduits: None,
+        models: Arc::new(vec![ModelMapping {
+            requested: "sonnet".to_owned(),
+            upstream: "gpt-5-codex".to_owned(),
+        }]),
+        recorder: None,
+        record_ingress: false,
+        sessions: Arc::new(codex_cc_proxy::session::SessionStore::new()),
+    };
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, router(state)).await;
+    });
+
+    let _ = reqwest::Client::new()
+        .post(format!("http://{addr}/v1/messages"))
+        .json(&json!({
+            "model": "sonnet",
+            "max_tokens": 32,
+            "output_config": { "effort": "max" },
+            "messages": [{ "role": "user", "content": "hello" }],
+        }))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+
+    assert_eq!(upstream.requests()[0]["reasoning"]["effort"], json!("max"));
+}

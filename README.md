@@ -77,6 +77,13 @@ haiku  = "gpt-5-codex-mini"
 fable  = "gpt-5-codex-mini"
 ```
 
+Both the model and the reasoning effort are chosen per request, not baked in.
+Claude Code sends its effort with every request and the proxy honours it; it
+also sends a model id, and any id the backend knows passes straight through. So
+`ANTHROPIC_DEFAULT_SONNET_MODEL=gpt-5.6-terra` takes effect on the next request
+with no restart, and the `effort` key above is a *ceiling* on what the client
+asks for rather than a fixed value.
+
 All four tiers are required and the daemon refuses to start without them.
 `WebFetch` runs on the haiku tier, so an unmapped haiku breaks it in a way that
 looks like something else entirely — refusing to start is the only failure that

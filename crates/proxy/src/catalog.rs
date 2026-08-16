@@ -33,6 +33,18 @@ pub struct Model {
 }
 
 impl Model {
+    /// The most this model will accept.
+    ///
+    /// Models differ: some stop at `xhigh` and some go to `max`. Sending one
+    /// more than it supports fails the turn, and the client cannot know which
+    /// model it is talking to — it asked for a tier.
+    pub fn highest_effort(&self) -> Option<codex_cc_proxy_core::responses::Effort> {
+        self.efforts
+            .iter()
+            .filter_map(|effort| codex_cc_proxy_core::responses::Effort::parse(effort))
+            .max()
+    }
+
     /// The window the guard actually enforces.
     pub fn effective_window(&self) -> Option<u64> {
         let window = self.context_window?;

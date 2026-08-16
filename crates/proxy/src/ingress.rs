@@ -152,11 +152,33 @@ async fn messages(
     let session = state.sessions.resolve(&probe.input);
     session.record_discovered(discovered_tool_names(&request));
 
+    // §2.7 — the ceiling is the operator's, capped again by what this model
+    // will actually accept.
+    //
+    // The client asks for a tier, not a model, so it cannot know that the model
+    // behind it stops at `xhigh` while another goes to `max`. Forwarding an
+    // effort the model does not support fails the turn for a reason the client
+    // could not have anticipated or fixed.
+    let model_ceiling = state
+        .models
+        .iter()
+        .find(|mapping| mapping.requested == request.model)
+        .map(|mapping| mapping.upstream.as_str())
+        .or(Some(request.model.as_str()))
+        .and_then(|model| state.catalog.get(model))
+        .and_then(crate::catalog::Model::highest_effort);
+
+    let effort_ceiling = match (state.effort_ceiling, model_ceiling) {
+        (Some(operator), Some(model)) => Some(operator.min(model)),
+        (Some(operator), None) => Some(operator),
+        (None, model) => model,
+    };
+
     let options = TranslateOptions {
         model: upstream_model,
         discovered_tools: session.discovered(),
         prompt_cache_key: Some(session.cache_key.clone()),
-        effort_ceiling: state.effort_ceiling,
+        effort_ceiling,
     };
     let mut translated = translate_request(&request, &options);
 
