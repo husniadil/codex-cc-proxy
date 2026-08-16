@@ -188,6 +188,7 @@ impl SessionStore {
         // when the daemon is idle and is exactly current when it is not.
         sessions.retain(|session| session.idle_for() < IDLE);
 
+        let session_key = self.next_key();
         let matched = Self::best_match(&sessions, input);
 
         if let Some(index) = matched {
@@ -199,7 +200,17 @@ impl SessionStore {
             return session;
         }
 
-        let session = Arc::new(Session::new(self.next_key()));
+        // Logged because a conversation splitting into two sessions is
+        // invisible otherwise, and it is the difference between an incremental
+        // session and one that uploads everything every turn.
+        tracing::debug!(
+            key = %session_key,
+            items = input.len(),
+            live = sessions.len().saturating_add(1),
+            "new conversation"
+        );
+
+        let session = Arc::new(Session::new(session_key));
         sessions.insert(0, Arc::clone(&session));
         sessions.truncate(CAPACITY);
         session

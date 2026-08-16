@@ -238,11 +238,10 @@ pending work.
   or retired while the live fetch is unavailable. Its entries carry no context
   window, so the window guard does not fire for a model the fallback named.
 
-- **Three request shapes have no upstream precedent** and are derived from the
-  public API rather than observed in use: `input_file` for documents, a
-  `tool_choice` other than `auto`, and `url_citation` annotations as the source
-  of web-search results. Each fails loudly rather than silently if this backend
-  rejects it, and each is a question in `roadmap.md` §L.
+- **`input_file` has never been exercised.** Claude Code rasterises PDFs into
+  image blocks, so documents reach the model through the image path. The
+  `document` translation exists for a client that sends one; whether this
+  backend accepts `input_file` is still unknown.
 
 - **A web search that produced no citations reports the pages the model opened**,
   which carry a URL but no title. That is worse than a real citation and better

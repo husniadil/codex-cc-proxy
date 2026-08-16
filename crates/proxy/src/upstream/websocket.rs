@@ -268,6 +268,7 @@ pub fn plan_upload<'a>(
 ) -> Upload<'a> {
     // A delta is only meaningful as a continuation of a specific response.
     let Some(response_id) = previous_response_id else {
+        tracing::debug!("full: nothing to continue");
         return Upload::Full;
     };
 
@@ -275,9 +276,11 @@ pub fn plan_upload<'a>(
     // different model is a different request, and sending only the new items
     // would attach them to the wrong context.
     let Some(previous) = previous_request else {
+        tracing::debug!("full: no previous request");
         return Upload::Full;
     };
     if !non_input_fields_match(previous, request) {
+        tracing::debug!("full: a non-input field changed");
         return Upload::Full;
     }
 
@@ -292,7 +295,10 @@ pub fn plan_upload<'a>(
             items,
             previous_response_id: response_id.to_owned(),
         },
-        codex_cc_proxy_core::session::Plan::Full => Upload::Full,
+        codex_cc_proxy_core::session::Plan::Full => {
+            tracing::debug!("full: the input did not continue the baseline");
+            Upload::Full
+        }
     }
 }
 

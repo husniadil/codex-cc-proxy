@@ -73,9 +73,14 @@ and are not prefetched; they resolve only if the backend can reach them.
 
 `input_file` is the one part in this table with no counterpart in the upstream
 client, which has no document representation at all. It is the public API's
-shape, it is the only candidate that could carry a PDF, and whether this backend
-accepts it is open — roadmap §L. It fails loudly if not: a rejected part is a
-request error, not a silently dropped file.
+shape and the only candidate that could carry a document.
+
+**Claude Code does not use it.** Measured: asked to read a PDF, the client
+rasterises it and sends `image` blocks, so a PDF reaches the model through the
+image path — which is the shape the upstream client does exercise. The document
+path exists for a client that sends `document` blocks, and whether this backend
+accepts `input_file` remains untested because nothing has yet sent one. It fails
+loudly if not: a rejected part is a request error, not a silently dropped file.
 
 Assistant content is `output_text` only. An attachment appearing in an assistant
 message is dropped rather than converted.
