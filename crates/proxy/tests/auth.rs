@@ -743,3 +743,34 @@ fn a_callback_without_a_code_is_an_error() {
     assert!(login::parse_callback("state=only").is_err());
     assert!(login::parse_callback("").is_err());
 }
+
+/// The authorization request asks for exactly what the proxy uses.
+///
+/// An unused scope is not untidy, it is fatal: the authorization server refuses
+/// the entire request when a client asks for a scope it is not allowed, and the
+/// user cannot log in at all. Connector scopes in particular are not ours to
+/// ask for — this proxy never invokes a connector.
+#[test]
+fn the_authorization_request_asks_for_no_scope_it_does_not_use() {
+    let authorization = flow::begin(1455);
+
+    for required in ["openid", "profile", "email", "offline_access"] {
+        assert!(
+            flow::SCOPE.split(' ').any(|scope| scope == required),
+            "{required} is needed and missing"
+        );
+    }
+
+    assert!(
+        !flow::SCOPE.contains("connectors"),
+        "connector scopes are refused for this client: {}",
+        flow::SCOPE
+    );
+    // And nothing else has crept in.
+    assert_eq!(flow::SCOPE.split(' ').count(), 4);
+    assert!(
+        authorization
+            .url
+            .contains("scope=openid%20profile%20email%20offline_access&")
+    );
+}

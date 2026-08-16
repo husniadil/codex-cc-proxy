@@ -223,7 +223,7 @@ method, so whoever has quota can close it in one sitting.
 
 | Question | Method |
 |---|---|
-| Does the login flow complete against the real authorization server? | `login`, then `status` |
+| Does the login flow complete against the real authorization server? | `login`, then `status` — **partly answered**: the authorization request is reached and validated. It was refused for requesting connector scopes this client is not allowed; the scope is now the minimum the proxy uses. Whether the exchange and refresh then complete is still open. |
 | Does a refresh survive expiry without invalidating the family? | Force expiry, refresh, confirm the prior token family still works |
 | Does the backend accept the request shape — headers, `instructions`, tools? | One minimal request; capture with `record upstream` |
 | Does it reject system and developer roles inside `input`, as assumed? | Deliberately send one; record the error |

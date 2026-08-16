@@ -18,8 +18,17 @@ pub const CLIENT_ID: &str = "app_EMoamEEZ73f0CkXaXp7hrann";
 /// The scopes requested at login. Sent here and nowhere else: including
 /// `scope` on a refresh re-scopes the grant and invalidates sibling
 /// refresh-token families (§8).
-pub const SCOPE: &str =
-    "openid profile email offline_access api.connectors.read api.connectors.invoke";
+///
+/// Exactly what this proxy uses and nothing more. `openid`, `profile` and
+/// `email` produce the id token the account id is read from; `offline_access`
+/// produces the refresh token without which every session would need a fresh
+/// login.
+///
+/// Connector scopes are deliberately absent. This proxy never invokes a
+/// connector, and the authorization server refuses the whole request when a
+/// client asks for a scope it is not allowed — so an unused scope is not merely
+/// untidy, it is the difference between logging in and not.
+pub const SCOPE: &str = "openid profile email offline_access";
 
 /// The loopback port the authorization server will redirect to. Fixed, because
 /// the redirect URI has to match one the server already accepts.
