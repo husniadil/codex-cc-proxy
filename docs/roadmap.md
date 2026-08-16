@@ -223,7 +223,7 @@ method, so whoever has quota can close it in one sitting.
 
 | Question | Method |
 |---|---|
-| Does the login flow complete against the real authorization server? | `login`, then `status` |
+| ~~Does the login flow complete against the real authorization server?~~ | **Answered.** It completes: the authorization request is accepted, the code exchange succeeds, and the account id is read from the id token. |
 | May this client request connector scopes? | Unknown, and unasked: the proxy requests only what it uses. A refusal once suggested otherwise but was a truncated URL. |
 | Does a refresh survive expiry without invalidating the family? | Force expiry, refresh, confirm the prior token family still works |
 | Does the backend accept the request shape — headers, `instructions`, tools? | One minimal request; capture with `record upstream` |

@@ -76,25 +76,11 @@ async fn login() -> Result<()> {
     );
 
     let credentials = codex_cc_proxy::auth::login::run(store, |url| {
+        // Printed as well as opened. An environment with no browser — a remote
+        // shell, a container — still needs a way through, and one line of URL
+        // is less in the way than an explanation of where to find it.
+        println!("Open this URL to authorize:\n\n{url}\n");
         let _ = open_in_browser(url);
-
-        // Also written to a file, and the path is what gets offered first.
-        //
-        // The URL is several hundred characters and, when a browser does not
-        // open, has to be moved by hand. A partial copy fails in a way that
-        // reads like a server refusal — the error names a mangled scope and
-        // sends you auditing your scope list rather than your clipboard. A
-        // short path is copied correctly.
-        let path = std::env::temp_dir().join("codex-cc-proxy-login-url.txt");
-        match std::fs::write(&path, format!("{url}\n")) {
-            Ok(()) => println!(
-                "A browser should have opened. If not, the authorization URL is in:\n\n  \
-                 {}\n\nOpen it with:  open \"$(cat {})\"\n",
-                path.display(),
-                path.display()
-            ),
-            Err(_) => println!("Open this URL to authorize:\n\n{url}\n"),
-        }
     })
     .await?;
 
