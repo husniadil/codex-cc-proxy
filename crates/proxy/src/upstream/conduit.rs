@@ -27,6 +27,9 @@ pub enum Sent {
 pub struct Conduit {
     websocket: Option<Arc<WebSocketTransport>>,
     http: Arc<HttpTransport>,
+    /// §4.1 — one connection, cached and reused. Opened lazily, and handed back
+    /// after each turn that ended cleanly.
+    connection: Arc<tokio::sync::Mutex<Option<crate::upstream::pool::PooledConnection>>>,
     /// Once a session falls back it stays fallen back for the rest of its life.
     ///
     /// Retrying the WebSocket every turn spends a failed handshake per turn to
@@ -40,6 +43,7 @@ impl Conduit {
         Self {
             websocket,
             http,
+            connection: Arc::new(tokio::sync::Mutex::new(None)),
             latched_to_http: AtomicBool::new(false),
         }
     }
@@ -77,8 +81,11 @@ impl Conduit {
                 Upload::Full => (request.clone(), None, Sent::Full),
             };
 
-            match websocket.open(&payload, previous).await {
-                Ok(connection) => return Ok((connection.into_events(), sent)),
+            match self
+                .send_over_websocket(websocket, &payload, previous)
+                .await
+            {
+                Ok(events) => return Ok((events, sent)),
                 Err(error) => {
                     // A policy close or a refused handshake is not a failed
                     // turn. The turn proceeds over HTTP, and this session does
@@ -92,5 +99,85 @@ impl Conduit {
         // HTTP is stateless: it always carries the whole conversation.
         let events = self.http.stream(request).await?;
         Ok((events, Sent::Full))
+    }
+
+    /// Send over the pooled connection, opening one if there is none.
+    async fn send_over_websocket(
+        &self,
+        websocket: &WebSocketTransport,
+        request: &ResponsesRequest,
+        previous_response_id: Option<String>,
+    ) -> Result<super::EventStream, ProxyError> {
+        let pooled = self.connection.lock().await.take();
+
+        let mut connection = match pooled {
+            Some(connection) => connection,
+            None => websocket.connect().await?,
+        };
+
+        // A send that fails on a reused connection is retried once on a fresh
+        // one. The backend closes idle connections, and a turn must not be lost
+        // to a socket that expired between requests.
+        if connection
+            .send(request, previous_response_id.clone(), true)
+            .await
+            .is_err()
+        {
+            connection = websocket.connect().await?;
+            connection.send(request, previous_response_id, true).await?;
+        }
+
+        // The first event is read before the connection is handed over.
+        //
+        // A policy close accepts the handshake and *then* closes, so a socket
+        // that sent successfully is not yet a socket that works. Handing back
+        // an empty stream would render as a turn where the model said nothing
+        // — a silent failure standing exactly where the fallback belongs.
+        let Some(first) = connection.next_event().await else {
+            return Err(ProxyError::overloaded(
+                "the websocket closed before sending anything".to_owned(),
+            ));
+        };
+
+        Ok(super::pool::pump(
+            connection,
+            first,
+            Arc::clone(&self.connection),
+        ))
+    }
+
+    /// §4.1 — open the connection before the turn that will use it.
+    ///
+    /// A prewarm produces no response. Its only purpose is that the request
+    /// which follows reuses both the connection and the prior response id, so
+    /// the first turn of a session does not pay for the handshake.
+    pub async fn prewarm(&self, request: &ResponsesRequest) {
+        let Some(websocket) = &self.websocket else {
+            return;
+        };
+        if self.is_latched_to_http() {
+            return;
+        }
+        if self.connection.lock().await.is_some() {
+            return;
+        }
+
+        match websocket.connect().await {
+            Ok(mut connection) => {
+                if connection.send(request, None, false).await.is_ok() {
+                    *self.connection.lock().await = Some(connection);
+                }
+            }
+            Err(error) => {
+                // A prewarm that fails costs nothing and says nothing: the real
+                // request will try again and latch if it must.
+                tracing::debug!(%error, "prewarm did not open a connection");
+            }
+        }
+    }
+
+    /// Whether a connection is currently pooled.
+    pub async fn has_pooled_connection(&self) -> bool {
+        self.connection.lock().await.is_some()
     }
 }

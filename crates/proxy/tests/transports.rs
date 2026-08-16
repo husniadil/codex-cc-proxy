@@ -220,6 +220,7 @@ fn compression_round_trips() {
 struct WsServer {
     url: String,
     received: Arc<Mutex<Vec<String>>>,
+    connections: Arc<std::sync::atomic::AtomicUsize>,
 }
 
 /// What the server does when a client connects.
@@ -238,15 +239,19 @@ impl WsServer {
         let addr = listener.local_addr().unwrap();
         let received = Arc::new(Mutex::new(Vec::new()));
         let sink = Arc::clone(&received);
+        let connections = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counter = Arc::clone(&connections);
 
         tokio::spawn(async move {
             while let Ok((stream, _)) = listener.accept().await {
                 let events = events.clone();
                 let sink = Arc::clone(&sink);
+                let counter = Arc::clone(&counter);
                 tokio::spawn(async move {
                     let Ok(mut socket) = tokio_tungstenite::accept_async(stream).await else {
                         return;
                     };
+                    counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
 
                     if matches!(behavior, WsBehavior::PolicyClose) {
                         let _ = socket
@@ -258,8 +263,10 @@ impl WsServer {
                         return;
                     }
 
-                    // Record what was asked before answering.
-                    if let Some(Ok(message)) = socket.next().await {
+                    // Several turns arrive on one connection: §4.1 caches it per
+                    // session rather than per request, so a server that closed
+                    // after one frame would make reuse untestable.
+                    while let Some(Ok(message)) = socket.next().await {
                         let body = match message {
                             tokio_tungstenite::tungstenite::Message::Text(text) => text.to_string(),
                             tokio_tungstenite::tungstenite::Message::Binary(bytes) => {
@@ -268,21 +275,32 @@ impl WsServer {
                                     .and_then(|raw| String::from_utf8(raw).ok())
                                     .unwrap_or_default()
                             }
-                            _ => String::new(),
+                            tokio_tungstenite::tungstenite::Message::Close(_) => break,
+                            _ => continue,
                         };
+
+                        let prewarm = serde_json::from_str::<Value>(&body)
+                            .ok()
+                            .and_then(|frame| frame.get("generate").and_then(Value::as_bool))
+                            == Some(false);
+
                         if let Ok(mut received) = sink.lock() {
                             received.push(body);
                         }
-                    }
 
-                    for event in &events {
-                        let _ = socket
-                            .send(tokio_tungstenite::tungstenite::Message::Text(
-                                event.to_string().into(),
-                            ))
-                            .await;
+                        // A prewarm produces nothing at all.
+                        if prewarm {
+                            continue;
+                        }
+
+                        for event in &events {
+                            let _ = socket
+                                .send(tokio_tungstenite::tungstenite::Message::Text(
+                                    event.to_string().into(),
+                                ))
+                                .await;
+                        }
                     }
-                    let _ = socket.close(None).await;
                 });
             }
         });
@@ -290,7 +308,13 @@ impl WsServer {
         Self {
             url: format!("ws://{addr}"),
             received,
+            connections,
         }
+    }
+
+    /// How many sockets were accepted. One per session is the claim §4.1 makes.
+    fn connections(&self) -> usize {
+        self.connections.load(std::sync::atomic::Ordering::SeqCst)
     }
 
     fn received(&self) -> Vec<String> {
@@ -775,4 +799,118 @@ async fn a_delta_sends_less_than_the_whole_conversation() {
         delta * 4 < full,
         "the delta ({delta} bytes) is not meaningfully smaller than the full send ({full} bytes)"
     );
+}
+
+/// §4.1 — one connection, cached per session and reused.
+///
+/// Reuse removes per-turn TCP and TLS setup, which is significant in an agent
+/// loop issuing many sequential requests. A server that only ever sees one
+/// connection for many turns is what that claim means.
+#[tokio::test]
+async fn one_connection_serves_a_whole_session() {
+    let ws = WsServer::start(stream_events(), WsBehavior::Replay).await;
+    let addr = start_http().await;
+    let conduit = Conduit::new(
+        Arc::new(HttpTransport::new(format!("http://{addr}/responses"))),
+        Some(Arc::new(
+            WebSocketTransport::new(ws.url.clone()).with_compression(false),
+        )),
+    );
+
+    let (_, sends) = drive(&conduit, 8).await;
+
+    assert_eq!(ws.connections(), 1, "a connection was opened per turn");
+    assert_eq!(ws.received().len(), 8, "not every turn reached the socket");
+    assert!(
+        conduit.has_pooled_connection().await,
+        "the connection was not kept"
+    );
+    assert!(!conduit.is_latched_to_http());
+
+    // And reuse is what makes the delta path reachable at all: a delta
+    // continues a response the connection already knows about.
+    assert_eq!(sends.iter().filter(|sent| **sent == Sent::Delta).count(), 7);
+}
+
+/// §4.1 — a prewarm opens the connection before the turn that will use it, and
+/// produces no response of its own.
+#[tokio::test]
+async fn a_prewarm_opens_the_connection_without_producing_a_turn() {
+    let ws = WsServer::start(stream_events(), WsBehavior::Replay).await;
+    let addr = start_http().await;
+    let conduit = Conduit::new(
+        Arc::new(HttpTransport::new(format!("http://{addr}/responses"))),
+        Some(Arc::new(
+            WebSocketTransport::new(ws.url.clone()).with_compression(false),
+        )),
+    );
+
+    conduit
+        .prewarm(&request(items(json!([message("warm")]))))
+        .await;
+
+    assert!(conduit.has_pooled_connection().await);
+    let warmed: Value = serde_json::from_str(&ws.wait_for_request().await).unwrap();
+    assert_eq!(
+        warmed["generate"],
+        json!(false),
+        "a prewarm must not generate"
+    );
+
+    // The turn that follows reuses it rather than opening another.
+    let (events, _) = conduit
+        .send(
+            &request(items(json!([message("real")]))),
+            &Baseline::new(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    let payloads: Vec<String> = events
+        .filter_map(|event| async move { event.ok() })
+        .collect()
+        .await;
+
+    assert_eq!(payloads.len(), 3);
+    assert_eq!(
+        ws.connections(),
+        1,
+        "the prewarmed connection was not reused"
+    );
+}
+
+/// A prewarm on a session already latched to HTTP does nothing. Opening a
+/// socket that will never be used spends a handshake to no end.
+#[tokio::test]
+async fn a_latched_session_does_not_prewarm() {
+    let ws = WsServer::start(Vec::new(), WsBehavior::PolicyClose).await;
+    let addr = start_http().await;
+    let conduit = Conduit::new(
+        Arc::new(HttpTransport::new(format!("http://{addr}/responses"))),
+        Some(Arc::new(WebSocketTransport::new(ws.url.clone()))),
+    );
+
+    let _ = conduit
+        .send(
+            &request(items(json!([message("hi")]))),
+            &Baseline::new(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    assert!(conduit.is_latched_to_http());
+
+    let before = ws.connections();
+    conduit
+        .prewarm(&request(items(json!([message("warm")]))))
+        .await;
+
+    assert_eq!(
+        ws.connections(),
+        before,
+        "a latched session tried to prewarm"
+    );
+    assert!(!conduit.has_pooled_connection().await);
 }

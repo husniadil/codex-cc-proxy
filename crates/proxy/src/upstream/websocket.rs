@@ -117,12 +117,21 @@ impl WebSocketTransport {
         self
     }
 
-    /// Open a connection and send one request.
-    pub async fn open(
-        &self,
-        request: &ResponsesRequest,
-        previous_response_id: Option<String>,
-    ) -> Result<Connection, ProxyError> {
+    /// Open a connection, without sending anything.
+    ///
+    /// Separate from `open` because a pooled connection outlives the turn that
+    /// created it (§4.1), so opening and sending are no longer the same act.
+    pub async fn connect(&self) -> Result<super::pool::PooledConnection, ProxyError> {
+        let handshake = self.handshake()?;
+        let (stream, _) = tokio_tungstenite::connect_async(handshake)
+            .await
+            .map_err(|error| {
+                ProxyError::overloaded(format!("the websocket did not open: {error}"))
+            })?;
+        Ok(super::pool::PooledConnection::new(stream, self.compression))
+    }
+
+    fn handshake(&self) -> Result<tokio_tungstenite::tungstenite::http::Request<()>, ProxyError> {
         use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 
         let mut handshake = self
@@ -133,25 +142,34 @@ impl WebSocketTransport {
                 ProxyError::invalid_request(format!("could not build the handshake: {error}"))
             })?;
 
+        let headers = handshake.headers_mut();
+        headers.insert(
+            "openai-beta",
+            BETA_HEADER.parse().map_err(|_| {
+                ProxyError::invalid_request("the beta header is not a valid header value")
+            })?,
+        );
+        if let Some(token) = &self.access_token
+            && let Ok(value) = format!("Bearer {token}").parse()
         {
-            let headers = handshake.headers_mut();
-            headers.insert(
-                "openai-beta",
-                BETA_HEADER.parse().map_err(|_| {
-                    ProxyError::invalid_request("the beta header is not a valid header value")
-                })?,
-            );
-            if let Some(token) = &self.access_token
-                && let Ok(value) = format!("Bearer {token}").parse()
-            {
-                headers.insert(axum::http::header::AUTHORIZATION, value);
-            }
-            if let Some(account) = &self.account_id
-                && let Ok(value) = account.parse()
-            {
-                headers.insert("chatgpt-account-id", value);
-            }
+            headers.insert(axum::http::header::AUTHORIZATION, value);
         }
+        if let Some(account) = &self.account_id
+            && let Ok(value) = account.parse()
+        {
+            headers.insert("chatgpt-account-id", value);
+        }
+
+        Ok(handshake)
+    }
+
+    /// Open a connection and send one request.
+    pub async fn open(
+        &self,
+        request: &ResponsesRequest,
+        previous_response_id: Option<String>,
+    ) -> Result<Connection, ProxyError> {
+        let handshake = self.handshake()?;
 
         let (stream, _) = tokio_tungstenite::connect_async(handshake)
             .await
@@ -206,9 +224,46 @@ impl WebSocketTransport {
         let first = events.next().await;
 
         let events = match first {
-            Some(first) => futures::stream::once(async move { first })
-                .chain(events)
-                .boxed(),
+            Some(first) => {
+                let ended = first
+                    .as_ref()
+                    .map(|payload| super::pool::ends_turn(payload))
+                    .unwrap_or(false);
+                let rest = if ended {
+                    // The turn is already over. A connection that stays open is
+                    // not a turn that continues, and waiting on it hangs the
+                    // client forever.
+                    futures::stream::empty().boxed()
+                } else {
+                    // Stops *after* the terminating event, not before it: the
+                    // terminator is part of the turn, and a translator that
+                    // never sees it never closes the message.
+                    //
+                    // The check happens before the next poll, not after the
+                    // previous one. A combinator that decides by inspecting the
+                    // item it just received has to receive one more item to
+                    // stop — and on a connection that stays open past the turn,
+                    // that item never comes and the client waits forever.
+                    futures::stream::unfold((events, false), |(mut events, finished)| async move {
+                        if finished {
+                            return None;
+                        }
+                        let event = events.next().await?;
+                        let ends = event
+                            .as_ref()
+                            .map(|payload| super::pool::ends_turn(payload))
+                            .unwrap_or(false);
+                        Some((event, (events, ends)))
+                    })
+                    .boxed()
+                };
+
+                // The terminating event is part of the turn, so it is emitted
+                // before the stream ends.
+                futures::stream::once(async move { first })
+                    .chain(rest)
+                    .boxed()
+            }
             None => {
                 return Err(ProxyError::overloaded(
                     "the websocket closed before sending anything".to_owned(),

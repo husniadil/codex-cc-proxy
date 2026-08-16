@@ -8,6 +8,7 @@
 
 pub mod conduit;
 pub mod http;
+pub mod pool;
 pub mod websocket;
 
 use crate::error::ProxyError;
