@@ -34,6 +34,14 @@ refresh-token family. It does not read or write credentials belonging to any
 other tool. Families rotate, so sharing one means whichever client refreshes
 last invalidates the other.
 
+**Captures.** An empty upstream stream is recorded with the request that caused
+it (§5.4), and `record` writes exchanges deliberately. A capture is not a
+credential, but it is conversation content: the system prompt, the messages, and
+whatever the tools read, file contents included. Captures are written beside the
+configuration rather than in a shared temporary directory, created `0600` in a
+`0700` directory, and bounded — a repeating failure cannot fill a disk, and the
+oldest are pruned rather than kept forever.
+
 **No telemetry.** Nothing is collected. Nothing is transmitted anywhere but the
 backend the operator authenticated against.
 

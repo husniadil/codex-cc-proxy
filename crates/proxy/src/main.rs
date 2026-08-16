@@ -278,7 +278,7 @@ async fn run_with(args: RunArgs, record_ingress: bool) -> Result<()> {
         // for, because an empty stream is always a defect and is otherwise
         // invisible.
         recorder: Some(codex_cc_proxy::recorder::Recorder::new(
-            std::env::temp_dir().join("codex-cc-proxy-captures"),
+            codex_cc_proxy::recorder::Recorder::default_directory(),
         )),
         record_ingress,
         sessions: Arc::new(codex_cc_proxy::session::SessionStore::new()),

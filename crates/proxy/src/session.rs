@@ -17,6 +17,13 @@ use std::sync::Mutex;
 /// full sends, not to errors.
 const CAPACITY: usize = 64;
 
+/// How long a conversation may sit untouched before it is forgotten.
+///
+/// A session holds the whole conversation and the previous request, so an
+/// abandoned one keeps that alive indefinitely. The client never says a
+/// conversation has ended, so idleness is the only signal there is.
+const IDLE: std::time::Duration = std::time::Duration::from_secs(60 * 60);
+
 pub struct Session {
     pub baseline: Mutex<Baseline>,
     /// Whether a turn has ever completed on this conversation. Until one has,
@@ -37,6 +44,8 @@ pub struct Session {
     /// A stable key for the life of the conversation. Cache hit rate depends on
     /// it directly (§2.7).
     pub cache_key: String,
+    /// When this conversation was last used, for idle expiry.
+    last_used: Mutex<std::time::Instant>,
 }
 
 impl Session {
@@ -50,7 +59,21 @@ impl Session {
             estimator: CalibratedEstimator::new(),
             discovered_tools: Mutex::new(BTreeSet::new()),
             cache_key,
+            last_used: Mutex::new(std::time::Instant::now()),
         }
+    }
+
+    fn touch(&self) {
+        if let Ok(mut last_used) = self.last_used.lock() {
+            *last_used = std::time::Instant::now();
+        }
+    }
+
+    fn idle_for(&self) -> std::time::Duration {
+        self.last_used
+            .lock()
+            .map(|last_used| last_used.elapsed())
+            .unwrap_or_default()
     }
 
     /// The conduit for this conversation, built once.
@@ -160,12 +183,18 @@ impl SessionStore {
             return Arc::new(Session::new(self.next_key()));
         };
 
+        // Forget what nobody is having. Done here rather than on a timer: the
+        // store is only ever consulted from this path, so a sweep costs nothing
+        // when the daemon is idle and is exactly current when it is not.
+        sessions.retain(|session| session.idle_for() < IDLE);
+
         let matched = Self::best_match(&sessions, input);
 
         if let Some(index) = matched {
             // Most recently used moves to the front, so eviction takes the
             // conversation nobody is having.
             let session = sessions.remove(index);
+            session.touch();
             sessions.insert(0, Arc::clone(&session));
             return session;
         }
@@ -218,6 +247,16 @@ impl SessionStore {
                     .unwrap_or(0)
             })
             .map(|(index, _)| index)
+    }
+
+    /// Drop conversations idle for longer than `limit`.
+    ///
+    /// Exposed so the sweep can be tested without waiting an hour; the daemon
+    /// sweeps on every resolve.
+    pub fn forget_idle_for_test(&self, limit: std::time::Duration) {
+        if let Ok(mut sessions) = self.sessions.lock() {
+            sessions.retain(|session| session.idle_for() < limit);
+        }
     }
 
     pub fn len(&self) -> usize {

@@ -110,6 +110,10 @@ costs anything:
 Both write to the same fixture format, so a test replays either without knowing
 which mode produced it.
 
+Captures are written beside the configuration, `0600`, and the most recent
+twenty are kept. They hold conversation content — the system prompt, the
+messages, and whatever the tools read.
+
 Logging is controlled by `RUST_LOG`. Credentials never appear at any level.
 
 ### 2.1 `env`

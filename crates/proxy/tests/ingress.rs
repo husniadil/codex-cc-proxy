@@ -1874,3 +1874,125 @@ async fn a_small_body_is_not_compressed() {
     // And it still arrives as readable JSON.
     assert_eq!(upstream.requests()[0]["model"], json!("gpt-5-codex"));
 }
+
+/// A capture is conversation content, and is written as such.
+///
+/// It holds the system prompt, the messages, and whatever the tools read — file
+/// contents included. Written into a shared temporary directory at 0644, as it
+/// was, every local process could read the user's work.
+#[cfg(unix)]
+#[tokio::test]
+async fn captures_are_private_and_bounded() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = tempfile::tempdir().unwrap();
+    let recorder = codex_cc_proxy::recorder::Recorder::new(dir.path().join("captures"));
+
+    let request = json!({ "model": "m", "messages": [{ "role": "user", "content": "secret" }] });
+
+    let first = recorder
+        .record(
+            codex_cc_proxy::recorder::Mode::Upstream,
+            &request,
+            Vec::new(),
+            "a note long enough to be meaningful for the corpus loader",
+        )
+        .expect("the capture should be written");
+
+    let mode = std::fs::metadata(&first).unwrap().permissions().mode();
+    assert_eq!(
+        mode & 0o777,
+        0o600,
+        "a capture must not be readable by others"
+    );
+
+    let dir_mode = std::fs::metadata(dir.path().join("captures"))
+        .unwrap()
+        .permissions()
+        .mode();
+    assert_eq!(
+        dir_mode & 0o077,
+        0,
+        "the directory must not be listable by others"
+    );
+
+    // A repeating failure must not fill a disk.
+    for _ in 0..40 {
+        recorder.record(
+            codex_cc_proxy::recorder::Mode::Upstream,
+            &request,
+            Vec::new(),
+            "a note long enough to be meaningful for the corpus loader",
+        );
+    }
+
+    let kept = std::fs::read_dir(dir.path().join("captures"))
+        .unwrap()
+        .filter_map(Result::ok)
+        .count();
+    assert!(
+        kept <= 20,
+        "{kept} captures kept; the directory is unbounded"
+    );
+
+    // And what survives is the most recent, not the first.
+    assert!(
+        !first.exists(),
+        "the oldest capture should have been pruned"
+    );
+}
+
+/// §3.2 — a conversation nobody is having is forgotten.
+///
+/// A session holds the whole conversation and the previous request, so an
+/// abandoned one keeps that alive indefinitely. The client never says a
+/// conversation has ended, so idleness is the only signal there is.
+#[test]
+fn an_idle_conversation_is_forgotten() {
+    use codex_cc_proxy::session::SessionStore;
+
+    let store = SessionStore::new();
+    let input = input_of(&json!({
+        "model": "claude-sonnet-4",
+        "messages": [{ "role": "user", "content": "hello" }],
+    }));
+
+    let session = store.resolve(&input);
+    session.advance(&input, &[]);
+    assert_eq!(store.len(), 1);
+
+    // Pretend the conversation has been untouched for longer than the limit.
+    store.forget_idle_for_test(std::time::Duration::ZERO);
+    assert_eq!(
+        store.len(),
+        0,
+        "an idle conversation should have been dropped"
+    );
+
+    // And the store still works afterwards.
+    let fresh = store.resolve(&input);
+    assert_ne!(
+        fresh.cache_key, session.cache_key,
+        "a new conversation, not the old one"
+    );
+}
+
+/// An active conversation is never dropped for being idle.
+#[test]
+fn an_active_conversation_survives_the_sweep() {
+    use codex_cc_proxy::session::SessionStore;
+
+    let store = SessionStore::new();
+    let input = input_of(&json!({
+        "model": "claude-sonnet-4",
+        "messages": [{ "role": "user", "content": "hello" }],
+    }));
+
+    let session = store.resolve(&input);
+    session.advance(&input, &[]);
+
+    store.forget_idle_for_test(std::time::Duration::from_secs(3600));
+
+    assert_eq!(store.len(), 1);
+    assert_eq!(store.resolve(&input).cache_key, session.cache_key);
+}
