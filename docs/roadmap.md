@@ -225,6 +225,7 @@ method, so whoever has quota can close it in one sitting.
 | Does WebSocket connect, or close with a policy code? | Connect; record the outcome either way |
 | Does incremental upload produce the same conversation live as on replay? | Same session over both transports; diff the results |
 | Do the real capability probes pass? | `doctor` against the live backend |
+| Is the true input count linear in the estimator's raw figure, as the offline fit assumes? | Record counts across a growing session; fit and check the residuals |
 
 Until each is answered, the corresponding claim in `proxy-behavior.md` is
 **derived from the upstream's own protocol definitions, not confirmed against a

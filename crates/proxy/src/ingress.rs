@@ -4,6 +4,7 @@
 //! reaching the socket is already a local process running as the user.
 
 use crate::error::ProxyError;
+use crate::estimate::Estimator;
 use crate::upstream::Transport;
 use axum::Json;
 use axum::Router;
@@ -39,6 +40,9 @@ pub struct AppState {
     pub recorder: Option<crate::recorder::Recorder>,
     /// Whether to capture every request, not only the defective ones.
     pub record_ingress: bool,
+    /// Per-conversation state: calibration, discovered tools, and the baseline
+    /// the incremental path will use.
+    pub sessions: Arc<crate::session::SessionStore>,
 }
 
 #[derive(Debug, Clone)]
@@ -109,12 +113,23 @@ async fn messages(
         .find(|mapping| mapping.requested == request.model)
         .map(|mapping| mapping.upstream.clone());
 
+    // Translated once with no session knowledge, purely to derive the item
+    // sequence this conversation is identified by (§3.1).
+    let probe = translate_request(&request, &TranslateOptions::default());
+    let session = state.sessions.resolve(&probe.input);
+    session.record_discovered(discovered_tool_names(&request));
+
     let options = TranslateOptions {
         model: upstream_model,
-        discovered_tools: discovered_tool_names(&request),
-        prompt_cache_key: None,
+        discovered_tools: session.discovered(),
+        prompt_cache_key: Some(session.cache_key.clone()),
     };
     let translated = translate_request(&request, &options);
+
+    // The baseline advances before the reply arrives. What was sent is what the
+    // next turn must extend, and recording it later would leave a window in
+    // which a concurrent request sees an empty baseline and matches anything.
+    session.advance(&translated.input, &[]);
 
     // Ingress capture happens here, before anything is sent. It needs no
     // credentials because nothing upstream is involved yet.
@@ -137,12 +152,16 @@ async fn messages(
         Err(error) => return error.into_response(),
     };
 
+    // §6.2 — the estimate carried in `message_start`, corrected by everything
+    // this conversation has already learned.
+    let estimate = session.estimator.estimate(&request);
+
     let translator = ResponseTranslator::new(ResponseOptions {
         message_id: format!("msg_{}", uuid::Uuid::new_v4().simple()),
         // The client matches this against the model it asked for, not against
         // the upstream id it was mapped to.
         model: request.model.clone(),
-        estimated_input_tokens: crate::estimate::estimate_input_tokens(&request),
+        estimated_input_tokens: estimate,
     });
 
     let empty_stream_watch = state
@@ -150,7 +169,15 @@ async fn messages(
         .clone()
         .zip(serde_json::to_value(&request).ok());
 
-    sse_response(events, translator, empty_stream_watch)
+    sse_response(
+        events,
+        translator,
+        empty_stream_watch,
+        Calibration {
+            session: Arc::clone(&session),
+            estimate,
+        },
+    )
 }
 
 /// Turn upstream events into Anthropic frames on the wire.
@@ -162,6 +189,7 @@ fn sse_response(
     events: crate::upstream::EventStream,
     translator: ResponseTranslator,
     empty_stream_watch: Option<(crate::recorder::Recorder, Value)>,
+    calibration: Calibration,
 ) -> Response {
     let state = StreamState {
         translator,
@@ -169,6 +197,7 @@ fn sse_response(
         seen: Vec::new(),
         produced_content: false,
         watch: empty_stream_watch,
+        calibration,
     };
 
     let body = stream::unfold((events, state), |(mut events, mut state)| async move {
@@ -206,6 +235,7 @@ fn sse_response(
             None => {
                 let frames = state.translator.finish();
                 state.done = true;
+                state.calibrate();
                 state.record_if_empty();
                 if frames.is_empty() {
                     return None;
@@ -228,15 +258,50 @@ fn sse_response(
     response
 }
 
+/// What this turn needs in order to correct its own estimate once upstream
+/// reports the truth (§6.3).
+struct Calibration {
+    session: Arc<crate::session::Session>,
+    estimate: u64,
+}
+
 struct StreamState {
     translator: ResponseTranslator,
     done: bool,
     seen: Vec<Value>,
     produced_content: bool,
     watch: Option<(crate::recorder::Recorder, Value)>,
+    calibration: Calibration,
 }
 
 impl StreamState {
+    /// §6.3 — fold this turn's true input count back into the session.
+    ///
+    /// The count is taken from the upstream event rather than from the frames
+    /// emitted, because the frames carry the Anthropic conversion and the fit
+    /// is against what upstream actually charged.
+    fn calibrate(&self) {
+        let Some(usage) = self
+            .seen
+            .iter()
+            .rev()
+            .find_map(|event| event.pointer("/response/usage"))
+        else {
+            return;
+        };
+
+        let input = usage.get("input_tokens").and_then(Value::as_u64);
+        let Some(actual) = input else { return };
+        if actual == 0 {
+            return;
+        }
+
+        self.calibration
+            .session
+            .estimator
+            .observe(self.calibration.estimate, actual);
+    }
+
     /// §5.4 — a stream that completes having produced no content frames is
     /// recorded with its request and the upstream events that produced nothing.
     ///

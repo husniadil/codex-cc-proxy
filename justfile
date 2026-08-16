@@ -6,9 +6,10 @@ default: check
 # Everything CI enforces
 check: fmt-check lint test
 
-# Run the test suite
+# Run the test suite. All features, so the estimator comparison in
+# docs/proxy-behavior.md §6.3 is part of the gate rather than an aside.
 test:
-    cargo nextest run --locked --status-level fail --final-status-level fail --failure-output final --success-output never
+    cargo nextest run --locked --all-features --status-level fail --final-status-level fail --failure-output final --success-output never
 
 # Run one test filter, e.g. `just test-one incremental`
 test-one filter:

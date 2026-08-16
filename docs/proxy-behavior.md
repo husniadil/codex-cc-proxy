@@ -394,8 +394,20 @@ writing the true value there replaces the estimate rather than adding to it.
 ### 6.3 Calibration
 
 The estimator corrects itself against upstream. Each completed request yields a
-true input count for a prefix that was also estimated; their ratio is retained on
-the session and applied to later estimates.
+true input count for a request that was also estimated, and the pair is folded
+into a fit retained on the session.
+
+**The fit is a line, not a multiplier.** Part of the unmodelled cost scales with
+the conversation and part does not: the instructions wrapper is charged once
+however long the session runs. A single ratio cannot represent both. Fitting one
+anyway makes it converge from whichever regime it saw first — an early short
+request, where the fixed cost dominates, pulls the ratio high, and it then
+decays for the remainder of the session while every estimate reads over. Scale
+and offset are fitted together instead, by incremental least squares.
+
+Where the fit is underdetermined it is not invented. One observation, or several
+at the same size, cannot separate scale from offset; the estimator falls back to
+a plain ratio and extrapolates nothing.
 
 This absorbs what a tokenizer alone cannot. The upstream count includes framing
 the proxy does not model identically — the instructions blob, serialized tool
@@ -403,9 +415,23 @@ schemas, per-item overhead. A byte-exact tokenizer over structurally different
 inputs produces a number that is authoritatively wrong, which is worse than one
 that is approximate and self-correcting.
 
-The estimator sits behind a trait. A tokenizer-backed implementation exists behind
-a feature flag. Which one ships is settled by measuring both against recorded
-conversations with known upstream counts, not by assumption.
+**The measurement, and what it settles.** Both estimators were run over a
+growing multi-turn session against a modelled upstream count — text cost plus a
+per-item framing charge plus a fixed wrapper. Mean absolute error over the
+second half: **0.01% calibrated, 68% tokenizer**. The tokenizer is low by
+almost exactly the framing it cannot see, and no amount of exactness closes
+that, because the gap is not in the text.
+
+The calibrated estimator therefore ships and the tokenizer stays behind a
+feature flag, as a comparison instrument rather than a candidate.
+
+What the measurement does **not** settle is accuracy against this backend. The
+modelled count is linear in the same structure the raw estimate measures, so a
+linear fit can absorb it exactly; that the real relationship is equally
+tractable is not demonstrated here and belongs to §L. What is demonstrated is
+the mechanism: a multiplicative correction cannot absorb a fixed cost, a linear
+one can, and exactness over the wrong quantity loses to self-correction over
+roughly the right one.
 
 Before a session's first completed request the estimate is uncalibrated.
 

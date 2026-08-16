@@ -43,6 +43,7 @@ impl Harness {
             }]),
             recorder: recorder.clone(),
             record_ingress: recorder.is_some(),
+            sessions: Arc::new(codex_cc_proxy::session::SessionStore::new()),
         };
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -763,4 +764,158 @@ async fn a_capture_parses_as_a_corpus_fixture() {
         codex_cc_proxy_core::fixture::Provenance::Captured
     );
     assert!(!fixture.note.is_empty());
+}
+
+/// §6.3 — calibration reaches the live path. A second turn in the same
+/// conversation carries an estimate corrected by what the first turn learned.
+///
+/// Without this the estimator is rebuilt per request, calibration never
+/// accumulates, and §6.3 describes something the proxy does not do.
+#[tokio::test]
+async fn a_conversation_calibrates_across_turns() {
+    // Upstream charges far more than the raw estimate guesses, consistently.
+    let harness = Harness::start(Behavior::Events(vec![
+        json!({ "type": "response.created", "response": { "id": "resp_1" } }),
+        json!({ "type": "response.output_text.delta", "delta": "ok" }),
+        json!({
+            "type": "response.completed",
+            "response": {
+                "id": "resp_1",
+                "usage": {
+                    "input_tokens": 4000,
+                    "output_tokens": 2,
+                    "input_tokens_details": { "cached_tokens": 0 },
+                },
+            },
+        }),
+    ]))
+    .await;
+
+    let first_body = json!({
+        "model": "claude-sonnet-4",
+        "max_tokens": 512,
+        "system": "You are Claude Code.",
+        "messages": [{ "role": "user", "content": "opening turn" }],
+    });
+
+    let response = harness.post("/v1/messages", first_body.clone()).await;
+    let body = response.text().await.unwrap();
+    let first_estimate = payloads(&body)[0]["message"]["usage"]["input_tokens"]
+        .as_u64()
+        .unwrap();
+
+    // The same conversation, extended. It resolves to the same session, so the
+    // correction from the first turn applies.
+    let second_body = json!({
+        "model": "claude-sonnet-4",
+        "max_tokens": 512,
+        "system": "You are Claude Code.",
+        "messages": [
+            { "role": "user", "content": "opening turn" },
+            { "role": "assistant", "content": "ok" },
+            { "role": "user", "content": "second turn" },
+        ],
+    });
+
+    let response = harness.post("/v1/messages", second_body).await;
+    let body = response.text().await.unwrap();
+    let second_estimate = payloads(&body)[0]["message"]["usage"]["input_tokens"]
+        .as_u64()
+        .unwrap();
+
+    assert!(
+        second_estimate > first_estimate.saturating_mul(2),
+        "the second estimate ({second_estimate}) shows no correction from the first \
+         ({first_estimate}); calibration is not reaching the live path"
+    );
+}
+
+/// An unrelated conversation gets its own session, and does not inherit a
+/// correction fitted to a different one.
+#[tokio::test]
+async fn an_unrelated_conversation_starts_uncalibrated() {
+    let harness = Harness::start(Behavior::Events(vec![
+        json!({ "type": "response.created", "response": { "id": "resp_1" } }),
+        json!({ "type": "response.output_text.delta", "delta": "ok" }),
+        json!({
+            "type": "response.completed",
+            "response": {
+                "id": "resp_1",
+                "usage": {
+                    "input_tokens": 9000,
+                    "output_tokens": 2,
+                    "input_tokens_details": { "cached_tokens": 0 },
+                },
+            },
+        }),
+    ]))
+    .await;
+
+    let one = json!({
+        "model": "claude-sonnet-4",
+        "max_tokens": 512,
+        "messages": [{ "role": "user", "content": "first conversation" }],
+    });
+    let _ = harness
+        .post("/v1/messages", one)
+        .await
+        .text()
+        .await
+        .unwrap();
+
+    let two = json!({
+        "model": "claude-sonnet-4",
+        "max_tokens": 512,
+        "messages": [{ "role": "user", "content": "an entirely separate conversation" }],
+    });
+    let body = harness
+        .post("/v1/messages", two)
+        .await
+        .text()
+        .await
+        .unwrap();
+    let estimate = payloads(&body)[0]["message"]["usage"]["input_tokens"]
+        .as_u64()
+        .unwrap();
+
+    assert!(
+        estimate < 1_000,
+        "an unrelated conversation inherited a correction: {estimate}"
+    );
+}
+
+/// The cache key is stable for the life of a conversation. Cache hit rate
+/// depends on it directly, so a key that changes per turn is the most expensive
+/// possible bug that still works.
+#[tokio::test]
+async fn the_cache_key_is_stable_across_a_conversation() {
+    let harness = Harness::start(Behavior::Events(vec![
+        json!({ "type": "response.created", "response": { "id": "resp_1" } }),
+        completed(),
+    ]))
+    .await;
+
+    let first = json!({
+        "model": "claude-sonnet-4",
+        "max_tokens": 512,
+        "messages": [{ "role": "user", "content": "opening" }],
+    });
+    let _ = harness.post("/v1/messages", first).await.text().await;
+
+    let second = json!({
+        "model": "claude-sonnet-4",
+        "max_tokens": 512,
+        "messages": [
+            { "role": "user", "content": "opening" },
+            { "role": "assistant", "content": "reply" },
+            { "role": "user", "content": "next" },
+        ],
+    });
+    let _ = harness.post("/v1/messages", second).await.text().await;
+
+    let sent = harness.upstream.requests();
+    assert_eq!(
+        sent[0]["prompt_cache_key"], sent[1]["prompt_cache_key"],
+        "the cache key changed between turns of one conversation"
+    );
 }

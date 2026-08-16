@@ -1,0 +1,191 @@
+//! `docs/proxy-behavior.md` §3.1 and §9.4 — session identity and delta
+//! invariants.
+//!
+//! These are the invariants the transports are held to. Incremental upload is
+//! the one subsystem whose bugs corrupt conversations instead of failing
+//! loudly, so each rule is stated here before any transport uses it.
+
+#![allow(clippy::expect_used, clippy::unwrap_used, clippy::indexing_slicing)]
+
+use codex_cc_proxy_core::responses::InputItem;
+use codex_cc_proxy_core::session::Baseline;
+use codex_cc_proxy_core::session::Plan;
+use codex_cc_proxy_core::session::delta;
+use codex_cc_proxy_core::session::extends;
+use pretty_assertions::assert_eq;
+use serde_json::json;
+
+fn items(values: serde_json::Value) -> Vec<InputItem> {
+    serde_json::from_value(values).expect("items should deserialize")
+}
+
+fn message(text: &str) -> serde_json::Value {
+    json!({
+        "type": "message",
+        "role": "user",
+        "content": [{ "type": "input_text", "text": text }],
+    })
+}
+
+/// A valid delta contains exactly the new items.
+#[test]
+fn a_delta_is_exactly_what_is_new() {
+    let baseline = items(json!([message("one"), message("two")]));
+    let candidate = items(json!([message("one"), message("two"), message("three")]));
+
+    let new_items = delta(&baseline, &candidate).expect("this extends the baseline");
+
+    assert_eq!(new_items.len(), 1);
+    assert_eq!(
+        serde_json::to_value(&new_items[0]).unwrap()["content"][0]["text"],
+        json!("three")
+    );
+}
+
+/// An unchanged conversation adds nothing, and that is a valid delta rather
+/// than a mismatch.
+#[test]
+fn an_unchanged_conversation_yields_an_empty_delta() {
+    let baseline = items(json!([message("one")]));
+    let candidate = items(json!([message("one")]));
+
+    assert_eq!(delta(&baseline, &candidate).map(<[_]>::len), Some(0));
+}
+
+/// A non-extending input forces a full send. This is the case that corrupts a
+/// conversation if it is got wrong, because the result still looks like a
+/// well-formed request.
+#[test]
+fn an_edited_history_is_not_an_extension() {
+    let baseline = items(json!([message("one"), message("two")]));
+    let candidate = items(json!([message("one"), message("EDITED"), message("three")]));
+
+    assert!(!extends(&baseline, &candidate));
+    assert_eq!(delta(&baseline, &candidate), None);
+}
+
+/// A conversation that lost a turn is not an extension either. Compaction and
+/// rewind both produce this.
+#[test]
+fn a_shortened_history_is_not_an_extension() {
+    let baseline = items(json!([message("one"), message("two"), message("three")]));
+    let candidate = items(json!([message("one"), message("two")]));
+
+    assert!(!extends(&baseline, &candidate));
+}
+
+/// Two conversations sharing an opening are indistinguishable until they
+/// diverge, and matching them is harmless: the shared prefix is identical, so
+/// the baseline is correct for both. What must not happen is a match on a
+/// *partial* prefix.
+#[test]
+fn a_shared_prefix_matches_until_it_diverges() {
+    let baseline = items(json!([message("shared opening")]));
+
+    let one = items(json!([message("shared opening"), message("branch A")]));
+    let two = items(json!([message("shared opening"), message("branch B")]));
+
+    assert!(extends(&baseline, &one));
+    assert!(extends(&baseline, &two));
+
+    // Once either has diverged, the other no longer extends it.
+    let after_a = items(json!([message("shared opening"), message("branch A")]));
+    assert!(!extends(&after_a, &two));
+}
+
+/// Server-assigned ids are ignored in the comparison. They are absent when the
+/// client replays the conversation, so comparing them would make every turn
+/// look like a divergence and defeat the delta entirely.
+#[test]
+fn server_assigned_ids_do_not_break_the_match() {
+    let baseline: Vec<InputItem> = items(json!([{
+        "type": "function_call",
+        "id": "fc_server_assigned",
+        "call_id": "call_1",
+        "name": "Read",
+        "arguments": "{}",
+    }]));
+
+    let candidate: Vec<InputItem> = items(json!([
+        { "type": "function_call", "call_id": "call_1", "name": "Read", "arguments": "{}" },
+        message("next"),
+    ]));
+
+    assert!(extends(&baseline, &candidate));
+    assert_eq!(delta(&baseline, &candidate).map(<[_]>::len), Some(1));
+}
+
+/// A difference that is not the id still counts. Ignoring ids must not become
+/// ignoring content.
+#[test]
+fn ignoring_ids_does_not_ignore_content() {
+    let baseline: Vec<InputItem> = items(json!([{
+        "type": "function_call",
+        "call_id": "call_1",
+        "name": "Read",
+        "arguments": "{\"path\":\"/a\"}",
+    }]));
+
+    let candidate: Vec<InputItem> = items(json!([{
+        "type": "function_call",
+        "call_id": "call_1",
+        "name": "Read",
+        "arguments": "{\"path\":\"/b\"}",
+    }]));
+
+    assert!(!extends(&baseline, &candidate));
+}
+
+/// Server-returned items are part of the baseline and are never resent.
+#[test]
+fn server_returned_items_are_never_resent() {
+    let mut baseline = Baseline::new();
+
+    let sent = items(json!([message("ask")]));
+    let returned = items(json!([{
+        "type": "function_call",
+        "call_id": "call_1",
+        "name": "Read",
+        "arguments": "{}",
+    }]));
+    baseline.advance(&sent, &returned);
+
+    // The next turn replays everything, including what the server produced.
+    let candidate = items(json!([
+        message("ask"),
+        { "type": "function_call", "call_id": "call_1", "name": "Read", "arguments": "{}" },
+        { "type": "function_call_output", "call_id": "call_1", "output": "contents" },
+    ]));
+
+    match baseline.plan(&candidate) {
+        Plan::Delta(new_items) => {
+            assert_eq!(new_items.len(), 1, "only the tool output is new");
+            assert_eq!(
+                serde_json::to_value(&new_items[0]).unwrap()["type"],
+                json!("function_call_output")
+            );
+        }
+        Plan::Full => panic!("this should have been a delta"),
+    }
+}
+
+/// An empty baseline extends into anything: the first turn of a session is a
+/// full send by definition.
+#[test]
+fn the_first_turn_is_a_full_send() {
+    let baseline = Baseline::new();
+    let candidate = items(json!([message("first")]));
+
+    assert_eq!(baseline.plan(&candidate), Plan::Delta(&candidate[..]));
+    assert!(baseline.is_empty());
+}
+
+/// A full send is always valid, whatever the baseline says.
+#[test]
+fn a_full_send_is_always_available() {
+    let mut baseline = Baseline::new();
+    baseline.advance(&items(json!([message("one")])), &[]);
+
+    let unrelated = items(json!([message("something else entirely")]));
+    assert_eq!(baseline.plan(&unrelated), Plan::Full);
+}

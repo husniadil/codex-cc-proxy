@@ -9,5 +9,6 @@
 pub mod anthropic;
 pub mod fixture;
 pub mod responses;
+pub mod session;
 pub mod sse;
 pub mod translate;

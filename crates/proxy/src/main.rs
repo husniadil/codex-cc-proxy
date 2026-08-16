@@ -186,6 +186,7 @@ async fn run_with(args: RunArgs, record_ingress: bool) -> Result<()> {
             std::env::temp_dir().join("codex-cc-proxy-captures"),
         )),
         record_ingress,
+        sessions: Arc::new(codex_cc_proxy::session::SessionStore::new()),
     };
 
     daemon::serve(listener, state).await?;

@@ -114,7 +114,7 @@ pub enum FunctionLiteral {
 }
 
 /// One item of conversation input.
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum InputItem {
     Message {
@@ -137,7 +137,7 @@ pub enum InputItem {
 /// A tool result. It collapses to a bare string when it is a single piece of
 /// text, and stays an array otherwise — which is what lets an image reach the
 /// model inside the output of the call that produced it.
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(untagged)]
 pub enum CallOutput {
     Text(String),
@@ -161,7 +161,7 @@ pub enum ItemRole {
     Assistant,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ContentPart {
     InputText {

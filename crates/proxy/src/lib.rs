@@ -15,4 +15,5 @@ pub mod estimate;
 pub mod ingress;
 pub mod recorder;
 pub mod render;
+pub mod session;
 pub mod upstream;
