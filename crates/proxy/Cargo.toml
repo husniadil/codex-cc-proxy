@@ -1,0 +1,34 @@
+[package]
+name = "codex-cc-proxy"
+description = "Run Claude Code against models served over a ChatGPT subscription"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "codex-cc-proxy"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+codex-cc-proxy-core.workspace = true
+
+anyhow.workspace = true
+clap.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[dev-dependencies]
+insta.workspace = true
+pretty_assertions.workspace = true
+rstest.workspace = true
+tempfile.workspace = true

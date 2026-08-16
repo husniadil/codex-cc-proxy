@@ -51,7 +51,8 @@ url = "2"
 uuid = { version = "1", features = ["v4"] }
 zstd = "0.13"
 
-# Optional token-counting backend, selected by feature flag. See SPEC.md §9.3.
+# Optional token-counting backend, selected by feature flag. See
+# docs/proxy-behavior.md §6.3.
 tiktoken-rs = "0.7"
 
 # Development
