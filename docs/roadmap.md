@@ -84,8 +84,12 @@ Three sources, in descending order of authority:
 
 **Done when** the corpus replays as tests without hand-editing, covers at least
 one exchange per capability in `proxy-behavior.md` §1, every fixture records
-which of the three sources it came from, and `record ingress` round-trips a real
-Claude Code turn.
+which of the three sources it came from, and a capture parses as a fixture with
+no hand-editing at all.
+
+`record ingress` needs the ingress server, so it arrives in phase 5 and its
+round trip is asserted there. Pointing a real client at the daemon is the one
+step nobody but the operator can take, and it needs no credentials.
 
 A fixture's provenance is part of the fixture. A derived one and a captured one
 carry different weight, and a reader must not have to guess which is which.
