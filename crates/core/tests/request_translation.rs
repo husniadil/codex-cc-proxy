@@ -269,6 +269,130 @@ fn tool_choice_maps(#[case] input: Value, #[case] expected: Value) {
     assert_eq!(out["tool_choice"], expected);
 }
 
+/// §2.2 — `tool_use` becomes `function_call`, with `input` serialized into the
+/// `arguments` string the backend expects.
+#[test]
+fn tool_use_becomes_a_function_call() {
+    let out = translate(json!({
+        "model": "gpt-5",
+        "messages": [
+            { "role": "user", "content": "read it" },
+            {
+                "role": "assistant",
+                "content": [{
+                    "type": "tool_use",
+                    "id": "toolu_01",
+                    "name": "Read",
+                    "input": { "path": "/etc/hosts" },
+                }],
+            },
+        ],
+    }));
+
+    assert_eq!(
+        out["input"][1],
+        json!({
+            "type": "function_call",
+            "call_id": "toolu_01",
+            "name": "Read",
+            "arguments": "{\"path\":\"/etc/hosts\"}",
+        })
+    );
+}
+
+/// §2.2 — a `tool_use` is its own input item, not a content part, so an
+/// assistant turn mixing prose and a call produces two items in order.
+#[test]
+fn an_assistant_turn_with_prose_and_a_call_produces_two_items() {
+    let out = translate(json!({
+        "model": "gpt-5",
+        "messages": [
+            { "role": "user", "content": "read it" },
+            {
+                "role": "assistant",
+                "content": [
+                    { "type": "text", "text": "Reading." },
+                    { "type": "tool_use", "id": "toolu_01", "name": "Read", "input": {} },
+                ],
+            },
+        ],
+    }));
+
+    assert_eq!(out["input"].as_array().map(Vec::len), Some(3));
+    assert_eq!(out["input"][1]["type"], json!("message"));
+    assert_eq!(out["input"][2]["type"], json!("function_call"));
+}
+
+/// §2.2 — `tool_result` becomes `function_call_output`, keyed by the same id.
+#[test]
+fn tool_result_becomes_a_function_call_output() {
+    let out = translate(json!({
+        "model": "gpt-5",
+        "messages": [{
+            "role": "user",
+            "content": [{
+                "type": "tool_result",
+                "tool_use_id": "toolu_01",
+                "content": [{ "type": "text", "text": "127.0.0.1 localhost" }],
+            }],
+        }],
+    }));
+
+    assert_eq!(
+        out["input"][0],
+        json!({
+            "type": "function_call_output",
+            "call_id": "toolu_01",
+            "output": "127.0.0.1 localhost",
+        })
+    );
+}
+
+/// A `tool_result` whose content is a bare string carries it through unchanged.
+#[test]
+fn a_string_tool_result_carries_through() {
+    let out = translate(json!({
+        "model": "gpt-5",
+        "messages": [{
+            "role": "user",
+            "content": [{
+                "type": "tool_result",
+                "tool_use_id": "toolu_01",
+                "content": "done",
+            }],
+        }],
+    }));
+
+    assert_eq!(out["input"][0]["output"], json!("done"));
+}
+
+/// §2.5 — a tool-search result has no text content, only `tool_reference`
+/// blocks. Its output carries the discovered names as JSON so the output is
+/// non-empty and the model can tell which tools it may now call. An empty
+/// output would leave the model unable to act on a search it just ran.
+#[test]
+fn a_tool_search_result_reports_the_discovered_names() {
+    let out = translate(json!({
+        "model": "gpt-5",
+        "messages": [{
+            "role": "user",
+            "content": [{
+                "type": "tool_result",
+                "tool_use_id": "toolu_01",
+                "content": [
+                    { "type": "tool_reference", "name": "Slack" },
+                    { "type": "tool_reference", "name": "Jira" },
+                ],
+            }],
+        }],
+    }));
+
+    assert_eq!(
+        out["input"][0]["output"],
+        json!("{\"available_tools\":[\"Slack\",\"Jira\"]}")
+    );
+}
+
 /// §2.5 — undiscovered tools are withheld so their schemas do not occupy
 /// context.
 #[test]

@@ -1,5 +1,6 @@
 //! `docs/proxy-behavior.md` §2 — Messages request to Responses request.
 
+use crate::anthropic::Content;
 use crate::anthropic::ContentBlock;
 use crate::anthropic::Message;
 use crate::anthropic::MessagesRequest;
@@ -47,7 +48,7 @@ pub fn translate_request(
         input: request
             .messages
             .iter()
-            .filter_map(translate_message)
+            .flat_map(translate_message)
             .collect(),
         tools: translate_tools(&request.tools, options),
         tool_choice: request.tool_choice.as_ref().map(translate_tool_choice),
@@ -115,35 +116,96 @@ fn translate_tool_choice(choice: &ToolChoice) -> ResponsesToolChoice {
     }
 }
 
-/// `None` when translation leaves the message with no content at all — an
-/// assistant turn that carried only thinking, for instance. An empty message
-/// item is not the same thing as no message, and the backend need not see one.
-fn translate_message(message: &Message) -> Option<InputItem> {
+/// One message can produce several items: calls and their outputs are items in
+/// their own right, not parts of a message, so a turn mixing prose with a call
+/// splits in order.
+///
+/// A message left with no content at all — an assistant turn that carried only
+/// thinking — produces nothing. An empty message item is not the same thing as
+/// no message, and the backend need not see one.
+fn translate_message(message: &Message) -> Vec<InputItem> {
     let role = match message.role {
         Role::User => ItemRole::User,
         Role::Assistant => ItemRole::Assistant,
     };
 
-    let content: Vec<ContentPart> = message
-        .content
-        .blocks()
-        .iter()
-        .filter_map(|block| translate_block(block, message.role))
-        .collect();
+    let mut items = Vec::new();
+    let mut parts: Vec<ContentPart> = Vec::new();
 
-    if content.is_empty() {
-        return None;
+    for block in message.content.blocks() {
+        match block {
+            ContentBlock::Text { text } => parts.push(match message.role {
+                Role::User => ContentPart::InputText { text },
+                Role::Assistant => ContentPart::OutputText { text },
+            }),
+            ContentBlock::ToolUse { id, name, input } => {
+                flush(&mut items, role, &mut parts);
+                items.push(InputItem::FunctionCall {
+                    call_id: id,
+                    name,
+                    arguments: serde_json::to_string(&input).unwrap_or_else(|_| "{}".to_owned()),
+                });
+            }
+            ContentBlock::ToolResult {
+                tool_use_id,
+                content,
+            } => {
+                flush(&mut items, role, &mut parts);
+                items.push(InputItem::FunctionCallOutput {
+                    call_id: tool_use_id,
+                    output: tool_result_output(content.as_ref()),
+                });
+            }
+            ContentBlock::Thinking
+            | ContentBlock::RedactedThinking
+            | ContentBlock::ToolReference { .. }
+            | ContentBlock::Unknown => {}
+        }
     }
 
-    Some(InputItem::Message { role, content })
+    flush(&mut items, role, &mut parts);
+    items
 }
 
-fn translate_block(block: &ContentBlock, role: Role) -> Option<ContentPart> {
-    match block {
-        ContentBlock::Text { text } => Some(match role {
-            Role::User => ContentPart::InputText { text: text.clone() },
-            Role::Assistant => ContentPart::OutputText { text: text.clone() },
-        }),
-        ContentBlock::Thinking | ContentBlock::RedactedThinking | ContentBlock::Unknown => None,
+fn flush(items: &mut Vec<InputItem>, role: ItemRole, parts: &mut Vec<ContentPart>) {
+    if parts.is_empty() {
+        return;
     }
+    items.push(InputItem::Message {
+        role,
+        content: std::mem::take(parts),
+    });
+}
+
+/// §2.5 — a tool-search result carries only `tool_reference` blocks. Reporting
+/// the discovered names keeps the output non-empty and tells the model what it
+/// may now call; an empty output leaves it unable to act on a search it just
+/// ran.
+fn tool_result_output(content: Option<&Content>) -> String {
+    let Some(content) = content else {
+        return String::new();
+    };
+
+    let blocks = content.blocks();
+
+    let discovered: Vec<&str> = blocks
+        .iter()
+        .filter_map(|block| match block {
+            ContentBlock::ToolReference { name } => Some(name.as_str()),
+            _ => None,
+        })
+        .collect();
+
+    if !discovered.is_empty() {
+        return serde_json::json!({ "available_tools": discovered }).to_string();
+    }
+
+    blocks
+        .iter()
+        .filter_map(|block| match block {
+            ContentBlock::Text { text } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }

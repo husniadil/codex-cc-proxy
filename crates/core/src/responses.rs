@@ -70,6 +70,17 @@ pub enum InputItem {
         role: ItemRole,
         content: Vec<ContentPart>,
     },
+    FunctionCall {
+        call_id: String,
+        name: String,
+        /// The call's input, serialized. The backend takes a string here, not
+        /// an object.
+        arguments: String,
+    },
+    FunctionCallOutput {
+        call_id: String,
+        output: String,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]

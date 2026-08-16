@@ -129,6 +129,22 @@ pub enum ContentBlock {
     Text {
         text: String,
     },
+    ToolUse {
+        id: String,
+        name: String,
+        #[serde(default)]
+        input: serde_json::Value,
+    },
+    ToolResult {
+        tool_use_id: String,
+        #[serde(default)]
+        content: Option<Content>,
+    },
+    /// Names a tool that became available through a tool search. Appears only
+    /// inside a `tool_result` — see `docs/proxy-behavior.md` §2.5.
+    ToolReference {
+        name: String,
+    },
     /// No Responses equivalent exists; dropped on the request path.
     Thinking,
     /// No Responses equivalent exists; dropped on the request path.
