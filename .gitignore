@@ -1,0 +1,18 @@
+/target
+**/*.rs.bk
+*.pdb
+
+# Insta snapshot review artifacts
+**/*.snap.new
+
+# Local configuration and captured credentials
+/.env
+/config.local.toml
+
+# Editor and OS noise
+.DS_Store
+.idea/
+*.swp
+
+# Private working notes
+CLAUDE.local.md

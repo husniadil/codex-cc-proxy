@@ -1,0 +1,3 @@
+# Translation functions legitimately take many parameters where each is a
+# distinct wire field; grouping them into structs would obscure the mapping.
+too-many-arguments-threshold = 10
