@@ -1,0 +1,7 @@
+//! `docs/proxy-behavior.md` §8 — OAuth lifecycle and credential storage.
+
+pub mod flow;
+pub mod jwt;
+pub mod pkce;
+pub mod store;
+pub mod tokens;

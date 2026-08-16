@@ -490,11 +490,27 @@ other. One flow, one family, no ambiguity about which tool holds a valid session
 
 Refresh requests send `grant_type`, `refresh_token`, and `client_id` — **never
 `scope`**. Including it causes the authorization server to re-scope the grant and
-invalidate sibling refresh-token families.
+invalidate sibling refresh-token families. The body is JSON; the authorization
+code exchange that precedes it is form-encoded. They differ, and sending the
+wrong encoding is rejected.
+
+A token response carries no expiry field. The expiry is a claim inside the
+access token, and is read from there. Nothing verifies the signature, and
+nothing should: the token arrived over TLS from the server that issued it, and
+the proxy is reading its own credentials to learn when they lapse — not
+deciding whether to trust them. Where no expiry can be read the token counts as
+expired, because refreshing needlessly costs one request while using a dead
+token fails the turn.
+
+The account id is likewise a claim, read from the id token and sent upstream as
+a header.
 
 Refresh begins ahead of expiry and is single-flight: concurrent requests share one
-in-flight refresh. A response indicating an invalid or reused grant marks the
-connection dead and requires re-authentication; it is never retried in a loop.
+in-flight refresh. A refusal naming an expired, reused, or invalidated grant —
+or any 401 — marks the connection dead and requires re-authentication; it is
+never retried in a loop. Every other refusal is transient and leaves the grant
+alone, because marking it dead on a recoverable failure forces a re-login that a
+retry would have made unnecessary.
 
 Credentials sit behind a `CredentialStore` trait. The default implementation is a
 file created `0600`. Platform keychains satisfy the same trait. Credentials never
