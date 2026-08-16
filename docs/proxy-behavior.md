@@ -40,9 +40,19 @@ Claude Code's system prompt arrives in the top-level `system` field. It maps to
 the Responses `instructions` field, never to an item in `input` — the backend
 rejects system-role and developer-role messages inside `input`.
 
-A conversation message carrying any role other than `user` or `assistant` has its
-text folded into `instructions` for the same reason, rather than emitted as an
-input item.
+A conversation message carrying any role other than `user` or `assistant` is
+carried as a `user` input item. The backend rejects the role, not the content.
+
+Folding it into `instructions` instead looks equivalent and is not. The client
+attaches per-turn content this way — a billing header among it — so
+`instructions` changed on every turn. That breaks two things at once: a delta
+requires every non-input field to be unchanged, so every turn uploaded the whole
+conversation, and `prompt_cache_key` buys nothing when the cached prefix differs
+each time. Measured against a real agent loop: three turns, no deltas at all.
+Carried as input items instead, the same loop uploads only what is new.
+
+**`instructions` is the system prompt and nothing else.** Anything that varies
+per turn belongs in the input, where it appends.
 
 ### 2.2 Content blocks
 

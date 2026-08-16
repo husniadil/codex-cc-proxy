@@ -6,6 +6,7 @@ use crate::anthropic::Message;
 use crate::anthropic::MessagesRequest;
 use crate::anthropic::Role;
 use crate::anthropic::Source;
+use crate::anthropic::SystemPrompt;
 use crate::anthropic::Tool;
 use crate::anthropic::ToolChoice;
 use crate::responses::CallOutput;
@@ -107,41 +108,8 @@ fn effort_for(request: &MessagesRequest, options: &TranslateOptions) -> Option<E
 /// backend rejects system and developer roles there, and one is enough to fail
 /// the whole request.
 fn build_instructions(request: &MessagesRequest) -> Option<String> {
-    let mut sections: Vec<String> = Vec::new();
-
-    if let Some(system) = request.system.as_ref() {
-        sections.push(system.to_text());
-    }
-
-    sections.extend(
-        request
-            .messages
-            .iter()
-            .filter(|message| message.role == Role::Other)
-            .map(|message| text_of(&message.content))
-            .filter(|text| !text.is_empty()),
-    );
-
-    let joined = sections
-        .iter()
-        .filter(|section| !section.is_empty())
-        .map(String::as_str)
-        .collect::<Vec<_>>()
-        .join("\n\n");
-
-    (!joined.is_empty()).then_some(joined)
-}
-
-fn text_of(content: &Content) -> String {
-    content
-        .blocks()
-        .iter()
-        .filter_map(|block| match block {
-            ContentBlock::Text { text } => Some(text.as_str()),
-            _ => None,
-        })
-        .collect::<Vec<_>>()
-        .join("\n\n")
+    let text = request.system.as_ref().map(SystemPrompt::to_text)?;
+    (!text.is_empty()).then_some(text)
 }
 
 /// §2.5 — the tool names a request reports as discovered.
@@ -240,8 +208,16 @@ fn translate_message(message: &Message) -> Vec<InputItem> {
     let role = match message.role {
         Role::User => ItemRole::User,
         Role::Assistant => ItemRole::Assistant,
-        // Already folded into `instructions` by `build_instructions`.
-        Role::Other => return Vec::new(),
+        // §2.1 — carried as a user item rather than folded into
+        // `instructions`.
+        //
+        // The backend rejects system and developer roles inside `input`, but
+        // nothing requires the *content* to leave the conversation. Folding it
+        // into `instructions` looked equivalent and is not: the client sends
+        // per-turn content this way, so instructions changed on every turn —
+        // which invalidates the cached prefix and forces a full upload each
+        // time, because a delta requires every non-input field to be unchanged.
+        Role::Other => ItemRole::User,
     };
 
     let mut items = Vec::new();

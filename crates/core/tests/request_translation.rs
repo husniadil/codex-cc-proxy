@@ -64,11 +64,14 @@ fn system_blocks_join_into_one_instructions_string() {
     );
 }
 
-/// §2.1 — a message with any role other than user or assistant folds into
-/// `instructions`. The backend rejects system and developer roles inside
-/// `input`, so emitting one as an item fails the whole request.
+/// §2.1 — a message with any role other than user or assistant is carried as a
+/// user item. The backend rejects system and developer roles inside `input`,
+/// but nothing requires the content to leave the conversation.
+///
+/// Folding it into `instructions` looked equivalent and is not: the client
+/// sends per-turn content this way, so instructions changed on every turn.
 #[test]
-fn a_non_conversational_role_folds_into_instructions() {
+fn a_non_conversational_role_becomes_a_user_item() {
     let out = translate(json!({
         "model": "gpt-5",
         "system": "Base prompt.",
@@ -78,9 +81,54 @@ fn a_non_conversational_role_folds_into_instructions() {
         ],
     }));
 
-    assert_eq!(out["instructions"], json!("Base prompt.\n\nPrefer tabs."));
-    assert_eq!(out["input"].as_array().map(Vec::len), Some(1));
+    // The system prompt alone, and nothing that varies per turn.
+    assert_eq!(out["instructions"], json!("Base prompt."));
+
+    assert_eq!(out["input"].as_array().map(Vec::len), Some(2));
     assert_eq!(out["input"][0]["role"], json!("user"));
+    assert_eq!(out["input"][0]["content"][0]["text"], json!("Prefer tabs."));
+    // And never the role the backend refuses.
+    for item in out["input"].as_array().unwrap() {
+        assert_ne!(item["role"], json!("developer"));
+        assert_ne!(item["role"], json!("system"));
+    }
+}
+
+/// §2.1 and §4.3 — instructions stay identical across turns, whatever the
+/// client attaches to individual ones.
+///
+/// A delta requires every non-input field to be unchanged, and the cached
+/// prefix requires the same. Anything that varies per turn must live in the
+/// input, where it appends.
+#[test]
+fn instructions_do_not_change_between_turns() {
+    let first = translate(json!({
+        "model": "gpt-5",
+        "system": "Base prompt.",
+        "messages": [
+            { "role": "system", "content": "billing-header: build-1" },
+            { "role": "user", "content": "hello" },
+        ],
+    }));
+
+    let second = translate(json!({
+        "model": "gpt-5",
+        "system": "Base prompt.",
+        "messages": [
+            { "role": "system", "content": "billing-header: build-1" },
+            { "role": "user", "content": "hello" },
+            { "role": "assistant", "content": "hi" },
+            { "role": "system", "content": "billing-header: build-2" },
+            { "role": "user", "content": "again" },
+        ],
+    }));
+
+    assert_eq!(first["instructions"], second["instructions"]);
+    // And the second turn is an extension of the first, which is what lets it
+    // upload only what is new.
+    let before = first["input"].as_array().unwrap();
+    let after = second["input"].as_array().unwrap();
+    assert_eq!(&after[..before.len()], &before[..]);
 }
 
 /// §2.2 — list-form content, each block mapped in order.
