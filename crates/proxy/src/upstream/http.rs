@@ -24,6 +24,8 @@ pub const USER_AGENT: &str = concat!("codex_cli_rs/", env!("CARGO_PKG_VERSION"))
 pub struct HttpTransport {
     client: reqwest::Client,
     endpoint: String,
+    /// §4.4 — compress the body, and say so.
+    compression: bool,
     /// Asked for a token per request rather than handed one at construction.
     /// A token captured once goes stale the moment the session refreshes, and
     /// the failure is a 401 halfway through a working conversation.
@@ -37,8 +39,14 @@ impl HttpTransport {
         Self {
             client: reqwest::Client::new(),
             endpoint: endpoint.into(),
+            compression: false,
             credentials: None,
         }
+    }
+
+    pub fn with_compression(mut self, compression: bool) -> Self {
+        self.compression = compression;
+        self
     }
 
     pub fn with_credentials(mut self, credentials: Arc<crate::auth::tokens::TokenSource>) -> Self {
@@ -50,13 +58,27 @@ impl HttpTransport {
 #[async_trait::async_trait]
 impl Transport for HttpTransport {
     async fn stream(&self, request: &ResponsesRequest) -> Result<EventStream, ProxyError> {
+        let body = serde_json::to_string(request).map_err(|error| {
+            ProxyError::invalid_request(format!("could not serialize the request: {error}"))
+        })?;
+
         let mut builder = self
             .client
             .post(&self.endpoint)
             .header(axum::http::header::ACCEPT, "text/event-stream")
             .header("originator", ORIGINATOR)
             .header(axum::http::header::USER_AGENT, USER_AGENT)
-            .json(request);
+            .header(axum::http::header::CONTENT_TYPE, "application/json");
+
+        // The header is the whole mechanism. Compressed bytes without it are
+        // just bytes the backend cannot parse.
+        builder = if self.compression && super::compression::worth_compressing(&body) {
+            builder
+                .header(axum::http::header::CONTENT_ENCODING, "zstd")
+                .body(super::compression::zstd(&body)?)
+        } else {
+            builder.body(body)
+        };
 
         if let Some(credentials) = &self.credentials {
             builder = builder.bearer_auth(credentials.access_token().await?);

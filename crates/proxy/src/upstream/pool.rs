@@ -6,8 +6,6 @@
 
 use super::EventStream;
 use super::websocket::ResponseCreate;
-use super::websocket::compress;
-use super::websocket::worth_compressing;
 use crate::error::ProxyError;
 use codex_cc_proxy_core::responses::ResponsesRequest;
 use futures::SinkExt;
@@ -22,15 +20,11 @@ type Socket = WebSocketStream<MaybeTlsStream<TcpStream>>;
 /// A connection that outlives the turn that opened it.
 pub struct PooledConnection {
     socket: Socket,
-    compression: bool,
 }
 
 impl PooledConnection {
-    pub fn new(socket: Socket, compression: bool) -> Self {
-        Self {
-            socket,
-            compression,
-        }
+    pub fn new(socket: Socket) -> Self {
+        Self { socket }
     }
 
     /// Send one frame.
@@ -52,15 +46,16 @@ impl PooledConnection {
             ProxyError::invalid_request(format!("could not serialize the request: {error}"))
         })?;
 
-        let message = if self.compression && worth_compressing(&payload) {
-            Message::Binary(compress(&payload)?.into())
-        } else {
-            Message::Text(payload.into())
-        };
-
-        self.socket.send(message).await.map_err(|error| {
-            ProxyError::overloaded(format!("could not send over the websocket: {error}"))
-        })
+        // Always text. A binary frame carries no signal that its contents are
+        // compressed, so the backend cannot parse it and refuses the request —
+        // and the reference client rejects binary frames outright. WebSocket
+        // compression is `permessage-deflate`, negotiated in the upgrade.
+        self.socket
+            .send(Message::Text(payload.into()))
+            .await
+            .map_err(|error| {
+                ProxyError::overloaded(format!("could not send over the websocket: {error}"))
+            })
     }
 
     /// The next event payload, or `None` when the turn or the connection ends.

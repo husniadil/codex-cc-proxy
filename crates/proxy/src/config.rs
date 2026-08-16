@@ -49,9 +49,9 @@ fable  = "gpt-5-codex-mini"
 [transport]
 websocket   = true
 
-# Off by default: the backend rejects the zstd frame this sends, and only above
-# the size threshold, so small turns work and real ones do not.
-# compression = false
+# zstd on the HTTP body. Not the WebSocket, where compression is negotiated in
+# the upgrade rather than chosen here.
+compression = true
 "#;
 
 /// Unknown keys are refused rather than ignored.
@@ -182,14 +182,12 @@ pub struct Tiers {
 pub struct TransportConfig {
     #[serde(default = "yes")]
     pub websocket: bool,
-    /// Off by default, because the backend rejects what this sends.
+    /// zstd on the HTTP body, announced with `Content-Encoding`.
     ///
-    /// A zstd frame is refused with a bare `400 Invalid request`, and only
-    /// above the size threshold — so small turns work and real ones do not,
-    /// which reads as the proxy being broken for large conversations rather
-    /// than as a compression problem. Whatever the backend expects, it is not a
-    /// bare zstd binary frame; see roadmap §L.
-    #[serde(default)]
+    /// It does not apply to the WebSocket transport: compression there is
+    /// `permessage-deflate`, negotiated in the upgrade, which this client
+    /// cannot yet offer.
+    #[serde(default = "yes")]
     pub compression: bool,
 }
 
@@ -201,7 +199,7 @@ impl Default for TransportConfig {
     fn default() -> Self {
         Self {
             websocket: true,
-            compression: false,
+            compression: true,
         }
     }
 }

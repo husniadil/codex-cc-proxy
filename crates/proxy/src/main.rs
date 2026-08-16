@@ -241,7 +241,9 @@ async fn run_with(args: RunArgs, record_ingress: bool) -> Result<()> {
     let conduit_tokens = Arc::clone(&tokens);
     let conduits: codex_cc_proxy::ingress::ConduitFactory = Arc::new(move || {
         let http = Arc::new(
-            HttpTransport::new(UPSTREAM_ENDPOINT).with_credentials(Arc::clone(&conduit_tokens)),
+            HttpTransport::new(UPSTREAM_ENDPOINT)
+                .with_credentials(Arc::clone(&conduit_tokens))
+                .with_compression(compression),
         );
         let websocket = websocket_enabled.then(|| {
             Arc::new(

@@ -112,8 +112,25 @@ struct ServerState {
 async fn handle(
     State(state): State<ServerState>,
     request_headers: axum::http::HeaderMap,
-    body: String,
+    raw: axum::body::Bytes,
 ) -> Response {
+    // Decompress exactly when the request says it is compressed. Reading the
+    // bytes any other way would let an unannounced compressed body pass, which
+    // is the mistake this stands in for.
+    let compressed = request_headers
+        .get(axum::http::header::CONTENT_ENCODING)
+        .and_then(|value| value.to_str().ok())
+        == Some("zstd");
+
+    let body = if compressed {
+        zstd::decode_all(raw.as_ref())
+            .ok()
+            .and_then(|bytes| String::from_utf8(bytes).ok())
+            .unwrap_or_default()
+    } else {
+        String::from_utf8(raw.to_vec()).unwrap_or_default()
+    };
+
     if let Ok(mut headers) = state.headers.lock() {
         headers.push(
             request_headers

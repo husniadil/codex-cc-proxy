@@ -55,31 +55,11 @@ impl<'a> ResponseCreate<'a> {
     }
 }
 
-/// §4.4 — payloads may be zstd-compressed.
-///
-/// This compounds with the incremental path: that removes most turns' bulk, and
-/// compression reduces what remains on the turns where a full send is
-/// unavoidable.
-pub fn compress(payload: &str) -> Result<Vec<u8>, ProxyError> {
-    zstd::encode_all(payload.as_bytes(), 3)
-        .map_err(|error| ProxyError::overloaded(format!("could not compress the request: {error}")))
-}
-
-/// Whether compressing this payload is worth doing.
-///
-/// Small payloads compress to more than they started as, once the frame header
-/// is counted. Sending those uncompressed is not an optimization that failed;
-/// it is the correct outcome.
-pub fn worth_compressing(payload: &str) -> bool {
-    payload.len() > 1024
-}
-
 pub struct WebSocketTransport {
     endpoint: String,
     /// Asked for a token per connection, for the same reason as the HTTP
     /// transport: a captured token goes stale when the session refreshes.
     credentials: Option<std::sync::Arc<crate::auth::tokens::TokenSource>>,
-    compression: bool,
 }
 
 /// One opened connection, carrying the events of a single turn.
@@ -98,7 +78,6 @@ impl WebSocketTransport {
         Self {
             endpoint: endpoint.into(),
             credentials: None,
-            compression: true,
         }
     }
 
@@ -110,8 +89,9 @@ impl WebSocketTransport {
         self
     }
 
-    pub fn with_compression(mut self, compression: bool) -> Self {
-        self.compression = compression;
+    /// Kept so callers can express the intent; compression on this transport is
+    /// `permessage-deflate` and is negotiated in the upgrade, not chosen here.
+    pub fn with_compression(self, _compression: bool) -> Self {
         self
     }
 
@@ -126,7 +106,7 @@ impl WebSocketTransport {
             .map_err(|error| {
                 ProxyError::overloaded(format!("the websocket did not open: {error}"))
             })?;
-        Ok(super::pool::PooledConnection::new(stream, self.compression))
+        Ok(super::pool::PooledConnection::new(stream))
     }
 
     async fn handshake(
@@ -190,15 +170,14 @@ impl WebSocketTransport {
             ProxyError::invalid_request(format!("could not serialize the request: {error}"))
         })?;
 
-        let message = if self.compression && worth_compressing(&payload) {
-            Message::Binary(compress(&payload)?.into())
-        } else {
-            Message::Text(payload.into())
-        };
-
-        writer.send(message).await.map_err(|error| {
-            ProxyError::overloaded(format!("could not send over the websocket: {error}"))
-        })?;
+        // Text, always. See `compression` for why a binary frame is not a way
+        // to say "compressed".
+        writer
+            .send(Message::Text(payload.into()))
+            .await
+            .map_err(|error| {
+                ProxyError::overloaded(format!("could not send over the websocket: {error}"))
+            })?;
 
         let mut events = reader
             .filter_map(|message| async move {

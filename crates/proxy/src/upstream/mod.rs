@@ -6,6 +6,7 @@
 //! connections under policy conditions often enough that HTTP is a normal
 //! operating mode.
 
+pub mod compression;
 pub mod conduit;
 pub mod http;
 pub mod pool;

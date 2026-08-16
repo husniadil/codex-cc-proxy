@@ -12,14 +12,14 @@
     clippy::panic
 )]
 
+use codex_cc_proxy::upstream::compression::worth_compressing;
+use codex_cc_proxy::upstream::compression::zstd as compress;
 use codex_cc_proxy::upstream::conduit::Conduit;
 use codex_cc_proxy::upstream::conduit::Sent;
 use codex_cc_proxy::upstream::http::HttpTransport;
 use codex_cc_proxy::upstream::websocket::Upload;
 use codex_cc_proxy::upstream::websocket::WebSocketTransport;
-use codex_cc_proxy::upstream::websocket::compress;
 use codex_cc_proxy::upstream::websocket::plan_upload;
-use codex_cc_proxy::upstream::websocket::worth_compressing;
 use codex_cc_proxy_core::responses::InputItem;
 use codex_cc_proxy_core::responses::ResponsesRequest;
 use codex_cc_proxy_core::session::Baseline;

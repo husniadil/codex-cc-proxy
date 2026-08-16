@@ -227,7 +227,7 @@ method, so whoever has quota can close it in one sitting.
 | May this client request connector scopes? | Unknown, and unasked: the proxy requests only what it uses. A refusal once suggested otherwise but was a truncated URL. |
 | Does a refresh survive expiry without invalidating the family? | Force expiry, refresh, confirm the prior token family still works |
 | ~~Does the backend accept the request shape — headers, `instructions`, tools? | **Answered.** Accepted as sent; a turn completes and the frame sequence is correct. |
-| What does the backend expect for a compressed request, if anything? | A bare zstd frame is refused with `400 Invalid request`. Compression is off by default until this is known. |
+| ~~What does the backend expect for a compressed request?~~ | **Answered.** HTTP: a zstd body with `Content-Encoding: zstd`, verified live. WebSocket: `permessage-deflate`, negotiated in the upgrade — the server offers it, and our WebSocket library cannot yet accept. A binary frame means nothing on its own. |
 | ~~Does WebSocket connect, or close with a policy code?~~ | **Answered.** It connects. No policy close was seen, and the catalog marks these models `prefer_websockets`. |
 | ~~Is `CLAUDE_CODE_DISABLE_1M_CONTEXT` inert for plain model ids?~~ | **Answered: no.** Without it the client appends `[1m]` to the unrecognized id and assumes a million tokens. The flag is load-bearing, not a precaution. |
 | ~~Does the context meter stay steady across a turn?~~ | **Answered.** `message_start` carries the estimate and `message_delta` replaces it with the true count. |

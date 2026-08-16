@@ -332,20 +332,28 @@ by construction.
 
 ### 4.4 Compression
 
-Request payloads may be zstd-compressed. This compounds with §4.3: incremental
-upload removes most turns' bulk, and compression reduces what remains on the
-turns where a full send is unavoidable.
+Compression belongs to the transport, and the two transports do it differently.
 
-**It is off by default, because the backend rejects what this sends.** A zstd
-binary frame comes back as a bare `400 Invalid request` with nothing naming
-compression. The threshold is what makes it dangerous: only payloads above it
-are compressed, so a hand-made test turn succeeds and a real conversation —
-system prompt, tool schemas, history — fails. That reads as the proxy being
-broken for large requests rather than as a compression problem, and it cost a
-real debugging session to find.
+**HTTP**: the body is zstd-compressed and announced with `Content-Encoding:
+zstd`. The header is the whole mechanism — compressed bytes without it are bytes
+the backend cannot parse, and it refuses the request with an error naming
+nothing. Only bodies above a threshold are compressed; below it, compression
+adds more than it removes.
 
-Whatever the backend expects, it is not a bare zstd frame. Whether it wants a
-negotiated extension, a header, or nothing at all is roadmap §L.
+**WebSocket**: nothing at this layer. Compression there is `permessage-deflate`,
+negotiated during the upgrade, and this client cannot yet offer it — the
+WebSocket library in use has no support for the extension. The payload is text
+JSON either way.
+
+A binary frame is *not* a way to say "compressed". Nothing in the protocol
+attaches that meaning to it: the backend reads a binary frame as JSON, fails,
+and refuses the request. Measured directly — plain JSON in a binary frame is
+accepted, the same JSON compressed is not.
+
+This compounds with §4.3 where it applies: incremental upload removes most
+turns' bulk, and compression reduces what remains on the turns where a full send
+is unavoidable. Those are the HTTP turns, which is where compression is
+available.
 
 ---
 

@@ -1809,3 +1809,68 @@ async fn a_refusal_after_content_is_still_a_frame() {
         .expect("the failure should arrive as a frame");
     assert_eq!(error["error"]["type"], json!("overloaded_error"));
 }
+
+/// §4.4 — a compressed body is announced, and the announcement is the whole
+/// mechanism.
+///
+/// Compressed bytes without the header are just bytes the backend cannot parse,
+/// and it refuses the request with nothing naming compression. Only bodies over
+/// the threshold are compressed, which is what made this survive every
+/// hand-made test: they were all too small to compress.
+#[tokio::test]
+async fn a_large_body_is_compressed_and_announced() {
+    let upstream = ReplayServer::start(Behavior::Events(vec![
+        json!({ "type": "response.created", "response": { "id": "resp_1" } }),
+        completed(),
+    ]))
+    .await;
+
+    let transport = HttpTransport::new(upstream.url.clone()).with_compression(true);
+
+    let request = codex_cc_proxy_core::responses::ResponsesRequest {
+        model: "gpt-5-codex".to_owned(),
+        instructions: Some("consideration ".repeat(200)),
+        ..Default::default()
+    };
+
+    let _ = codex_cc_proxy::upstream::Transport::stream(&transport, &request)
+        .await
+        .expect("the replay server should accept it");
+
+    let headers = upstream.headers();
+    assert_eq!(
+        headers[0].get("content-encoding").map(String::as_str),
+        Some("zstd"),
+        "a compressed body must say so"
+    );
+    assert_eq!(
+        headers[0].get("content-type").map(String::as_str),
+        Some("application/json"),
+        "the content type still describes what it decompresses to"
+    );
+}
+
+/// A small body is sent as-is, and carries no encoding header. Compressing it
+/// would make it larger.
+#[tokio::test]
+async fn a_small_body_is_not_compressed() {
+    let upstream = ReplayServer::start(Behavior::Events(vec![
+        json!({ "type": "response.created", "response": { "id": "resp_1" } }),
+        completed(),
+    ]))
+    .await;
+
+    let transport = HttpTransport::new(upstream.url.clone()).with_compression(true);
+    let request = codex_cc_proxy_core::responses::ResponsesRequest {
+        model: "gpt-5-codex".to_owned(),
+        ..Default::default()
+    };
+
+    let _ = codex_cc_proxy::upstream::Transport::stream(&transport, &request)
+        .await
+        .unwrap();
+
+    assert_eq!(upstream.headers()[0].get("content-encoding"), None);
+    // And it still arrives as readable JSON.
+    assert_eq!(upstream.requests()[0]["model"], json!("gpt-5-codex"));
+}
