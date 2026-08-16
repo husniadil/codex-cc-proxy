@@ -16,6 +16,8 @@ use crate::anthropic::MessageLiteral;
 use crate::anthropic::MessageStart;
 use crate::anthropic::StopReason;
 use crate::anthropic::Usage;
+use crate::anthropic::WebSearchResult;
+use crate::anthropic::WebSearchResultLiteral;
 use serde_json::Value;
 
 /// What the translator needs that the stream does not carry.
@@ -60,6 +62,18 @@ pub struct ResponseTranslator {
     saw_tool_call: bool,
     stop_reason: StopReason,
     usage: Usage,
+    /// §5.2 — the searches this turn ran, and the sources it drew on. Both are
+    /// emitted together when the message closes, because the citations that
+    /// name the sources arrive while the answer is being written, after the
+    /// search itself has completed.
+    searches: Vec<Search>,
+    sources: Vec<WebSearchResult>,
+}
+
+#[derive(Debug)]
+struct Search {
+    id: String,
+    query: String,
 }
 
 impl ResponseTranslator {
@@ -76,6 +90,8 @@ impl ResponseTranslator {
             next_index: 0,
             saw_tool_call: false,
             stop_reason: StopReason::EndTurn,
+            searches: Vec::new(),
+            sources: Vec::new(),
         }
     }
 
@@ -122,6 +138,9 @@ impl ResponseTranslator {
                     self.open_block(BlockKind::Thinking, frames);
                     self.push_delta(Delta::ThinkingDelta { thinking }, frames);
                 }
+            }
+            "response.output_text.annotation.added" => {
+                self.collect_citation(event.get("annotation"));
             }
             "response.output_item.added" => self.item_added(event, frames),
             "response.function_call_arguments.delta" => self.arguments_delta(event, frames),
@@ -176,6 +195,7 @@ impl ResponseTranslator {
         }
         self.finished = true;
         self.close_block(frames);
+        self.emit_searches(frames);
 
         if self.saw_tool_call && self.stop_reason == StopReason::EndTurn {
             self.stop_reason = StopReason::ToolUse;
@@ -238,8 +258,18 @@ impl ResponseTranslator {
         let Some(item) = event.get("item") else {
             return;
         };
-        if item.get("type").and_then(Value::as_str) != Some("function_call") {
-            return;
+
+        match item.get("type").and_then(Value::as_str) {
+            Some("function_call") => {}
+            Some("web_search_call") => {
+                self.search_done(item);
+                return;
+            }
+            Some("message") => {
+                self.collect_message_citations(item);
+                return;
+            }
+            _ => return,
         }
         let Some(name) = text_field(item, "name") else {
             return;
@@ -298,6 +328,123 @@ impl ResponseTranslator {
             item_id: call_id,
             streamed_arguments: false,
         };
+    }
+
+    /// §5.2 — a completed search. A `search` action names the query; an
+    /// `open_page` action names a source the model actually read, which is the
+    /// only evidence of a source when no citation follows.
+    fn search_done(&mut self, item: &Value) {
+        let action = item.get("action");
+        let kind = action
+            .and_then(|action| action.get("type"))
+            .and_then(Value::as_str);
+
+        match kind {
+            Some("open_page") | Some("find_in_page") => {
+                if let Some(url) = action.and_then(|action| text_field(action, "url")) {
+                    self.add_source(url.clone(), url);
+                }
+            }
+            _ => {
+                let query = action
+                    .and_then(|action| text_field(action, "query"))
+                    .or_else(|| {
+                        action
+                            .and_then(|action| action.get("queries"))
+                            .and_then(Value::as_array)
+                            .and_then(|queries| queries.first())
+                            .and_then(Value::as_str)
+                            .map(str::to_owned)
+                    })
+                    .unwrap_or_default();
+                self.searches.push(Search {
+                    id: call_id_of(item),
+                    query,
+                });
+            }
+        }
+    }
+
+    fn collect_message_citations(&mut self, item: &Value) {
+        let parts = item
+            .get("content")
+            .and_then(Value::as_array)
+            .map(Vec::as_slice)
+            .unwrap_or_default();
+
+        for annotation in parts
+            .iter()
+            .filter_map(|part| part.get("annotations"))
+            .filter_map(Value::as_array)
+            .flatten()
+        {
+            self.collect_citation(Some(annotation));
+        }
+    }
+
+    fn collect_citation(&mut self, annotation: Option<&Value>) {
+        let Some(annotation) = annotation else { return };
+        if annotation.get("type").and_then(Value::as_str) != Some("url_citation") {
+            return;
+        }
+        let Some(url) = text_field(annotation, "url") else {
+            return;
+        };
+        let title = text_field(annotation, "title").unwrap_or_else(|| url.clone());
+        self.add_source(url, title);
+    }
+
+    /// The same source cited repeatedly is one result. A client renders this
+    /// list verbatim, so duplicates show as the same page several times.
+    fn add_source(&mut self, url: String, title: String) {
+        if self.sources.iter().any(|source| source.url == url) {
+            return;
+        }
+        self.sources.push(WebSearchResult {
+            kind: WebSearchResultLiteral::WebSearchResult,
+            url,
+            title,
+        });
+    }
+
+    /// §5.2 — emit each search and the sources it produced.
+    ///
+    /// These close the message rather than appearing where the search ran,
+    /// because the citations naming the sources arrive while the answer is
+    /// written — after the search itself has completed.
+    fn emit_searches(&mut self, frames: &mut Vec<Frame>) {
+        if self.searches.is_empty() {
+            return;
+        }
+        self.close_block(frames);
+
+        let sources = std::mem::take(&mut self.sources);
+        for search in std::mem::take(&mut self.searches) {
+            frames.push(Frame::ContentBlockStart {
+                index: self.next_index,
+                content_block: BlockStart::ServerToolUse {
+                    id: search.id.clone(),
+                    name: "web_search".to_owned(),
+                    input: serde_json::json!({ "query": search.query }),
+                },
+            });
+            frames.push(Frame::ContentBlockStop {
+                index: self.next_index,
+            });
+            self.next_index = self.next_index.saturating_add(1);
+
+            frames.push(Frame::ContentBlockStart {
+                index: self.next_index,
+                content_block: BlockStart::WebSearchToolResult {
+                    tool_use_id: search.id,
+                    content: sources.clone(),
+                },
+            });
+            frames.push(Frame::ContentBlockStop {
+                index: self.next_index,
+            });
+            self.next_index = self.next_index.saturating_add(1);
+        }
     }
 
     fn open_block(&mut self, kind: BlockKind, frames: &mut Vec<Frame>) {

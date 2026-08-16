@@ -330,6 +330,23 @@ The client extracts `url` and `title` from those blocks. Passing the model's pro
 answer through as the tool result leaves that extraction empty, so the structured
 form is required, not preferred.
 
+A search call names the query. The sources come from `url_citation`
+annotations, which arrive while the answer is being written — after the search
+itself has completed. Both blocks are therefore emitted as the message closes
+rather than where the search ran. Their position in the message does not affect
+what the client extracts.
+
+Citations are the one part of this the upstream client cannot corroborate: it
+discards annotations entirely and so never sees a cited URL. The annotation
+shape is the public API's, and whether this backend emits it is a §L question.
+
+A page the model opened is treated as a source even when nothing cited it.
+Without that, a search that fetched pages but produced no citations reaches the
+client as an empty result — which reads as "nothing found", the precise failure
+this section exists to prevent.
+
+A source cited repeatedly is one result. The client renders the list verbatim.
+
 ### 5.3 Cancellation
 
 Cancelling the outbound stream aborts the upstream request. Without propagation

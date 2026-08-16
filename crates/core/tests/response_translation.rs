@@ -480,3 +480,198 @@ fn a_top_level_error_event_becomes_an_error_frame() {
     let error = frames.iter().find(|f| f["type"] == "error").unwrap();
     assert_eq!(error["error"]["type"], json!("rate_limit_error"));
 }
+
+/// §5.2 — a server-side search is reconstructed into the structured blocks the
+/// client reads. Passing the model's prose through as the result leaves the
+/// client's extraction empty, so the structured form is required rather than
+/// preferred.
+#[test]
+fn a_web_search_is_reconstructed_into_structured_blocks() {
+    let frames = run(&[
+        json!({ "type": "response.created", "response": { "id": "resp_1" } }),
+        json!({
+            "type": "response.output_item.done",
+            "item": {
+                "type": "web_search_call",
+                "id": "ws_1",
+                "status": "completed",
+                "action": { "type": "search", "query": "rust sse parsing" },
+            },
+        }),
+        json!({ "type": "response.output_text.delta", "delta": "Per the docs" }),
+        json!({
+            "type": "response.output_text.annotation.added",
+            "annotation": {
+                "type": "url_citation",
+                "url": "https://example.invalid/a",
+                "title": "A Guide",
+            },
+        }),
+        json!({ "type": "response.completed", "response": { "id": "resp_1" } }),
+    ]);
+
+    let server_tool_use = frames
+        .iter()
+        .find(|frame| frame["content_block"]["type"] == "server_tool_use")
+        .expect("a search should produce a server_tool_use block");
+    assert_eq!(
+        server_tool_use["content_block"]["name"],
+        json!("web_search")
+    );
+    assert_eq!(
+        server_tool_use["content_block"]["input"],
+        json!({ "query": "rust sse parsing" })
+    );
+
+    let result = frames
+        .iter()
+        .find(|frame| frame["content_block"]["type"] == "web_search_tool_result")
+        .expect("a search should produce a result block");
+    assert_eq!(
+        result["content_block"]["tool_use_id"],
+        server_tool_use["content_block"]["id"]
+    );
+    assert_eq!(
+        result["content_block"]["content"],
+        json!([{
+            "type": "web_search_result",
+            "url": "https://example.invalid/a",
+            "title": "A Guide",
+        }])
+    );
+}
+
+/// Citations also arrive attached to a completed message item rather than as
+/// their own events. Both carry the same annotation shape.
+#[test]
+fn citations_on_a_completed_message_item_are_collected() {
+    let frames = run(&[
+        json!({ "type": "response.created", "response": { "id": "resp_1" } }),
+        json!({
+            "type": "response.output_item.done",
+            "item": {
+                "type": "web_search_call",
+                "id": "ws_1",
+                "action": { "type": "search", "query": "q" },
+            },
+        }),
+        json!({
+            "type": "response.output_item.done",
+            "item": {
+                "type": "message",
+                "role": "assistant",
+                "content": [{
+                    "type": "output_text",
+                    "text": "answer",
+                    "annotations": [
+                        {
+                            "type": "url_citation",
+                            "url": "https://example.invalid/b",
+                            "title": "B",
+                        },
+                    ],
+                }],
+            },
+        }),
+        json!({ "type": "response.completed", "response": { "id": "resp_1" } }),
+    ]);
+
+    let result = frames
+        .iter()
+        .find(|frame| frame["content_block"]["type"] == "web_search_tool_result")
+        .unwrap();
+    assert_eq!(
+        result["content_block"]["content"][0]["url"],
+        json!("https://example.invalid/b")
+    );
+}
+
+/// The same source cited repeatedly is one result. A client rendering the list
+/// verbatim would otherwise show the same page several times.
+#[test]
+fn repeated_citations_of_one_source_collapse() {
+    let citation = json!({
+        "type": "response.output_text.annotation.added",
+        "annotation": {
+            "type": "url_citation",
+            "url": "https://example.invalid/a",
+            "title": "A",
+        },
+    });
+
+    let frames = run(&[
+        json!({ "type": "response.created", "response": { "id": "resp_1" } }),
+        json!({
+            "type": "response.output_item.done",
+            "item": {
+                "type": "web_search_call",
+                "id": "ws_1",
+                "action": { "type": "search", "query": "q" },
+            },
+        }),
+        citation.clone(),
+        citation,
+        json!({ "type": "response.completed", "response": { "id": "resp_1" } }),
+    ]);
+
+    let result = frames
+        .iter()
+        .find(|frame| frame["content_block"]["type"] == "web_search_tool_result")
+        .unwrap();
+    assert_eq!(
+        result["content_block"]["content"].as_array().map(Vec::len),
+        Some(1)
+    );
+}
+
+/// A page the model opened is a source even when nothing cited it. Without this
+/// a search that fetched pages but produced no citations reaches the client as
+/// an empty result, which reads as "nothing found".
+#[test]
+fn opened_pages_count_as_sources_when_no_citation_arrives() {
+    let frames = run(&[
+        json!({ "type": "response.created", "response": { "id": "resp_1" } }),
+        json!({
+            "type": "response.output_item.done",
+            "item": {
+                "type": "web_search_call",
+                "id": "ws_1",
+                "action": { "type": "search", "query": "q" },
+            },
+        }),
+        json!({
+            "type": "response.output_item.done",
+            "item": {
+                "type": "web_search_call",
+                "id": "ws_2",
+                "action": { "type": "open_page", "url": "https://example.invalid/opened" },
+            },
+        }),
+        json!({ "type": "response.completed", "response": { "id": "resp_1" } }),
+    ]);
+
+    let result = frames
+        .iter()
+        .find(|frame| frame["content_block"]["type"] == "web_search_tool_result")
+        .unwrap();
+    assert_eq!(
+        result["content_block"]["content"][0]["url"],
+        json!("https://example.invalid/opened")
+    );
+}
+
+/// A turn with no search produces no search blocks at all.
+#[test]
+fn a_turn_without_a_search_produces_no_search_blocks() {
+    let frames = run(&[
+        json!({ "type": "response.created", "response": { "id": "resp_1" } }),
+        json!({ "type": "response.output_text.delta", "delta": "hi" }),
+        json!({ "type": "response.completed", "response": { "id": "resp_1" } }),
+    ]);
+
+    assert!(
+        !frames
+            .iter()
+            .any(|frame| frame["content_block"]["type"] == "server_tool_use")
+    );
+}

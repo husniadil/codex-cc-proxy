@@ -217,6 +217,7 @@ method, so whoever has quota can close it in one sitting.
 | Does it accept a `tool_choice` other than `auto`? | Send `required`; the upstream client only ever sends `auto` |
 | Does the context meter stay steady across a turn? | Watch the statusline through a live turn |
 | Does `WebFetch` route through the haiku tier? | Map haiku to a distinguishable model; issue a `WebFetch`; check which model answered |
+| Does the backend emit `url_citation` annotations, or is `WebSearch` limited to opened pages? | Run a search that must cite; check whether titles arrive |
 | Does WebSocket connect, or close with a policy code? | Connect; record the outcome either way |
 | Does incremental upload produce the same conversation live as on replay? | Same session over both transports; diff the results |
 | Do the real capability probes pass? | `doctor` against the live backend |
