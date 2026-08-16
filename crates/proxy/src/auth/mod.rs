@@ -2,6 +2,7 @@
 
 pub mod flow;
 pub mod jwt;
+pub mod login;
 pub mod pkce;
 pub mod store;
 pub mod tokens;

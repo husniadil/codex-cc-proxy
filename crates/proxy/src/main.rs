@@ -30,13 +30,55 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Command::Run(args) => run(args).await,
-        Command::Login => bail!("`login` is not implemented yet"),
+        Command::Login => login().await,
         Command::Status => print_status().await,
         Command::Models => print_models().await,
         Command::Env(args) => print_env(args).await,
         Command::Doctor(_) => bail!("`doctor` is not implemented yet"),
         Command::Record(args) => record(args).await,
     }
+}
+
+/// Login runs in the CLI rather than through the socket: it needs a browser and
+/// a callback port, and the daemon need not be running to authenticate.
+async fn login() -> Result<()> {
+    let store: Arc<dyn codex_cc_proxy::auth::store::CredentialStore> = Arc::new(
+        codex_cc_proxy::auth::store::FileStore::new(credential_path()),
+    );
+
+    let credentials = codex_cc_proxy::auth::login::run(store, |url| {
+        // Printed as well as opened. An environment with no browser — a remote
+        // shell, a container — still needs a way through.
+        println!("Open this URL to authorize:\n\n{url}\n");
+        let _ = open_in_browser(url);
+    })
+    .await?;
+
+    match credentials.account_id {
+        Some(account) => println!("Signed in ({account})."),
+        None => println!("Signed in."),
+    }
+    Ok(())
+}
+
+fn open_in_browser(url: &str) -> std::io::Result<()> {
+    #[cfg(target_os = "macos")]
+    let mut command = std::process::Command::new("open");
+    #[cfg(target_os = "linux")]
+    let mut command = std::process::Command::new("xdg-open");
+    #[cfg(target_os = "windows")]
+    let mut command = {
+        let mut command = std::process::Command::new("cmd");
+        command.args(["/C", "start", ""]);
+        command
+    };
+
+    command
+        .arg(url)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .map(|_| ())
 }
 
 /// Every verb but `run` works through the control socket. The CLI holds no

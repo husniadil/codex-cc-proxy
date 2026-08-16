@@ -601,3 +601,145 @@ async fn refusals_are_classified_by_whether_the_grant_survives(
         "status {status} with body {body} was classified wrongly"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Completing a login.
+// ---------------------------------------------------------------------------
+
+use codex_cc_proxy::auth::login;
+
+/// The state is checked before the code is spent. A response carrying the wrong
+/// state is not this flow's response, and exchanging its code would attach
+/// somebody else's authorization to this proxy.
+#[tokio::test]
+async fn a_mismatched_state_is_refused_before_the_code_is_spent() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = AuthServer::start(200, "{}", 0).await;
+    let store: Arc<dyn CredentialStore> =
+        Arc::new(FileStore::new(dir.path().join("credentials.json")));
+    let authorization = flow::begin(1455);
+
+    let error = login::complete(
+        &reqwest::Client::new(),
+        &server.url,
+        "client-abc",
+        &authorization,
+        "a-different-state",
+        "the-code",
+        &store,
+    )
+    .await
+    .expect_err("a mismatched state should be refused");
+
+    assert!(error.message.contains("did not match"), "{}", error.message);
+    assert!(
+        server.bodies().is_empty(),
+        "the code must not be sent when the state does not match"
+    );
+}
+
+/// The exchange is form-encoded and carries the verifier. Sending the challenge
+/// instead, or omitting the verifier, defeats PKCE entirely.
+#[tokio::test]
+async fn the_code_exchange_sends_the_verifier_form_encoded() {
+    let dir = tempfile::tempdir().unwrap();
+    let response = serde_json::json!({
+        "access_token": token_with(serde_json::json!({ "exp": 4_000 })),
+        "refresh_token": "r-1",
+        "id_token": token_with(serde_json::json!({
+            "https://api.openai.com/auth": { "chatgpt_account_id": "acct_login" },
+        })),
+    })
+    .to_string();
+
+    let server = AuthServer::start(200, &response, 0).await;
+    let store: Arc<dyn CredentialStore> =
+        Arc::new(FileStore::new(dir.path().join("credentials.json")));
+    let authorization = flow::begin(1455);
+
+    let credentials = login::complete(
+        &reqwest::Client::new(),
+        &server.url,
+        "client-abc",
+        &authorization,
+        &authorization.state,
+        "the-code",
+        &store,
+    )
+    .await
+    .expect("the exchange should succeed");
+
+    let body = &server.bodies()[0];
+    assert!(body.contains("grant_type=authorization_code"), "{body}");
+    assert!(body.contains("code=the-code"), "{body}");
+    assert!(
+        body.contains(&format!("code_verifier={}", authorization.pkce.verifier())),
+        "the verifier must be sent: {body}"
+    );
+    assert!(
+        !body.contains(authorization.pkce.challenge()),
+        "the challenge belongs in the authorization request, not here: {body}"
+    );
+
+    // Expiry and account both come from claims, because the response carries
+    // neither as a field.
+    assert_eq!(credentials.expires_at, Some(4_000));
+    assert_eq!(credentials.account_id.as_deref(), Some("acct_login"));
+
+    // And it is persisted, or the next run would ask for login again.
+    assert_eq!(store.load().unwrap().unwrap().refresh_token, "r-1");
+}
+
+#[tokio::test]
+async fn a_refused_exchange_stores_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = AuthServer::start(400, r#"{"error":"invalid_grant"}"#, 0).await;
+    let store: Arc<dyn CredentialStore> =
+        Arc::new(FileStore::new(dir.path().join("credentials.json")));
+    let authorization = flow::begin(1455);
+
+    let error = login::complete(
+        &reqwest::Client::new(),
+        &server.url,
+        "client-abc",
+        &authorization,
+        &authorization.state,
+        "bad-code",
+        &store,
+    )
+    .await
+    .expect_err("a refused exchange should fail");
+
+    assert_eq!(
+        error.kind,
+        codex_cc_proxy_core::anthropic::ErrorKind::AuthenticationError
+    );
+    assert!(store.load().unwrap().is_none(), "nothing should be stored");
+}
+
+#[test]
+fn the_callback_query_yields_the_code_and_state() {
+    let (code, state) = login::parse_callback("code=abc123&state=xyz").unwrap();
+    assert_eq!(code, "abc123");
+    assert_eq!(state, "xyz");
+}
+
+/// The server's own message is the only useful diagnostic when a user declines.
+#[test]
+fn a_declined_authorization_reports_the_reason() {
+    let error =
+        login::parse_callback("error=access_denied&error_description=The%20user%20declined")
+            .expect_err("a declined authorization should fail");
+
+    assert!(
+        error.message.contains("The user declined"),
+        "{}",
+        error.message
+    );
+}
+
+#[test]
+fn a_callback_without_a_code_is_an_error() {
+    assert!(login::parse_callback("state=only").is_err());
+    assert!(login::parse_callback("").is_err());
+}

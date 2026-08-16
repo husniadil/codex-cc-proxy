@@ -73,8 +73,14 @@ codex-cc-proxy doctor     probe live backend capabilities
 codex-cc-proxy record     capture exchanges as fixtures
 ```
 
-Every verb except `run` operates through the control socket (§3) against a
-running daemon.
+Every verb except `run` and `login` operates through the control socket (§3)
+against a running daemon.
+
+`login` runs in the CLI. It needs a browser and a fixed callback port, and the
+daemon need not be running to authenticate — requiring it would mean starting a
+daemon that cannot serve a request in order to obtain the credentials it needs
+to serve one. The authorization URL is printed as well as opened, so an
+environment with no browser still has a way through.
 
 `doctor` spends real inference quota. It runs only when invoked, reports what it
 cost, and accepts a single probe name to run one at a time.
