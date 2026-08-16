@@ -3,4 +3,5 @@
 mod request;
 
 pub use request::TranslateOptions;
+pub use request::discovered_tool_names;
 pub use request::translate_request;

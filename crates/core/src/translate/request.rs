@@ -121,6 +121,30 @@ fn text_of(content: &Content) -> String {
         .join("\n\n")
 }
 
+/// §2.5 — the tool names a request reports as discovered.
+///
+/// Discovery is observable exactly once, in the `tool_reference` blocks of a
+/// search result. Nothing later in the conversation repeats it, and the client
+/// never clears `defer_loading`, so a caller that does not record this loses
+/// the only evidence that a tool became callable.
+pub fn discovered_tool_names(request: &MessagesRequest) -> BTreeSet<String> {
+    request
+        .messages
+        .iter()
+        .flat_map(|message| message.content.blocks())
+        .flat_map(|block| match block {
+            ContentBlock::ToolResult { content, .. } => {
+                content.map(|content| content.blocks()).unwrap_or_default()
+            }
+            _ => Vec::new(),
+        })
+        .filter_map(|block| match block {
+            ContentBlock::ToolReference { name } => Some(name),
+            _ => None,
+        })
+        .collect()
+}
+
 fn translate_tools(tools: &[Tool], options: &TranslateOptions) -> Vec<ToolSpec> {
     tools
         .iter()

@@ -9,6 +9,7 @@
 
 use codex_cc_proxy_core::anthropic::MessagesRequest;
 use codex_cc_proxy_core::translate::TranslateOptions;
+use codex_cc_proxy_core::translate::discovered_tool_names;
 use codex_cc_proxy_core::translate::translate_request;
 use pretty_assertions::assert_eq;
 use rstest::rstest;
@@ -659,6 +660,52 @@ fn a_tool_search_result_reports_the_discovered_names() {
         out["input"][0]["output"],
         json!("{\"available_tools\":[\"Slack\",\"Jira\"]}")
     );
+}
+
+/// §2.5 — discovery is observable exactly once, in the `tool_reference` blocks
+/// of a search result. The session records what it sees there; nothing later in
+/// the conversation says it again.
+#[test]
+fn discovered_names_are_recoverable_from_a_request() {
+    let request: MessagesRequest = serde_json::from_value(json!({
+        "model": "gpt-5",
+        "messages": [
+            { "role": "user", "content": "find a tool" },
+            {
+                "role": "user",
+                "content": [{
+                    "type": "tool_result",
+                    "tool_use_id": "toolu_01",
+                    "content": [
+                        { "type": "tool_reference", "name": "Slack" },
+                        { "type": "tool_reference", "name": "Jira" },
+                    ],
+                }],
+            },
+        ],
+    }))
+    .unwrap();
+
+    let names = discovered_tool_names(&request);
+
+    assert_eq!(
+        names,
+        ["Jira".to_owned(), "Slack".to_owned()]
+            .into_iter()
+            .collect()
+    );
+}
+
+/// A conversation with no search result discovers nothing.
+#[test]
+fn a_conversation_without_a_search_discovers_nothing() {
+    let request: MessagesRequest = serde_json::from_value(json!({
+        "model": "gpt-5",
+        "messages": [{ "role": "user", "content": "hello" }],
+    }))
+    .unwrap();
+
+    assert!(discovered_tool_names(&request).is_empty());
 }
 
 /// §2.5 — undiscovered tools are withheld so their schemas do not occupy
