@@ -746,10 +746,9 @@ fn a_callback_without_a_code_is_an_error() {
 
 /// The authorization request asks for exactly what the proxy uses.
 ///
-/// An unused scope is not untidy, it is fatal: the authorization server refuses
-/// the entire request when a client asks for a scope it is not allowed, and the
-/// user cannot log in at all. Connector scopes in particular are not ours to
-/// ask for — this proxy never invokes a connector.
+/// Least privilege: a scope the proxy never exercises is one more thing a
+/// stolen token could do. This proxy invokes no connector, so it does not ask
+/// to.
 #[test]
 fn the_authorization_request_asks_for_no_scope_it_does_not_use() {
     let authorization = flow::begin(1455);

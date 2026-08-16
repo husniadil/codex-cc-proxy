@@ -24,10 +24,11 @@ pub const CLIENT_ID: &str = "app_EMoamEEZ73f0CkXaXp7hrann";
 /// produces the refresh token without which every session would need a fresh
 /// login.
 ///
-/// Connector scopes are deliberately absent. This proxy never invokes a
-/// connector, and the authorization server refuses the whole request when a
-/// client asks for a scope it is not allowed — so an unused scope is not merely
-/// untidy, it is the difference between logging in and not.
+/// Connector scopes are absent because this proxy never invokes a connector,
+/// not because they were refused. A login was once rejected for naming one,
+/// but that turned out to be a truncated URL rather than the server's verdict,
+/// and whether this client may request them is simply unknown. Least privilege
+/// is reason enough on its own.
 pub const SCOPE: &str = "openid profile email offline_access";
 
 /// The loopback port the authorization server will redirect to. Fixed, because
