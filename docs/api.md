@@ -82,8 +82,18 @@ daemon that cannot serve a request in order to obtain the credentials it needs
 to serve one. The authorization URL is printed as well as opened, so an
 environment with no browser still has a way through.
 
-`doctor` spends real inference quota. It runs only when invoked, reports what it
-cost, and accepts a single probe name to run one at a time.
+`doctor` runs the capability probes and prints a matrix. Against the fixture
+corpus — the default — it contacts nothing and costs nothing; against a live
+backend it spends real inference quota.
+
+The matrix always states which it was. One built from replayed fixtures that
+reads like one built from a live backend is exactly the plausible-looking
+output the probes exist to prevent. A probe that could not run is reported as
+skipped and never counted as a pass: a probe that established nothing while
+reporting success is the same failure in miniature.
+
+`--probe <name>` runs one at a time, and naming an unknown one lists the
+known ones.
 
 `record` has two modes, and the distinction matters because only one of them
 costs anything:

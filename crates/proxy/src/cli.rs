@@ -48,6 +48,9 @@ pub struct DoctorArgs {
     /// Run one probe by name instead of the whole suite.
     #[arg(long)]
     pub probe: Option<String>,
+    /// Where the fixture corpus lives.
+    #[arg(long)]
+    pub fixtures: Option<std::path::PathBuf>,
 }
 
 #[derive(Debug, clap::Args)]

@@ -1,0 +1,234 @@
+//! `docs/proxy-behavior.md` §9.3 — every probe, against the replay corpus.
+//!
+//! Each probe turns on a code that exists nowhere except in the exchange under
+//! test. A model handed nothing describes a file confidently from its name, and
+//! that output is indistinguishable from success; a random code is not
+//! something plausibility can produce.
+
+#![allow(clippy::expect_used, clippy::unwrap_used, clippy::indexing_slicing)]
+
+use codex_cc_proxy::probe;
+use codex_cc_proxy::probe::Outcome;
+use codex_cc_proxy::probe::Status;
+use pretty_assertions::assert_eq;
+use std::path::PathBuf;
+
+fn corpus() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .join("fixtures")
+}
+
+/// Run one probe through `doctor`, which is the path that ships. A test harness
+/// that reimplements the runner proves the harness works, not the tool.
+async fn run_via_doctor(name: &str) -> Outcome {
+    codex_cc_proxy::doctor::run(&corpus(), Some(name))
+        .await
+        .expect("the probe should be known")
+        .into_iter()
+        .next()
+        .expect("one outcome")
+}
+
+/// Every probe passes against the corpus.
+#[tokio::test]
+async fn every_probe_passes_against_the_replay_corpus() {
+    let outcomes = codex_cc_proxy::doctor::run(&corpus(), None)
+        .await
+        .expect("the suite should run");
+
+    let failures: Vec<String> = outcomes
+        .iter()
+        .filter_map(|outcome| match &outcome.status {
+            Status::Failed(reason) => Some(format!("{}: {reason}", outcome.name)),
+            _ => None,
+        })
+        .collect();
+
+    assert!(
+        failures.is_empty(),
+        "probes failed:\n  {}",
+        failures.join("\n  ")
+    );
+    assert_eq!(outcomes.len(), probe::all().len());
+}
+
+/// Each probe runs alone. A suite that only works as a whole cannot be used to
+/// diagnose one broken capability.
+#[tokio::test]
+async fn each_probe_runs_on_its_own() {
+    for probe in probe::all() {
+        let outcome = run_via_doctor(probe.name).await;
+        assert_eq!(
+            outcome.status,
+            Status::Passed,
+            "{} failed alone",
+            probe.name
+        );
+    }
+}
+
+/// Asking for a probe that does not exist names the ones that do.
+#[tokio::test]
+async fn an_unknown_probe_lists_the_known_ones() {
+    let error = codex_cc_proxy::doctor::run(&corpus(), Some("not-a-probe"))
+        .await
+        .expect_err("an unknown probe should fail");
+
+    assert!(error.message.contains("read-image"), "{}", error.message);
+}
+
+/// A probe that cannot run says so, and is not counted as a pass. A probe that
+/// established nothing while reporting success is the same lie the probes exist
+/// to catch.
+#[tokio::test]
+async fn a_probe_that_cannot_run_reports_honestly() {
+    let empty = tempfile::tempdir().unwrap();
+
+    let outcomes = codex_cc_proxy::doctor::run(empty.path(), None)
+        .await
+        .expect("the suite should still run");
+
+    assert!(!outcomes.is_empty());
+    for outcome in &outcomes {
+        match &outcome.status {
+            Status::Skipped(reason) => assert!(
+                reason.contains("no fixture"),
+                "the skip should say why: {reason}"
+            ),
+            other => panic!("{} should have been skipped, got {other:?}", outcome.name),
+        }
+    }
+
+    // And a skip is never counted as a pass.
+    let rendered = probe::matrix(&outcomes, "an empty corpus");
+    assert!(rendered.contains("0 passed"), "{rendered}");
+}
+
+/// The probes must be able to fail. A check that passes against a proxy which
+/// dropped the payload is not a probe, it is decoration.
+#[tokio::test]
+async fn a_probe_fails_when_the_marker_never_arrives() {
+    let read_image = probe::all()
+        .into_iter()
+        .find(|probe| probe.name == "read-image")
+        .unwrap();
+
+    // What the proxy would have sent if it silently dropped the attachment.
+    let stripped = serde_json::json!({
+        "input": [
+            { "type": "message", "role": "user", "content": [] },
+            { "type": "function_call", "call_id": "toolu_read_1", "name": "Read" },
+            { "type": "function_call_output", "call_id": "toolu_read_1", "output": "Read 1 image" },
+        ],
+    });
+
+    let status = probe::evaluate(&read_image, &stripped, &[]);
+
+    match status {
+        Status::Failed(reason) => assert!(reason.contains("UDdLNFhS"), "{reason}"),
+        other => panic!("a dropped attachment should fail the probe, got {other:?}"),
+    }
+}
+
+/// The marker is unguessable by construction: it appears in the fixture and
+/// nowhere else in the tree. A probe keyed on something derivable from a
+/// filename would pass against a model that never saw the file.
+#[test]
+fn every_marker_is_absent_from_the_rest_of_the_corpus() {
+    let markers = [
+        ("read-image", "P7K4XR"),
+        ("read-document", "V2M9QZ"),
+        ("web-fetch", "L9WQ2T"),
+    ];
+
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .join("fixtures");
+
+    for (owner, marker) in markers {
+        for entry in std::fs::read_dir(&dir).unwrap().filter_map(Result::ok) {
+            let path = entry.path();
+            let name = path
+                .file_stem()
+                .and_then(|stem| stem.to_str())
+                .unwrap_or("");
+            if name == owner || path.extension().is_none_or(|ext| ext != "json") {
+                continue;
+            }
+            let body = std::fs::read_to_string(&path).unwrap();
+            assert!(
+                !body.contains(marker),
+                "`{marker}` appears in {name} as well as {owner}, so a probe \
+                 keyed on it proves less than it claims"
+            );
+        }
+    }
+}
+
+/// The matrix says what it was run against. One built from replayed fixtures
+/// that reads like one built from a live backend is exactly the plausible
+/// output §9.3 exists to prevent.
+#[tokio::test]
+async fn the_matrix_states_its_evidence() {
+    let outcomes = codex_cc_proxy::doctor::run(&corpus(), None).await.unwrap();
+    let rendered = probe::matrix(&outcomes, codex_cc_proxy::doctor::AGAINST_REPLAY);
+
+    assert!(
+        rendered.contains("the backend was not contacted"),
+        "{rendered}"
+    );
+    assert!(rendered.contains("read-image"), "{rendered}");
+}
+
+/// Every capability in §1 has a probe. One without is a capability whose silent
+/// failure nothing would catch.
+#[test]
+fn every_capability_has_a_probe() {
+    use codex_cc_proxy_core::fixture::Capability;
+
+    let covered: Vec<Capability> = probe::all().iter().map(|probe| probe.capability).collect();
+
+    for capability in Capability::ALL {
+        assert!(covered.contains(&capability), "{capability:?} has no probe");
+    }
+}
+
+/// Every probe names what breaks silently without it.
+#[test]
+fn every_probe_says_why_it_exists() {
+    for probe in probe::all() {
+        assert!(
+            probe.rationale.len() > 30,
+            "{} does not say what it protects against",
+            probe.name
+        );
+    }
+}
+
+#[test]
+fn the_matrix_counts_outcomes() {
+    let outcomes = vec![
+        Outcome {
+            name: "a".to_owned(),
+            capability: codex_cc_proxy_core::fixture::Capability::ReadImage,
+            status: Status::Passed,
+        },
+        Outcome {
+            name: "b".to_owned(),
+            capability: codex_cc_proxy_core::fixture::Capability::WebSearch,
+            status: Status::Failed("nope".to_owned()),
+        },
+        Outcome {
+            name: "c".to_owned(),
+            capability: codex_cc_proxy_core::fixture::Capability::CountTokens,
+            status: Status::Skipped("no stream".to_owned()),
+        },
+    ];
+
+    let rendered = probe::matrix(&outcomes, "replayed fixtures");
+    assert_eq!(
+        rendered.lines().last(),
+        Some("1 passed, 1 failed, 1 skipped")
+    );
+}

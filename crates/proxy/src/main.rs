@@ -34,9 +34,32 @@ async fn main() -> Result<()> {
         Command::Status => print_status().await,
         Command::Models => print_models().await,
         Command::Env(args) => print_env(args).await,
-        Command::Doctor(_) => bail!("`doctor` is not implemented yet"),
+        Command::Doctor(args) => doctor(args).await,
         Command::Record(args) => record(args).await,
     }
+}
+
+/// Probe the capabilities, and say what the answer rests on.
+async fn doctor(args: cli::DoctorArgs) -> Result<()> {
+    let fixtures = args
+        .fixtures
+        .unwrap_or_else(|| std::path::PathBuf::from("fixtures"));
+
+    let outcomes = codex_cc_proxy::doctor::run(&fixtures, args.probe.as_deref()).await?;
+
+    println!(
+        "{}",
+        codex_cc_proxy::probe::matrix(&outcomes, codex_cc_proxy::doctor::AGAINST_REPLAY)
+    );
+
+    let failed = outcomes
+        .iter()
+        .filter(|outcome| matches!(outcome.status, codex_cc_proxy::probe::Status::Failed(_)))
+        .count();
+    if failed > 0 {
+        bail!("{failed} probe(s) failed");
+    }
+    Ok(())
 }
 
 /// Login runs in the CLI rather than through the socket: it needs a browser and
