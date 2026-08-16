@@ -264,8 +264,14 @@ WebSocket is primary. One connection is cached per session and opened lazily.
 Reuse removes per-turn TCP and TLS setup, which is significant in an agent loop
 issuing many sequential requests.
 
-A prewarm request opens the connection before the first real request of a turn,
-so that request reuses both the connection and the prior response id.
+A prewarm request opens a connection before the turn that will use it, so that
+turn pays for neither the handshake nor a cold connection.
+
+The daemon does not prewarm in v0.1, and the capability exists unused. A proxy
+learns that a conversation exists only when its first request arrives, at which
+point opening the connection and sending on it are the same act. Prewarming
+needs a signal that a turn is *about* to happen — a front-end that knows the
+user is typing has one; an HTTP surface does not.
 
 ### 4.2 HTTP fallback
 

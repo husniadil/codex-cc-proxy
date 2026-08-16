@@ -66,7 +66,7 @@ changing an already-sent status.
 ```
 codex-cc-proxy run        start the daemon
 codex-cc-proxy login      authenticate
-codex-cc-proxy status     connection, tier mapping, quota
+codex-cc-proxy status     connection, tier mapping, model catalog
 codex-cc-proxy models     available models
 codex-cc-proxy env        environment for Claude Code
 codex-cc-proxy doctor     probe live backend capabilities

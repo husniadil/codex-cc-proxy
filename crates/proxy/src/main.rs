@@ -249,6 +249,7 @@ async fn run_with(args: RunArgs, record_ingress: bool) -> Result<()> {
 
     let state = AppState {
         effort_ceiling: None,
+        catalog: Arc::new(codex_cc_proxy::catalog::Catalog::fallback()),
         // Only reached if the factory is absent, which it is not here.
         transport: Arc::new(
             HttpTransport::new(UPSTREAM_ENDPOINT).with_credentials(Arc::clone(&tokens)),

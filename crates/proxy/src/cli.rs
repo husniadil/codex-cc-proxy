@@ -17,7 +17,7 @@ pub enum Command {
     Run(RunArgs),
     /// Authenticate.
     Login,
-    /// Connection, tier mapping, quota.
+    /// Connection, tier mapping, and whether the catalog was reachable.
     Status,
     /// Available models.
     Models,

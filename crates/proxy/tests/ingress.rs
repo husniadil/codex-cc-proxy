@@ -37,6 +37,7 @@ impl Harness {
 
         let state = AppState {
             effort_ceiling: None,
+            catalog: Arc::new(codex_cc_proxy::catalog::Catalog::fallback()),
             transport: Arc::new(HttpTransport::new(upstream.url.clone())),
             conduits: None,
             models: Arc::new(vec![ModelMapping {
@@ -1015,6 +1016,7 @@ async fn ingress_sends_through_a_conduit_and_uploads_incrementally() {
 
     let state = AppState {
         effort_ceiling: None,
+        catalog: Arc::new(codex_cc_proxy::catalog::Catalog::fallback()),
         transport: Arc::new(HttpTransport::new(upstream.url.clone())),
         conduits: Some(conduits),
         models: Arc::new(vec![ModelMapping {
@@ -1127,6 +1129,7 @@ async fn a_second_turn_uploads_the_new_items_and_not_nothing() {
 
     let state = AppState {
         effort_ceiling: None,
+        catalog: Arc::new(codex_cc_proxy::catalog::Catalog::fallback()),
         transport: Arc::new(HttpTransport::new("http://127.0.0.1:1/unused")),
         conduits: Some(conduits),
         models: Arc::new(vec![ModelMapping {
@@ -1303,6 +1306,7 @@ async fn a_reasoning_turn_does_not_end_the_session() {
 
     let state = AppState {
         effort_ceiling: None,
+        catalog: Arc::new(codex_cc_proxy::catalog::Catalog::fallback()),
         transport: Arc::new(HttpTransport::new("http://127.0.0.1:1/unused")),
         conduits: Some(conduits),
         models: Arc::new(vec![ModelMapping {
@@ -1413,6 +1417,7 @@ async fn a_failed_turn_does_not_advance_the_baseline() {
 
     let state = AppState {
         effort_ceiling: None,
+        catalog: Arc::new(codex_cc_proxy::catalog::Catalog::fallback()),
         transport: Arc::new(HttpTransport::new("http://127.0.0.1:1/unused")),
         conduits: Some(conduits),
         models: Arc::new(vec![ModelMapping {
@@ -1493,4 +1498,115 @@ fn input_of(body: &Value) -> Vec<codex_cc_proxy_core::responses::InputItem> {
         &codex_cc_proxy_core::translate::TranslateOptions::default(),
     )
     .input
+}
+
+/// §7.2 and §1.1 — a request larger than the model can hold is refused here,
+/// with a message that says so.
+///
+/// The error table lists this condition, which made it a published contract
+/// that nothing produced. Forwarding it instead returns whatever the backend
+/// says about a request it could not read — and the client cannot act on that.
+#[tokio::test]
+async fn a_request_larger_than_the_window_is_refused() {
+    let catalog = codex_cc_proxy::catalog::Catalog::parse(
+        r#"{"models":[{"slug":"gpt-5-codex","context_window":1000}]}"#,
+    )
+    .unwrap();
+
+    let upstream = ReplayServer::start(Behavior::Events(Vec::new())).await;
+    let state = AppState {
+        effort_ceiling: None,
+        catalog: Arc::new(catalog),
+        transport: Arc::new(HttpTransport::new(upstream.url.clone())),
+        conduits: None,
+        models: Arc::new(vec![ModelMapping {
+            requested: "claude-sonnet-4".to_owned(),
+            upstream: "gpt-5-codex".to_owned(),
+        }]),
+        recorder: None,
+        record_ingress: false,
+        sessions: Arc::new(codex_cc_proxy::session::SessionStore::new()),
+    };
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, router(state)).await;
+    });
+
+    let response = reqwest::Client::new()
+        .post(format!("http://{addr}/v1/messages"))
+        .json(&json!({
+            "model": "claude-sonnet-4",
+            "max_tokens": 64,
+            "messages": [{ "role": "user", "content": "word ".repeat(40_000) }],
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 400);
+    let body: Value = response.json().await.unwrap();
+    assert_eq!(body["error"]["type"], json!("invalid_request_error"));
+
+    let message = body["error"]["message"].as_str().unwrap();
+    // The effective window, not the raw one: what is left after the headroom
+    // §7.0 reserves for instructions, tool overhead and output. Enforcing the
+    // raw figure would admit requests that leave no room to answer.
+    assert!(
+        message.contains("950"),
+        "the limit should be named: {message}"
+    );
+    assert!(
+        message.contains("gpt-5-codex"),
+        "the model should be named: {message}"
+    );
+
+    // And nothing was sent upstream.
+    assert!(upstream.requests().is_empty());
+}
+
+/// A model the catalog said nothing about is unknown, not unlimited. Guessing a
+/// window here would reject requests that would have worked.
+#[tokio::test]
+async fn an_unknown_window_does_not_refuse_anything() {
+    let upstream = ReplayServer::start(Behavior::Events(vec![
+        json!({ "type": "response.created", "response": { "id": "resp_1" } }),
+        completed(),
+    ]))
+    .await;
+
+    let state = AppState {
+        effort_ceiling: None,
+        // The fallback list carries ids only, and no windows at all.
+        catalog: Arc::new(codex_cc_proxy::catalog::Catalog::fallback()),
+        transport: Arc::new(HttpTransport::new(upstream.url.clone())),
+        conduits: None,
+        models: Arc::new(vec![ModelMapping {
+            requested: "claude-sonnet-4".to_owned(),
+            upstream: "gpt-5-codex".to_owned(),
+        }]),
+        recorder: None,
+        record_ingress: false,
+        sessions: Arc::new(codex_cc_proxy::session::SessionStore::new()),
+    };
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, router(state)).await;
+    });
+
+    let response = reqwest::Client::new()
+        .post(format!("http://{addr}/v1/messages"))
+        .json(&json!({
+            "model": "claude-sonnet-4",
+            "max_tokens": 64,
+            "messages": [{ "role": "user", "content": "word ".repeat(40_000) }],
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200, "an unknown window must not refuse");
 }

@@ -40,6 +40,8 @@ pub type ConduitFactory = Arc<dyn Fn() -> Arc<crate::upstream::conduit::Conduit>
 pub struct AppState {
     /// §2.7 — an operator's ceiling on reasoning effort.
     pub effort_ceiling: Option<codex_cc_proxy_core::responses::Effort>,
+    /// §7.2 — what the mapped models can actually hold.
+    pub catalog: Arc<crate::catalog::Catalog>,
     /// Used when no factory is supplied — a single stateless transport, which
     /// is what the probes and most tests want.
     pub transport: Arc<dyn Transport>,
@@ -197,6 +199,33 @@ async fn messages(
         );
     }
 
+    // §6.2 — the estimate carried in `message_start`, corrected by everything
+    // this conversation has already learned.
+    let estimate = session.estimator.estimate(&request);
+
+    // §7.2 — refuse a request the model cannot hold, before it is sent.
+    //
+    // Checking after the send would spend the request to learn what the
+    // catalog already said, and return an opaque upstream rejection instead of
+    // a sentence naming the limit.
+    //
+    // Only where the window is known. A model the catalog said nothing about is
+    // unknown, not unlimited, and guessing one would refuse requests that would
+    // have worked.
+    if let Some(window) = state
+        .catalog
+        .get(&translated.model)
+        .and_then(crate::catalog::Model::effective_window)
+        && estimate > window
+    {
+        return ProxyError::invalid_request(format!(
+            "this request is about {estimate} tokens, and `{}` holds about {window}. \
+             Shorten the conversation or start a new one.",
+            translated.model
+        ))
+        .into_response();
+    }
+
     let (previous_request, previous_response_id) = session.previous();
 
     let events = match &state.conduits {
@@ -224,10 +253,6 @@ async fn messages(
     };
 
     session.remember_request(&translated);
-
-    // §6.2 — the estimate carried in `message_start`, corrected by everything
-    // this conversation has already learned.
-    let estimate = session.estimator.estimate(&request);
 
     let translator = ResponseTranslator::new(ResponseOptions {
         message_id: format!("msg_{}", uuid::Uuid::new_v4().simple()),
