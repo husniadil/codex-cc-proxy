@@ -1,4 +1,8 @@
-//! The Anthropic Messages API surface, as the client sends it.
+//! The Anthropic Messages API surface.
+
+mod stream;
+
+pub use stream::*;
 
 use serde::Deserialize;
 use serde::Serialize;

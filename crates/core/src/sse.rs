@@ -4,6 +4,18 @@
 //! be split mid-line, mid-JSON, or mid-character. The decoder buffers until a
 //! blank line terminates an event, then yields that event's `data` payload.
 
+use crate::anthropic::Frame;
+
+/// Write one frame as an SSE event.
+///
+/// The `event:` name is always present. A client that dispatches on the event
+/// name rather than the payload's `type` sees nothing without it, and the
+/// Anthropic API sends both.
+pub fn encode_frame(frame: &Frame) -> String {
+    let payload = serde_json::to_string(frame).unwrap_or_else(|_| "{}".to_owned());
+    format!("event: {}\ndata: {payload}\n\n", frame.event_name())
+}
+
 /// Accumulates bytes and yields complete event payloads.
 #[derive(Debug, Default)]
 pub struct SseDecoder {
