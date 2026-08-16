@@ -366,6 +366,181 @@ fn a_string_tool_result_carries_through() {
     assert_eq!(out["input"][0]["output"], json!("done"));
 }
 
+/// §2.2 — a base64 image in a user message becomes an `input_image` data URL.
+#[test]
+fn a_base64_image_becomes_a_data_url() {
+    let out = translate(json!({
+        "model": "gpt-5",
+        "messages": [{
+            "role": "user",
+            "content": [{
+                "type": "image",
+                "source": { "type": "base64", "media_type": "image/png", "data": "TUFSSzc3" },
+            }],
+        }],
+    }));
+
+    assert_eq!(
+        out["input"][0]["content"][0],
+        json!({ "type": "input_image", "image_url": "data:image/png;base64,TUFSSzc3" })
+    );
+}
+
+/// §2.2 — a URL source passes through unchanged and is not prefetched.
+#[test]
+fn an_image_url_passes_through() {
+    let out = translate(json!({
+        "model": "gpt-5",
+        "messages": [{
+            "role": "user",
+            "content": [{
+                "type": "image",
+                "source": { "type": "url", "url": "https://example.invalid/a.png" },
+            }],
+        }],
+    }));
+
+    assert_eq!(
+        out["input"][0]["content"][0]["image_url"],
+        json!("https://example.invalid/a.png")
+    );
+}
+
+/// §2.3 — an image nested in a `tool_result` travels inside the output itself.
+/// This is how every image the client reads arrives, and dropping it produces a
+/// model that describes the file from its name in wording that reads as
+/// success.
+#[test]
+fn an_image_in_a_tool_result_travels_inside_the_output() {
+    let out = translate(json!({
+        "model": "gpt-5",
+        "messages": [{
+            "role": "user",
+            "content": [{
+                "type": "tool_result",
+                "tool_use_id": "toolu_01",
+                "content": [
+                    { "type": "text", "text": "Read 1 image" },
+                    {
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": "image/png",
+                            "data": "TUFSSzc3",
+                        },
+                    },
+                ],
+            }],
+        }],
+    }));
+
+    assert_eq!(
+        out["input"][0],
+        json!({
+            "type": "function_call_output",
+            "call_id": "toolu_01",
+            "output": [
+                { "type": "input_text", "text": "Read 1 image" },
+                { "type": "input_image", "image_url": "data:image/png;base64,TUFSSzc3" },
+            ],
+        })
+    );
+}
+
+/// §2.3 — the output collapses to a bare string when, and only when, it is a
+/// single piece of text. Anything else stays an array.
+#[test]
+fn a_lone_text_output_collapses_to_a_string() {
+    let out = translate(json!({
+        "model": "gpt-5",
+        "messages": [{
+            "role": "user",
+            "content": [{
+                "type": "tool_result",
+                "tool_use_id": "toolu_01",
+                "content": [{ "type": "text", "text": "only text" }],
+            }],
+        }],
+    }));
+
+    assert_eq!(out["input"][0]["output"], json!("only text"));
+}
+
+/// §2.3 — a document has no representation inside a tool output, so it is
+/// re-emitted as a user message placed immediately after the output it came
+/// from. The output keeps its text, so the model is never left with a call
+/// whose result vanished.
+#[test]
+fn a_document_in_a_tool_result_follows_as_its_own_message() {
+    let out = translate(json!({
+        "model": "gpt-5",
+        "messages": [{
+            "role": "user",
+            "content": [{
+                "type": "tool_result",
+                "tool_use_id": "toolu_01",
+                "content": [
+                    { "type": "text", "text": "Read invoice.pdf" },
+                    {
+                        "type": "document",
+                        "source": {
+                            "type": "base64",
+                            "media_type": "application/pdf",
+                            "data": "TUFSSzc3",
+                        },
+                    },
+                ],
+            }],
+        }],
+    }));
+
+    assert_eq!(out["input"][0]["type"], json!("function_call_output"));
+    assert_eq!(out["input"][0]["output"], json!("Read invoice.pdf"));
+    assert_eq!(
+        out["input"][1],
+        json!({
+            "type": "message",
+            "role": "user",
+            "content": [{
+                "type": "input_file",
+                "filename": "attachment.pdf",
+                "file_data": "data:application/pdf;base64,TUFSSzc3",
+            }],
+        })
+    );
+}
+
+/// §2.2 — an attachment in an assistant message is dropped. Assistant content
+/// is `output_text` only.
+#[test]
+fn an_attachment_in_an_assistant_message_is_dropped() {
+    let out = translate(json!({
+        "model": "gpt-5",
+        "messages": [
+            { "role": "user", "content": "hi" },
+            {
+                "role": "assistant",
+                "content": [
+                    { "type": "text", "text": "here" },
+                    {
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": "image/png",
+                            "data": "TUFSSzc3",
+                        },
+                    },
+                ],
+            },
+        ],
+    }));
+
+    assert_eq!(
+        out["input"][1]["content"],
+        json!([{ "type": "output_text", "text": "here" }])
+    );
+}
+
 /// §2.5 — a tool-search result has no text content, only `tool_reference`
 /// blocks. Its output carries the discovered names as JSON so the output is
 /// non-empty and the model can tell which tools it may now call. An empty

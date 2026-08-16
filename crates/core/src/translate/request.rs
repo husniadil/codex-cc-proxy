@@ -5,9 +5,11 @@ use crate::anthropic::ContentBlock;
 use crate::anthropic::Message;
 use crate::anthropic::MessagesRequest;
 use crate::anthropic::Role;
+use crate::anthropic::Source;
 use crate::anthropic::SystemPrompt;
 use crate::anthropic::Tool;
 use crate::anthropic::ToolChoice;
+use crate::responses::CallOutput;
 use crate::responses::ContentPart;
 use crate::responses::FunctionLiteral;
 use crate::responses::InputItem;
@@ -151,12 +153,28 @@ fn translate_message(message: &Message) -> Vec<InputItem> {
                 content,
             } => {
                 flush(&mut items, role, &mut parts);
+                let (output, trailing) = tool_result_output(content.as_ref());
                 items.push(InputItem::FunctionCallOutput {
                     call_id: tool_use_id,
-                    output: tool_result_output(content.as_ref()),
+                    output,
                 });
+                items.extend(trailing);
             }
-            ContentBlock::Thinking
+            // Attachments are dropped in assistant messages: assistant content
+            // is `output_text` only.
+            ContentBlock::Image { source } if message.role == Role::User => {
+                if let Some(part) = image_part(&source) {
+                    parts.push(part);
+                }
+            }
+            ContentBlock::Document { source } if message.role == Role::User => {
+                if let Some(part) = document_part(&source) {
+                    parts.push(part);
+                }
+            }
+            ContentBlock::Image { .. }
+            | ContentBlock::Document { .. }
+            | ContentBlock::Thinking
             | ContentBlock::RedactedThinking
             | ContentBlock::ToolReference { .. }
             | ContentBlock::Unknown => {}
@@ -177,13 +195,42 @@ fn flush(items: &mut Vec<InputItem>, role: ItemRole, parts: &mut Vec<ContentPart
     });
 }
 
+fn image_part(source: &Source) -> Option<ContentPart> {
+    source
+        .to_url()
+        .map(|image_url| ContentPart::InputImage { image_url })
+}
+
+/// The filename is synthesized from the media type. Nothing in a `document`
+/// block carries the original name, and the extension is the only part the
+/// backend is likely to read.
+fn document_part(source: &Source) -> Option<ContentPart> {
+    let file_data = source.to_url()?;
+    let extension = match source.media_type() {
+        Some("application/pdf") | None => "pdf",
+        Some("text/plain") => "txt",
+        Some("text/markdown") => "md",
+        Some(_) => "bin",
+    };
+    Some(ContentPart::InputFile {
+        filename: format!("attachment.{extension}"),
+        file_data,
+    })
+}
+
+/// §2.3 — the output of a tool call, plus any items that must follow it.
+///
+/// Images travel inside the output itself, which keeps them attached to the
+/// call that produced them. Documents have no representation there, so each is
+/// re-emitted as a user message placed immediately after the output.
+///
 /// §2.5 — a tool-search result carries only `tool_reference` blocks. Reporting
 /// the discovered names keeps the output non-empty and tells the model what it
 /// may now call; an empty output leaves it unable to act on a search it just
 /// ran.
-fn tool_result_output(content: Option<&Content>) -> String {
+fn tool_result_output(content: Option<&Content>) -> (CallOutput, Vec<InputItem>) {
     let Some(content) = content else {
-        return String::new();
+        return (CallOutput::Text(String::new()), Vec::new());
     };
 
     let blocks = content.blocks();
@@ -197,15 +244,32 @@ fn tool_result_output(content: Option<&Content>) -> String {
         .collect();
 
     if !discovered.is_empty() {
-        return serde_json::json!({ "available_tools": discovered }).to_string();
+        let output = json!({ "available_tools": discovered }).to_string();
+        return (CallOutput::Text(output), Vec::new());
     }
 
-    blocks
-        .iter()
-        .filter_map(|block| match block {
-            ContentBlock::Text { text } => Some(text.as_str()),
-            _ => None,
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
+    let mut parts = Vec::new();
+    let mut documents = Vec::new();
+
+    for block in &blocks {
+        match block {
+            ContentBlock::Text { text } => {
+                parts.push(ContentPart::InputText { text: text.clone() })
+            }
+            ContentBlock::Image { source } => parts.extend(image_part(source)),
+            ContentBlock::Document { source } => documents.extend(document_part(source)),
+            _ => {}
+        }
+    }
+
+    let trailing = if documents.is_empty() {
+        Vec::new()
+    } else {
+        vec![InputItem::Message {
+            role: ItemRole::User,
+            content: documents,
+        }]
+    };
+
+    (CallOutput::from_parts(parts), trailing)
 }

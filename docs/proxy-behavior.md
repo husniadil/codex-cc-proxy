@@ -52,22 +52,39 @@ input item.
 | `user` / `image` | `message` / `input_image` |
 | `user` / `document` | `message` / `input_file` |
 | `assistant` / `text` | `message` / `output_text` |
+| `user` / `document` inside a `tool_result` | `message` / `input_file`, following the output (§2.3) |
 | `tool_use` | `function_call` |
-| `tool_result` | `function_call_output` |
+| `tool_result` | `function_call_output` (§2.3) |
 | `thinking`, `redacted_thinking` | dropped — no equivalent exists |
 
-Base64 image and document sources encode as data URLs. URL image sources pass
-through unchanged and are not prefetched; they resolve only if the backend can
-reach them. Documents are accepted natively and are not rasterized.
+Base64 image and document sources encode as data URLs. `image_url` is that URL
+directly, not an object wrapping one. URL image sources pass through unchanged
+and are not prefetched; they resolve only if the backend can reach them.
+
+`input_file` is the one part in this table with no counterpart in the upstream
+client, which has no document representation at all. It is the public API's
+shape, it is the only candidate that could carry a PDF, and whether this backend
+accepts it is open — roadmap §L. It fails loudly if not: a rejected part is a
+request error, not a silently dropped file.
 
 Assistant content is `output_text` only. An attachment appearing in an assistant
 message is dropped rather than converted.
 
 ### 2.3 Attachments inside tool results
 
-`function_call_output` carries a plain string, so image and document blocks nested
-inside a `tool_result` cannot travel through it. Each is re-emitted as a `user`
-message placed immediately after the corresponding `function_call_output`.
+A tool result is not restricted to text. `function_call_output.output` is either
+a bare string or a list of content parts, and an `input_image` part inside that
+list is how an image reaches the model — attached to the call that produced it,
+with no synthetic message standing between them.
+
+The output collapses to a bare string when, and only when, it is a single piece
+of text. Every other case stays a list, including the empty one.
+
+Documents are the exception. No document part exists inside a tool output, so
+each is re-emitted as a `user` message placed immediately after the
+`function_call_output`, which keeps its text. That placement is not a
+preference: `input_file` is defined for message content and nowhere else, so it
+is the only position where it could be accepted at all.
 
 This is not an edge case. It is how every file Claude Code reads arrives. Without
 it the bytes never reach the model, and the model answers from the filename in
@@ -77,8 +94,13 @@ output, which is why §9.3 requires unguessable probes.
 ### 2.4 Tools
 
 Function tools flatten from `{name, description, input_schema}` to `{type:
-"function", name, description, parameters}`. A schema with no `properties` key
-gains an empty one.
+"function", name, description, strict, parameters}`. A schema with no
+`properties` key gains an empty one.
+
+`strict` is always false. Strict mode constrains the schema — every property
+required, no additional properties — and the client's tool schemas do not
+comply. Claiming it over a non-compliant schema is a request rejection, not a
+stricter model.
 
 `tool_choice` maps: `any` → `required`, `tool` → `{type: "function", name}`,
 anything else → `auto`.
@@ -88,6 +110,11 @@ anything else → `auto`.
 Tool discovery happens in the client. Undiscovered tools arrive marked
 `defer_loading: true` and are withheld from the upstream request so their schemas
 do not occupy context.
+
+The backend has a deferred-loading mechanism of its own, and the flag could be
+forwarded to it instead. It is not. Discovery here is driven by the client, and
+a second discovery path the client cannot observe would let the model load a
+tool whose results never reach the client.
 
 Discovery is observable exactly once: a tool-search result contains
 `tool_reference` blocks naming the tools that became available. Those names are
@@ -108,6 +135,10 @@ Responses API's native `web_search` tool.
 
 Translating it as a function tool produces a tool the model cannot execute and a
 search that silently returns nothing.
+
+Both access flags — external and indexed — are stated rather than left to a
+default, because a default of false would also produce a search that returns
+nothing.
 
 ### 2.7 Request fields
 

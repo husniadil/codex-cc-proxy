@@ -89,6 +89,41 @@ impl SystemPrompt {
     }
 }
 
+/// Where an attachment's bytes come from.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum Source {
+    Base64 {
+        media_type: String,
+        data: String,
+    },
+    Url {
+        url: String,
+    },
+    #[serde(other)]
+    Unknown,
+}
+
+impl Source {
+    /// The source as a single URL. Base64 payloads become data URLs; URL
+    /// sources pass through and are not prefetched.
+    pub fn to_url(&self) -> Option<String> {
+        match self {
+            Self::Base64 { media_type, data } => Some(format!("data:{media_type};base64,{data}")),
+            Self::Url { url } => Some(url.clone()),
+            Self::Unknown => None,
+        }
+    }
+
+    /// The declared media type, where the source states one.
+    pub fn media_type(&self) -> Option<&str> {
+        match self {
+            Self::Base64 { media_type, .. } => Some(media_type.as_str()),
+            Self::Url { .. } | Self::Unknown => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Message {
     pub role: Role,
@@ -139,6 +174,12 @@ pub enum ContentBlock {
         tool_use_id: String,
         #[serde(default)]
         content: Option<Content>,
+    },
+    Image {
+        source: Source,
+    },
+    Document {
+        source: Source,
     },
     /// Names a tool that became available through a tool search. Appears only
     /// inside a `tool_result` — see `docs/proxy-behavior.md` §2.5.

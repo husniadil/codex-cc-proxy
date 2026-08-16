@@ -79,8 +79,28 @@ pub enum InputItem {
     },
     FunctionCallOutput {
         call_id: String,
-        output: String,
+        output: CallOutput,
     },
+}
+
+/// A tool result. It collapses to a bare string when it is a single piece of
+/// text, and stays an array otherwise — which is what lets an image reach the
+/// model inside the output of the call that produced it.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(untagged)]
+pub enum CallOutput {
+    Text(String),
+    Parts(Vec<ContentPart>),
+}
+
+impl CallOutput {
+    /// Build the narrowest form the parts allow.
+    pub fn from_parts(parts: Vec<ContentPart>) -> Self {
+        match parts.as_slice() {
+            [ContentPart::InputText { text }] => Self::Text(text.clone()),
+            _ => Self::Parts(parts),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
@@ -93,6 +113,20 @@ pub enum ItemRole {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ContentPart {
-    InputText { text: String },
-    OutputText { text: String },
+    InputText {
+        text: String,
+    },
+    InputImage {
+        /// A data URL or an ordinary URL. Not an object.
+        image_url: String,
+    },
+    /// A document. Unlike every other part here, this shape is not exercised by
+    /// the upstream client — see `docs/proxy-behavior.md` §2.3 and roadmap §L.
+    InputFile {
+        filename: String,
+        file_data: String,
+    },
+    OutputText {
+        text: String,
+    },
 }
