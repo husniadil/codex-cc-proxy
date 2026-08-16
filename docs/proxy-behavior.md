@@ -234,6 +234,15 @@ original position on the next request. They are part of the baseline for §4.3 i
 exactly the same way other server-returned output items are, so the incremental
 and full-send paths agree on what the conversation contains.
 
+Re-injection is not optional, and not only about quality. A baseline holding an
+item the client cannot replay is never a strict extension of any later replay,
+so a strict comparison stops matching the moment the model reasons. Session
+identity (§3.1) and delta computation (§4.3) therefore both judge continuation
+by the *reconciling* predicate: server-only items in the baseline are matched
+past rather than matched against. Without that, a conversation silently
+restarts on its third turn — new session, lost calibration, lost discovered
+tools, and a full upload every turn thereafter.
+
 This is the one place the proxy adds content the client did not send. It is
 additive and upstream-only: nothing synthesized here is ever surfaced back to the
 client as model output.

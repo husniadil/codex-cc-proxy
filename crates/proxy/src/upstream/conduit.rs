@@ -91,7 +91,6 @@ impl Conduit {
             tracing::debug!(
                 upload = ?sent,
                 items = payload.input.len(),
-                previous = ?previous,
                 "uploading"
             );
 

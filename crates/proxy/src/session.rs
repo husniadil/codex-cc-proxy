@@ -166,8 +166,15 @@ impl SessionStore {
             .map(Arc::clone)
     }
 
-    /// The longest baseline this input extends: the most specific continuation,
-    /// of which any shorter match is a prefix.
+    /// The longest baseline this input continues: the most specific match, of
+    /// which any shorter one is a prefix.
+    ///
+    /// Continuation is judged by the reconciling predicate, the same one the
+    /// incremental path uses (§3.1). Judging it strictly abandons the
+    /// conversation the moment the model reasons: the baseline then holds an
+    /// item the client cannot replay, no replay extends it again, and every
+    /// later turn silently starts a new session — losing its calibration, its
+    /// discovered tools, and every delta with it.
     fn best_match(sessions: &[Arc<Session>], input: &[InputItem]) -> Option<usize> {
         sessions
             .iter()
@@ -176,7 +183,7 @@ impl SessionStore {
                 session
                     .baseline
                     .lock()
-                    .map(|baseline| codex_cc_proxy_core::session::extends(baseline.items(), input))
+                    .map(|baseline| baseline.reconcile(input).is_some())
                     .unwrap_or(false)
             })
             .max_by_key(|(_, session)| {

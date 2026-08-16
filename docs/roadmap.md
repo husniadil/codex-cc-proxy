@@ -235,7 +235,7 @@ method, so whoever has quota can close it in one sitting.
 | Does it accept a `tool_choice` other than `auto`? | Send `required`; the upstream client only ever sends `auto` |
 | Does `WebFetch` route through the haiku tier? | Map haiku to a distinguishable model; issue a `WebFetch`; check which model answered |
 | Does the backend emit `url_citation` annotations, or is `WebSearch` limited to opened pages? | Run a search that must cite; check whether titles arrive |
-| ~~Does incremental upload produce the same conversation live as on replay?~~ | **Answered, and it did not.** The delta was empty on every continuing turn, so the backend answered from the previous response and the turn repeated itself. Fixed; the frame on the wire is now asserted. |
+| ~~Does incremental upload produce the same conversation live as on replay?~~ | **Answered, and it did not — twice.** The delta was empty on every continuing turn, so the backend answered from the previous response and the turn repeated itself. With that fixed, the session stopped matching as soon as the model returned a reasoning item, and every turn from the third on uploaded the whole conversation. Both fixed; a live four-turn conversation now uploads one item per turn. |
 | Do the real capability probes pass? | `doctor` against the live backend |
 | Is the true input count linear in the estimator's raw figure, as the offline fit assumes? | Record counts across a growing session; fit and check the residuals |
 

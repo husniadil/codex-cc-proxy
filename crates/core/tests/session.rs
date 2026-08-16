@@ -236,3 +236,81 @@ fn retained_reasoning_joins_the_baseline_in_position() {
         Plan::Full => panic!("retained reasoning should not have forced a full send"),
     }
 }
+
+/// §3.3 — a baseline holding server-only reasoning still matches the client's
+/// replay, and the reasoning is put back where the server produced it.
+///
+/// Without this every turn after the first reasoning item is a full send: the
+/// client cannot replay reasoning, so the baseline and the replay disagree at
+/// that position forever.
+#[test]
+fn reasoning_in_the_baseline_does_not_break_the_match() {
+    let baseline = items(json!([
+        message("first question"),
+        { "type": "reasoning", "id": "rs_1", "encrypted_content": "OPAQUE" },
+        {
+            "type": "message",
+            "role": "assistant",
+            "content": [{ "type": "output_text", "text": "first answer" }],
+        },
+    ]));
+
+    // What the client replays: no reasoning, because it never received any.
+    let replay = items(json!([
+        message("first question"),
+        {
+            "type": "message",
+            "role": "assistant",
+            "content": [{ "type": "output_text", "text": "first answer" }],
+        },
+        message("second question"),
+    ]));
+
+    let reconciled = codex_cc_proxy_core::session::reconcile(&baseline, &replay)
+        .expect("the replay should line up around the reasoning item");
+
+    assert_eq!(reconciled.new_items, 1, "only the new question is new");
+
+    // The reasoning is still in place, and still where the server put it.
+    assert_eq!(reconciled.input.len(), 4);
+    assert_eq!(
+        serde_json::to_value(&reconciled.input[1]).unwrap()["type"],
+        json!("reasoning")
+    );
+    assert_eq!(
+        serde_json::to_value(&reconciled.input[1]).unwrap()["encrypted_content"],
+        json!("OPAQUE")
+    );
+}
+
+/// A replay that genuinely diverges still refuses to reconcile. Tolerating
+/// server-only items must not become tolerating edits.
+#[test]
+fn reconciliation_still_refuses_an_edited_history() {
+    let baseline = items(json!([
+        message("first question"),
+        { "type": "reasoning", "id": "rs_1", "encrypted_content": "OPAQUE" },
+    ]));
+
+    let edited = items(json!([message("a different question"), message("next")]));
+
+    assert_eq!(
+        codex_cc_proxy_core::session::reconcile(&baseline, &edited),
+        None
+    );
+}
+
+/// A shortened replay does not reconcile either.
+#[test]
+fn reconciliation_refuses_a_shortened_history() {
+    let baseline = items(json!([
+        message("one"),
+        { "type": "reasoning", "id": "rs_1", "encrypted_content": "OPAQUE" },
+        message("two"),
+    ]));
+
+    assert_eq!(
+        codex_cc_proxy_core::session::reconcile(&baseline, &items(json!([message("one")]))),
+        None
+    );
+}

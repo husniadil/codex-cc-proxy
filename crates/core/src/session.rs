@@ -51,6 +51,61 @@ fn strip_ids(item: &InputItem) -> serde_json::Value {
     value
 }
 
+/// Whether the client could ever have replayed this item.
+///
+/// Reasoning is returned by the server and cannot survive a round trip: the
+/// client drops `thinking` on the way in and would not return encrypted
+/// upstream reasoning anyway (§3.3). So it sits in the baseline with no
+/// counterpart in what the client sends, and a comparison that expects one
+/// finds a mismatch on every turn after the first.
+fn is_server_only(item: &InputItem) -> bool {
+    matches!(item, InputItem::Reasoning { .. })
+}
+
+/// The conversation as the backend should see it, given what the client
+/// replayed.
+///
+/// §3.3 — server-only items are put back where the server produced them. This
+/// is the one place the proxy adds content the client did not send, and it is
+/// additive and upstream-only: nothing here is surfaced back as model output.
+#[derive(Debug, PartialEq)]
+pub struct Reconciled {
+    /// Everything to send on a full upload — the baseline with its server-only
+    /// items intact, followed by whatever the client added.
+    pub input: Vec<InputItem>,
+    /// How many of those are new this turn. The tail of `input`.
+    pub new_items: usize,
+}
+
+/// Match a client replay against a baseline that may contain server-only items.
+///
+/// `None` when the replay does not line up, which means a full send of exactly
+/// what the client asked for. Falling back is always safe; a wrong delta is not.
+pub fn reconcile(baseline: &[InputItem], candidate: &[InputItem]) -> Option<Reconciled> {
+    let mut consumed = 0usize;
+
+    for item in baseline {
+        if is_server_only(item) {
+            // The client never had this one, so it consumes nothing.
+            continue;
+        }
+        let next = candidate.get(consumed)?;
+        if !items_equal(item, next) {
+            return None;
+        }
+        consumed = consumed.saturating_add(1);
+    }
+
+    let new = candidate.get(consumed..)?;
+    let mut input = baseline.to_vec();
+    input.extend_from_slice(new);
+
+    Some(Reconciled {
+        input,
+        new_items: new.len(),
+    })
+}
+
 /// What a session remembers between turns.
 #[derive(Debug, Default, Clone)]
 pub struct Baseline {
@@ -82,6 +137,11 @@ impl Baseline {
             Some(new_items) => Plan::Delta(new_items),
             None => Plan::Full,
         }
+    }
+
+    /// The same, allowing for server-only items the client cannot replay.
+    pub fn reconcile(&self, candidate: &[InputItem]) -> Option<Reconciled> {
+        reconcile(&self.items, candidate)
     }
 
     /// Record what was sent and what the server added.

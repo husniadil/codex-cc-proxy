@@ -156,7 +156,7 @@ async fn messages(
         prompt_cache_key: Some(session.cache_key.clone()),
         effort_ceiling: state.effort_ceiling,
     };
-    let translated = translate_request(&request, &options);
+    let mut translated = translate_request(&request, &options);
 
     // What the conversation contained *before* this turn. The delta is computed
     // against this, and it has to be taken before the baseline moves.
@@ -165,6 +165,16 @@ async fn messages(
         .lock()
         .map(|baseline| baseline.clone())
         .unwrap_or_default();
+
+    // §3.3 — put back what the client could not replay.
+    //
+    // The server returns reasoning items the client never receives and could
+    // never send again. Left out, the conversation the backend sees loses the
+    // model's own reasoning every turn — and the replay stops matching the
+    // baseline at that position, so every later turn is a full send.
+    if let Some(reconciled) = baseline_before_turn.reconcile(&translated.input) {
+        translated.input = reconciled.input;
+    }
 
     // The baseline advances before the reply arrives. What was sent is what the
     // next turn must extend, and recording it later would leave a window in

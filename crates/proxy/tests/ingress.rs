@@ -1255,3 +1255,122 @@ async fn upstream_requests_carry_the_access_token() {
         Some("acct_7")
     );
 }
+
+/// A conversation keeps uploading deltas once the model starts reasoning.
+///
+/// The server returns reasoning items the client never sees and can never
+/// replay. Judged strictly, the baseline that holds one is never extended
+/// again: the session stops matching, a fresh one is created on every turn, and
+/// the conversation loses its calibration, its discovered tools, and every
+/// delta. Live, this showed as the third turn and every turn after it uploading
+/// the whole conversation.
+#[tokio::test]
+async fn a_reasoning_turn_does_not_end_the_session() {
+    let events = vec![
+        json!({ "type": "response.created", "response": { "id": "resp_1" } }),
+        // The item the client can never send back.
+        json!({
+            "type": "response.output_item.done",
+            "item": {
+                "type": "reasoning",
+                "id": "rs_1",
+                "encrypted_content": "OPAQUE",
+            },
+        }),
+        json!({
+            "type": "response.output_item.done",
+            "item": {
+                "type": "message",
+                "role": "assistant",
+                "content": [{ "type": "output_text", "text": "answer" }],
+            },
+        }),
+        completed(),
+    ];
+
+    let ws = replay::WsReplay::start(events).await;
+    let socket = ws.url.clone();
+
+    let conduits: codex_cc_proxy::ingress::ConduitFactory = Arc::new(move || {
+        Arc::new(codex_cc_proxy::upstream::conduit::Conduit::new(
+            Arc::new(HttpTransport::new("http://127.0.0.1:1/unused")),
+            Some(Arc::new(
+                codex_cc_proxy::upstream::websocket::WebSocketTransport::new(socket.clone())
+                    .with_compression(false),
+            )),
+        ))
+    });
+
+    let state = AppState {
+        effort_ceiling: None,
+        transport: Arc::new(HttpTransport::new("http://127.0.0.1:1/unused")),
+        conduits: Some(conduits),
+        models: Arc::new(vec![ModelMapping {
+            requested: "claude-sonnet-4".to_owned(),
+            upstream: "gpt-5-codex".to_owned(),
+        }]),
+        recorder: None,
+        record_ingress: false,
+        sessions: Arc::new(codex_cc_proxy::session::SessionStore::new()),
+    };
+    let sessions = Arc::clone(&state.sessions);
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, router(state)).await;
+    });
+
+    let client = reqwest::Client::new();
+    let mut messages = vec![json!({ "role": "user", "content": "question 1" })];
+
+    for turn in 1..=4 {
+        let body = json!({
+            "model": "claude-sonnet-4",
+            "max_tokens": 64,
+            "messages": messages,
+        });
+        let _ = client
+            .post(format!("http://{addr}/v1/messages"))
+            .json(&body)
+            .send()
+            .await
+            .unwrap()
+            .text()
+            .await
+            .unwrap();
+
+        // The client replays the answer and asks again, as it does.
+        messages.push(json!({ "role": "assistant", "content": "answer" }));
+        messages.push(json!({ "role": "user", "content": format!("question {}", turn + 1) }));
+    }
+
+    let frames = ws.wait_for(4).await;
+
+    // One session for the whole conversation, not one per turn.
+    assert_eq!(
+        sessions.len(),
+        1,
+        "the conversation was split across {} sessions",
+        sessions.len()
+    );
+
+    // Every turn after the first uploads exactly what is new.
+    for (index, frame) in frames.iter().enumerate().skip(1) {
+        assert_eq!(
+            frame["input"].as_array().map(Vec::len),
+            Some(1),
+            "turn {} uploaded the whole conversation again",
+            index + 1
+        );
+        assert!(
+            frame.get("previous_response_id").is_some(),
+            "turn {} did not continue the previous response",
+            index + 1
+        );
+    }
+
+    // And the reasoning the client could not replay is still being sent.
+    let full = frames[0]["input"].as_array().map(Vec::len);
+    assert_eq!(full, Some(1), "the opening turn carries only the question");
+}
