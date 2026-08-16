@@ -7,6 +7,7 @@
 #![forbid(unsafe_code)]
 
 pub mod anthropic;
+pub mod fixture;
 pub mod responses;
 pub mod sse;
 pub mod translate;

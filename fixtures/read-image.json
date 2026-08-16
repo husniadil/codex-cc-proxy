@@ -1,0 +1,49 @@
+{
+  "name": "read-image",
+  "capability": "read-image",
+  "provenance": "derived",
+  "note": "The tool-result shape is restated from the upstream protocol's function-call output payload, which carries either a bare string or a list of content parts including an image. The upstream client emits exactly this list form when a tool returns a screenshot. The base64 payload is a marker string, not a real image: this fixture asserts the shape, and a capability probe asserts the bytes arrived.",
+  "request": {
+    "model": "claude-sonnet-4",
+    "max_tokens": 1024,
+    "system": "You are Claude Code.",
+    "messages": [
+      { "role": "user", "content": "Read the screenshot." },
+      {
+        "role": "assistant",
+        "content": [
+          { "type": "tool_use", "id": "toolu_read_1", "name": "Read", "input": { "file_path": "/tmp/shot.png" } }
+        ]
+      },
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "tool_result",
+            "tool_use_id": "toolu_read_1",
+            "content": [
+              { "type": "text", "text": "Read 1 image" },
+              { "type": "image", "source": { "type": "base64", "media_type": "image/png", "data": "UDdLNFhS" } }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "upstream": [
+    { "type": "response.created", "response": { "id": "resp_read_image" } },
+    { "type": "response.output_text.delta", "delta": "The image shows the code P7K4XR." },
+    {
+      "type": "response.completed",
+      "response": {
+        "id": "resp_read_image",
+        "usage": {
+          "input_tokens": 1450,
+          "output_tokens": 11,
+          "input_tokens_details": { "cached_tokens": 1200 },
+          "output_tokens_details": { "reasoning_tokens": 0 }
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,19 @@
+{
+  "name": "count-tokens",
+  "capability": "count-tokens",
+  "provenance": "authored",
+  "note": "Hand-authored: count_tokens is a pre-flight call with no upstream counterpart at all, since the Responses API has no token-counting endpoint. There is no stream, which is the point — the fixture pins the request the estimator must size.",
+  "request": {
+    "model": "claude-sonnet-4",
+    "system": "You are Claude Code.",
+    "messages": [
+      { "role": "user", "content": "How many tokens is this conversation?" },
+      { "role": "assistant", "content": "Let me check." },
+      { "role": "user", "content": "Thanks." }
+    ],
+    "tools": [
+      { "name": "Read", "description": "Read a file", "input_schema": { "type": "object", "properties": { "file_path": { "type": "string" } }, "required": ["file_path"] } }
+    ]
+  },
+  "upstream": []
+}

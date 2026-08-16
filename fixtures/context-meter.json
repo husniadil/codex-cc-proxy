@@ -1,0 +1,29 @@
+{
+  "name": "context-meter",
+  "capability": "context-meter",
+  "provenance": "derived",
+  "note": "The usage object is restated from the upstream protocol, including the input_tokens_details nesting that carries cached_tokens. This fixture exists to pin the one conversion in §6.1: upstream input_tokens includes cached tokens and Anthropic's excludes them, so 12000 - 11500 must reach the client as 500.",
+  "request": {
+    "model": "claude-sonnet-4",
+    "max_tokens": 1024,
+    "system": "You are Claude Code.",
+    "messages": [{ "role": "user", "content": "Continue." }]
+  },
+  "upstream": [
+    { "type": "response.created", "response": { "id": "resp_meter" } },
+    { "type": "response.output_text.delta", "delta": "Continuing." },
+    {
+      "type": "response.completed",
+      "response": {
+        "id": "resp_meter",
+        "usage": {
+          "input_tokens": 12000,
+          "output_tokens": 40,
+          "input_tokens_details": { "cached_tokens": 11500 },
+          "output_tokens_details": { "reasoning_tokens": 25 },
+          "total_tokens": 12040
+        }
+      }
+    }
+  ]
+}

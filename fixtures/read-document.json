@@ -1,0 +1,43 @@
+{
+  "name": "read-document",
+  "capability": "read-document",
+  "provenance": "authored",
+  "note": "Hand-authored: the upstream client has no document representation at all, so no shape could be derived from it. The input_file part is the public API's, and whether this backend accepts it is roadmap §L. This fixture pins the translation, not the acceptance.",
+  "request": {
+    "model": "claude-sonnet-4",
+    "max_tokens": 1024,
+    "messages": [
+      { "role": "user", "content": "Read the invoice." },
+      {
+        "role": "assistant",
+        "content": [
+          { "type": "tool_use", "id": "toolu_read_2", "name": "Read", "input": { "file_path": "/tmp/invoice.pdf" } }
+        ]
+      },
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "tool_result",
+            "tool_use_id": "toolu_read_2",
+            "content": [
+              { "type": "text", "text": "Read invoice.pdf" },
+              { "type": "document", "source": { "type": "base64", "media_type": "application/pdf", "data": "VjJNOVFa" } }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "upstream": [
+    { "type": "response.created", "response": { "id": "resp_read_doc" } },
+    { "type": "response.output_text.delta", "delta": "The invoice reference is V2M9QZ." },
+    {
+      "type": "response.completed",
+      "response": {
+        "id": "resp_read_doc",
+        "usage": { "input_tokens": 2100, "output_tokens": 10, "input_tokens_details": { "cached_tokens": 0 } }
+      }
+    }
+  ]
+}

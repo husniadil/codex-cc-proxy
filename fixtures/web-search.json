@@ -1,0 +1,42 @@
+{
+  "name": "web-search",
+  "capability": "web-search",
+  "provenance": "derived",
+  "note": "The request is the secondary conversation Claude Code opens for WebSearch, declaring the server-side tool with a versioned type and no input_schema. The web_search_call item and its action shape are restated from the upstream protocol. The url_citation annotation is NOT derived from it — the upstream client discards annotations and never sees a cited URL — so that part is the public API's shape and is roadmap §L.",
+  "request": {
+    "model": "claude-sonnet-4",
+    "max_tokens": 2048,
+    "system": "You are an assistant with access to web search.",
+    "messages": [{ "role": "user", "content": "Search for the SSE specification." }],
+    "tools": [{ "type": "web_search_20250305", "name": "web_search" }]
+  },
+  "upstream": [
+    { "type": "response.created", "response": { "id": "resp_search" } },
+    {
+      "type": "response.output_item.done",
+      "item": {
+        "type": "web_search_call",
+        "id": "ws_search_1",
+        "status": "completed",
+        "action": { "type": "search", "query": "server-sent events specification" }
+      }
+    },
+    { "type": "response.output_text.delta", "delta": "The specification defines " },
+    { "type": "response.output_text.delta", "delta": "the data field." },
+    {
+      "type": "response.output_text.annotation.added",
+      "annotation": {
+        "type": "url_citation",
+        "url": "https://example.invalid/sse-spec",
+        "title": "Server-Sent Events"
+      }
+    },
+    {
+      "type": "response.completed",
+      "response": {
+        "id": "resp_search",
+        "usage": { "input_tokens": 900, "output_tokens": 20, "input_tokens_details": { "cached_tokens": 500 } }
+      }
+    }
+  ]
+}

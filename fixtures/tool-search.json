@@ -1,0 +1,52 @@
+{
+  "name": "tool-search",
+  "capability": "tool-search",
+  "provenance": "derived",
+  "note": "Deferred tool declarations and the tool_reference blocks that announce discovery are the client's own shapes, observable without credentials. The upstream side is restated from the protocol's function-call output. Note the second turn still marks the discovered tool defer_loading: the client never clears that flag, which is why the session records discovery separately.",
+  "request": {
+    "model": "claude-sonnet-4",
+    "max_tokens": 1024,
+    "messages": [
+      { "role": "user", "content": "Find a tool for sending messages." },
+      {
+        "role": "assistant",
+        "content": [
+          { "type": "tool_use", "id": "toolu_search_1", "name": "ToolSearch", "input": { "query": "send message" } }
+        ]
+      },
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "tool_result",
+            "tool_use_id": "toolu_search_1",
+            "content": [
+              { "type": "tool_reference", "name": "SendMessage" },
+              { "type": "tool_reference", "name": "ListChannels" }
+            ]
+          }
+        ]
+      }
+    ],
+    "tools": [
+      { "name": "ToolSearch", "description": "Search for tools", "input_schema": { "type": "object", "properties": { "query": { "type": "string" } } } },
+      { "name": "SendMessage", "description": "Send a message", "input_schema": { "type": "object", "properties": { "text": { "type": "string" } } }, "defer_loading": true },
+      { "name": "ListChannels", "description": "List channels", "input_schema": { "type": "object" }, "defer_loading": true },
+      { "name": "ArchiveChannel", "description": "Archive a channel", "input_schema": { "type": "object" }, "defer_loading": true }
+    ]
+  },
+  "upstream": [
+    { "type": "response.created", "response": { "id": "resp_tool_search" } },
+    {
+      "type": "response.output_item.done",
+      "item": { "type": "function_call", "call_id": "call_send_1", "name": "SendMessage", "arguments": "{\"text\":\"hello\"}" }
+    },
+    {
+      "type": "response.completed",
+      "response": {
+        "id": "resp_tool_search",
+        "usage": { "input_tokens": 700, "output_tokens": 15, "input_tokens_details": { "cached_tokens": 300 } }
+      }
+    }
+  ]
+}

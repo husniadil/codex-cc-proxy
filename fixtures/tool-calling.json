@@ -1,0 +1,44 @@
+{
+  "name": "tool-calling",
+  "capability": "tool-calling",
+  "provenance": "derived",
+  "note": "The function_call and function_call_output shapes are restated from the upstream protocol, including that arguments is a serialized string rather than an object. Two calls in one turn, because the client issues them in parallel and each must arrive as its own block.",
+  "request": {
+    "model": "claude-sonnet-4",
+    "max_tokens": 1024,
+    "messages": [
+      { "role": "user", "content": "Read both files." },
+      {
+        "role": "assistant",
+        "content": [
+          { "type": "text", "text": "Reading both." },
+          { "type": "tool_use", "id": "toolu_a", "name": "Read", "input": { "file_path": "/tmp/a" } },
+          { "type": "tool_use", "id": "toolu_b", "name": "Read", "input": { "file_path": "/tmp/b" } }
+        ]
+      },
+      {
+        "role": "user",
+        "content": [
+          { "type": "tool_result", "tool_use_id": "toolu_a", "content": "contents of a" },
+          { "type": "tool_result", "tool_use_id": "toolu_b", "content": "contents of b" }
+        ]
+      }
+    ],
+    "tools": [
+      { "name": "Read", "description": "Read a file", "input_schema": { "type": "object", "properties": { "file_path": { "type": "string" } }, "required": ["file_path"] } }
+    ],
+    "tool_choice": { "type": "auto" }
+  },
+  "upstream": [
+    { "type": "response.created", "response": { "id": "resp_tools" } },
+    { "type": "response.reasoning_summary_text.delta", "delta": "Both files are read." },
+    { "type": "response.output_text.delta", "delta": "Both files are now read." },
+    {
+      "type": "response.completed",
+      "response": {
+        "id": "resp_tools",
+        "usage": { "input_tokens": 800, "output_tokens": 18, "input_tokens_details": { "cached_tokens": 600 } }
+      }
+    }
+  ]
+}
