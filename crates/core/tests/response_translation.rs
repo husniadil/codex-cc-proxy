@@ -675,3 +675,73 @@ fn a_turn_without_a_search_produces_no_search_blocks() {
             .any(|frame| frame["content_block"]["type"] == "server_tool_use")
     );
 }
+
+/// §3.3 — reasoning items are retained, not rendered.
+///
+/// Requests ask for encrypted reasoning, so responses carry items the model
+/// expects to see again next turn. They cannot survive a round trip through the
+/// client — thinking blocks are dropped on the request path, and the client
+/// would not return encrypted upstream reasoning even if they were not — so the
+/// session keeps them.
+#[test]
+fn reasoning_items_are_retained_for_the_next_turn() {
+    let mut translator = ResponseTranslator::new(ResponseOptions {
+        message_id: "msg".to_owned(),
+        model: "m".to_owned(),
+        estimated_input_tokens: 1,
+    });
+
+    let events = [
+        json!({ "type": "response.created", "response": { "id": "r" } }),
+        json!({
+            "type": "response.output_item.done",
+            "item": {
+                "type": "reasoning",
+                "id": "rs_1",
+                "summary": [{ "type": "summary_text", "text": "considering" }],
+                "encrypted_content": "OPAQUE-BLOB",
+            },
+        }),
+        json!({ "type": "response.output_text.delta", "delta": "answer" }),
+        json!({ "type": "response.completed", "response": { "id": "r" } }),
+    ];
+
+    let mut frames = Vec::new();
+    for event in &events {
+        frames.extend(translator.push(&event.to_string()));
+    }
+    frames.extend(translator.finish());
+
+    let retained = translator.retained_reasoning();
+    assert_eq!(retained.len(), 1);
+
+    let rendered = serde_json::to_value(&retained[0]).unwrap();
+    assert_eq!(rendered["type"], json!("reasoning"));
+    assert_eq!(rendered["encrypted_content"], json!("OPAQUE-BLOB"));
+
+    // It is additive and upstream-only: nothing synthesized here reaches the
+    // client as model output.
+    let client = frames
+        .iter()
+        .map(|frame| serde_json::to_string(frame).unwrap_or_default())
+        .collect::<String>();
+    assert!(
+        !client.contains("OPAQUE-BLOB"),
+        "the encrypted blob was surfaced to the client"
+    );
+}
+
+/// A turn with no reasoning retains nothing.
+#[test]
+fn a_turn_without_reasoning_retains_nothing() {
+    let mut translator = ResponseTranslator::new(ResponseOptions {
+        message_id: "msg".to_owned(),
+        model: "m".to_owned(),
+        estimated_input_tokens: 1,
+    });
+
+    translator.push(&json!({ "type": "response.created", "response": { "id": "r" } }).to_string());
+    translator.push(&json!({ "type": "response.output_text.delta", "delta": "hi" }).to_string());
+
+    assert!(translator.retained_reasoning().is_empty());
+}

@@ -132,6 +132,20 @@ pub enum InputItem {
         call_id: String,
         output: CallOutput,
     },
+    /// Reasoning the model produced, carried back so the next turn can see it.
+    ///
+    /// This cannot survive a round trip through the client: Anthropic
+    /// `thinking` blocks are dropped on the request path, and the client would
+    /// not return encrypted upstream reasoning even if they were not. The
+    /// session retains these and re-injects them (§3.3).
+    Reasoning {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        summary: Vec<serde_json::Value>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        encrypted_content: Option<String>,
+    },
 }
 
 /// A tool result. It collapses to a bare string when it is a single piece of

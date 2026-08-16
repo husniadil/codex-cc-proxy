@@ -6,7 +6,9 @@
 //! connections under policy conditions often enough that HTTP is a normal
 //! operating mode.
 
+pub mod conduit;
 pub mod http;
+pub mod websocket;
 
 use crate::error::ProxyError;
 use codex_cc_proxy_core::responses::ResponsesRequest;

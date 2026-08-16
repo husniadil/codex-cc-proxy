@@ -189,3 +189,50 @@ fn a_full_send_is_always_available() {
     let unrelated = items(json!([message("something else entirely")]));
     assert_eq!(baseline.plan(&unrelated), Plan::Full);
 }
+
+/// §3.3 — retained reasoning is part of the baseline in exactly the way
+/// server-returned items are, so the incremental and full-send paths agree on
+/// what the conversation contains.
+#[test]
+fn retained_reasoning_joins_the_baseline_in_position() {
+    let mut baseline = Baseline::new();
+
+    let sent = items(json!([message("ask")]));
+    let returned = items(json!([
+        {
+            "type": "reasoning",
+            "id": "rs_1",
+            "encrypted_content": "OPAQUE",
+        },
+        {
+            "type": "message",
+            "role": "assistant",
+            "content": [{ "type": "output_text", "text": "answer" }],
+        },
+    ]));
+    baseline.advance(&sent, &returned);
+
+    assert_eq!(baseline.len(), 3);
+    assert_eq!(
+        serde_json::to_value(&baseline.items()[1]).unwrap()["type"],
+        json!("reasoning"),
+        "the reasoning item should sit where the server put it"
+    );
+
+    // The next turn extends it, and the reasoning is not resent.
+    let candidate = items(json!([
+        message("ask"),
+        { "type": "reasoning", "id": "rs_1", "encrypted_content": "OPAQUE" },
+        {
+            "type": "message",
+            "role": "assistant",
+            "content": [{ "type": "output_text", "text": "answer" }],
+        },
+        message("follow up"),
+    ]));
+
+    match baseline.plan(&candidate) {
+        Plan::Delta(new_items) => assert_eq!(new_items.len(), 1),
+        Plan::Full => panic!("retained reasoning should not have forced a full send"),
+    }
+}

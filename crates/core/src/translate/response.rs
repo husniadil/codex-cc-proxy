@@ -68,6 +68,9 @@ pub struct ResponseTranslator {
     /// search itself has completed.
     searches: Vec<Search>,
     sources: Vec<WebSearchResult>,
+    /// §3.3 — reasoning items the server returned, for the session to re-inject
+    /// on the next request.
+    reasoning: Vec<crate::responses::InputItem>,
 }
 
 #[derive(Debug)]
@@ -92,6 +95,7 @@ impl ResponseTranslator {
             stop_reason: StopReason::EndTurn,
             searches: Vec::new(),
             sources: Vec::new(),
+            reasoning: Vec::new(),
         }
     }
 
@@ -110,6 +114,15 @@ impl ResponseTranslator {
         let mut frames = Vec::new();
         self.handle(kind, &event, &mut frames);
         frames
+    }
+
+    /// §3.3 — the reasoning items this turn produced.
+    ///
+    /// They cannot survive a round trip through the client, so a caller that
+    /// does not retain them begins every turn with the model's prior reasoning
+    /// discarded.
+    pub fn retained_reasoning(&self) -> &[crate::responses::InputItem] {
+        &self.reasoning
     }
 
     /// Close off a stream that ended without completing.
@@ -267,6 +280,15 @@ impl ResponseTranslator {
             }
             Some("message") => {
                 self.collect_message_citations(item);
+                return;
+            }
+            Some("reasoning") => {
+                // §3.3 — retained, not rendered. Nothing synthesized here is
+                // ever surfaced to the client as model output; it exists only
+                // to be re-sent upstream on the next turn.
+                if let Ok(retained) = serde_json::from_value(item.clone()) {
+                    self.reasoning.push(retained);
+                }
                 return;
             }
             _ => return,
