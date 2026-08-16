@@ -37,6 +37,7 @@ impl Harness {
 
         let state = AppState {
             transport: Arc::new(HttpTransport::new(upstream.url.clone())),
+            conduits: None,
             models: Arc::new(vec![ModelMapping {
                 requested: "claude-sonnet-4".to_owned(),
                 upstream: "gpt-5-codex".to_owned(),
@@ -973,5 +974,160 @@ async fn count_tokens_uses_what_the_conversation_has_learned() {
     assert!(
         after["input_tokens"].as_u64().unwrap() > before["input_tokens"].as_u64().unwrap(),
         "count_tokens learned nothing: {before} then {after}"
+    );
+}
+
+/// The conduit path is reachable from ingress, and carries the incremental
+/// upload with it.
+///
+/// This is the wiring the rest of the transport work depends on. Every
+/// transport test builds a `Conduit` directly, so all of them passed while
+/// nothing in the request path constructed one — the WebSocket, pooling,
+/// prewarm and delta code was unreachable from a running daemon and no test
+/// noticed.
+#[tokio::test]
+async fn ingress_sends_through_a_conduit_and_uploads_incrementally() {
+    let upstream = ReplayServer::start(Behavior::Events(vec![
+        json!({ "type": "response.created", "response": { "id": "resp_1" } }),
+        json!({ "type": "response.output_text.delta", "delta": "ok" }),
+        json!({
+            "type": "response.output_item.done",
+            "item": {
+                "type": "message",
+                "role": "assistant",
+                "content": [{ "type": "output_text", "text": "ok" }],
+            },
+        }),
+        completed(),
+    ]))
+    .await;
+
+    let endpoint = upstream.url.clone();
+    let conduits: codex_cc_proxy::ingress::ConduitFactory = Arc::new(move || {
+        Arc::new(codex_cc_proxy::upstream::conduit::Conduit::new(
+            Arc::new(HttpTransport::new(endpoint.clone())),
+            // No WebSocket here: this asserts the conduit is *used*, and HTTP
+            // is the transport a replay server can answer.
+            None,
+        ))
+    });
+
+    let state = AppState {
+        transport: Arc::new(HttpTransport::new(upstream.url.clone())),
+        conduits: Some(conduits),
+        models: Arc::new(vec![ModelMapping {
+            requested: "claude-sonnet-4".to_owned(),
+            upstream: "gpt-5-codex".to_owned(),
+        }]),
+        recorder: None,
+        record_ingress: false,
+        sessions: Arc::new(codex_cc_proxy::session::SessionStore::new()),
+    };
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, router(state)).await;
+    });
+
+    let client = reqwest::Client::new();
+    let post = |body: Value| {
+        let client = client.clone();
+        async move {
+            client
+                .post(format!("http://{addr}/v1/messages"))
+                .json(&body)
+                .send()
+                .await
+                .unwrap()
+                .text()
+                .await
+                .unwrap()
+        }
+    };
+
+    let first = json!({
+        "model": "claude-sonnet-4",
+        "max_tokens": 512,
+        "messages": [{ "role": "user", "content": "opening" }],
+    });
+    let _ = post(first).await;
+
+    // The same conversation, extended by the reply the server produced and one
+    // new user turn.
+    let second = json!({
+        "model": "claude-sonnet-4",
+        "max_tokens": 512,
+        "messages": [
+            { "role": "user", "content": "opening" },
+            { "role": "assistant", "content": "ok" },
+            { "role": "user", "content": "next" },
+        ],
+    });
+    let _ = post(second).await;
+
+    let sent = upstream.requests();
+    assert_eq!(sent.len(), 2);
+
+    // The server's own item is in the baseline, so the second turn does not
+    // resend it — and the cache key is stable across both.
+    assert_eq!(sent[0]["prompt_cache_key"], sent[1]["prompt_cache_key"]);
+    assert_eq!(
+        sent[1]["input"].as_array().map(Vec::len),
+        Some(3),
+        "the second turn should carry the whole conversation over HTTP"
+    );
+}
+
+/// Credentials reach the upstream request. Without this every real request
+///401s, and no test that uses a credential-free replay server would notice.
+#[tokio::test]
+async fn upstream_requests_carry_the_access_token() {
+    use codex_cc_proxy::auth::store::CredentialStore;
+
+    let dir = tempfile::tempdir().unwrap();
+    let store = codex_cc_proxy::auth::store::FileStore::new(dir.path().join("credentials.json"));
+    store
+        .save(&codex_cc_proxy::auth::store::Credentials {
+            access_token: "token-abc".to_owned(),
+            refresh_token: "r".to_owned(),
+            id_token: None,
+            account_id: Some("acct_7".to_owned()),
+            // Far future, so nothing tries to refresh.
+            expires_at: Some(4_000_000_000),
+        })
+        .unwrap();
+
+    let upstream = ReplayServer::start(Behavior::Events(vec![
+        json!({ "type": "response.created", "response": { "id": "resp_1" } }),
+        completed(),
+    ]))
+    .await;
+
+    let tokens = Arc::new(codex_cc_proxy::auth::tokens::TokenSource::new(
+        Arc::new(store) as Arc<dyn CredentialStore>,
+        "http://127.0.0.1:1/unused".to_owned(),
+        "client",
+        Arc::new(codex_cc_proxy::auth::tokens::SystemClock),
+    ));
+
+    let transport = HttpTransport::new(upstream.url.clone()).with_credentials(Arc::clone(&tokens));
+
+    let request = codex_cc_proxy_core::responses::ResponsesRequest {
+        model: "gpt-5-codex".to_owned(),
+        ..Default::default()
+    };
+    let _ = codex_cc_proxy::upstream::Transport::stream(&transport, &request)
+        .await
+        .expect("the request should reach the replay server");
+
+    let headers = upstream.headers();
+    assert_eq!(
+        headers[0].get("authorization").map(String::as_str),
+        Some("Bearer token-abc")
+    );
+    assert_eq!(
+        headers[0].get("chatgpt-account-id").map(String::as_str),
+        Some("acct_7")
     );
 }

@@ -120,6 +120,7 @@ async fn run_one(probe: &probe::Probe, fixture: &Fixture) -> Outcome {
 
     let state = AppState {
         transport: Arc::clone(&transport) as Arc<dyn Transport>,
+        conduits: None,
         models: Arc::new(vec![ModelMapping {
             requested: "claude-sonnet-4".to_owned(),
             upstream: "gpt-5-codex".to_owned(),

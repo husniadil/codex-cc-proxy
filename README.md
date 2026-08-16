@@ -119,7 +119,10 @@ testable as a pure function over recorded data.
 
 WebSocket is primary and HTTP is its fallback, but neither is a degraded version
 of the other — the backend closes WebSocket connections under policy conditions
-often enough that HTTP is a normal operating mode.
+often enough that HTTP is a normal operating mode. A session that falls back
+stays fallen back rather than retrying the socket every turn.
+
+Set `websocket = false` under `[transport]` to use HTTP only.
 
 ---
 

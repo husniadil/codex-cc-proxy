@@ -23,6 +23,9 @@ use std::sync::Arc;
 /// `docs/api.md` §7.
 const UPSTREAM_ENDPOINT: &str = "https://chatgpt.com/backend-api/codex/responses";
 
+/// The same surface over a socket.
+const UPSTREAM_WEBSOCKET: &str = "wss://chatgpt.com/backend-api/codex/responses";
+
 #[tokio::main]
 async fn main() -> Result<()> {
     init_tracing();
@@ -191,8 +194,43 @@ async fn run_with(args: RunArgs, record_ingress: bool) -> Result<()> {
         }
     });
 
+    // Credentials are fetched per request rather than captured here, so a
+    // refresh part-way through a session is transparent to both transports.
+    let tokens = Arc::new(codex_cc_proxy::auth::tokens::TokenSource::new(
+        Arc::clone(&credentials),
+        codex_cc_proxy::auth::flow::token_endpoint(),
+        codex_cc_proxy::auth::flow::CLIENT_ID,
+        Arc::new(codex_cc_proxy::auth::tokens::SystemClock),
+    ));
+
+    // One conduit per conversation, built on its first turn. The binding is per
+    // session because latching, the pooled connection, and the previous
+    // response id all belong to one conversation.
+    let websocket_enabled = config.transport.websocket;
+    let compression = config.transport.compression;
+    let conduit_tokens = Arc::clone(&tokens);
+    let conduits: codex_cc_proxy::ingress::ConduitFactory = Arc::new(move || {
+        let http = Arc::new(
+            HttpTransport::new(UPSTREAM_ENDPOINT).with_credentials(Arc::clone(&conduit_tokens)),
+        );
+        let websocket = websocket_enabled.then(|| {
+            Arc::new(
+                codex_cc_proxy::upstream::websocket::WebSocketTransport::new(UPSTREAM_WEBSOCKET)
+                    .with_credentials(Arc::clone(&conduit_tokens))
+                    .with_compression(compression),
+            )
+        });
+        Arc::new(codex_cc_proxy::upstream::conduit::Conduit::new(
+            http, websocket,
+        ))
+    });
+
     let state = AppState {
-        transport: Arc::new(HttpTransport::new(UPSTREAM_ENDPOINT)),
+        // Only reached if the factory is absent, which it is not here.
+        transport: Arc::new(
+            HttpTransport::new(UPSTREAM_ENDPOINT).with_credentials(Arc::clone(&tokens)),
+        ),
+        conduits: Some(conduits),
         models: Arc::new(
             tiers
                 .into_iter()
@@ -217,20 +255,12 @@ async fn run_with(args: RunArgs, record_ingress: bool) -> Result<()> {
 }
 
 /// Where credentials live. Never the configuration file (§8).
+///
+/// The same directory the configuration is read from, resolved by the same
+/// function: two copies of this rule drift, and the copy that drifts sends the
+/// daemon looking for credentials somewhere the login never wrote them.
 fn credential_path() -> std::path::PathBuf {
-    std::env::var_os("CODEX_CC_PROXY_HOME")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| dirs_config_dir().join("codex-cc-proxy"))
-        .join("credentials.json")
-}
-
-fn dirs_config_dir() -> std::path::PathBuf {
-    std::env::var_os("XDG_CONFIG_HOME")
-        .map(std::path::PathBuf::from)
-        .or_else(|| {
-            std::env::var_os("HOME").map(|home| std::path::PathBuf::from(home).join(".config"))
-        })
-        .unwrap_or_else(std::env::temp_dir)
+    codex_cc_proxy::config::config_dir().join("credentials.json")
 }
 
 fn init_tracing() {

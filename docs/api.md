@@ -164,9 +164,9 @@ new daemon work.
 
 ## 4. Configuration
 
-TOML in the platform configuration directory, watched and applied without
-restart. Environment variables override file values. Credentials are never stored
-here.
+TOML in the platform configuration directory — `$CODEX_CC_PROXY_HOME`, else
+`$XDG_CONFIG_HOME/codex-cc-proxy`, else `~/.config/codex-cc-proxy`. Credentials
+are never stored here.
 
 ```toml
 port = 8787
@@ -180,13 +180,18 @@ fable  = "..."
 [transport]
 websocket   = true
 compression = true
-
-[estimator]
-backend = "calibrated"   # or "tokenizer"
 ```
 
 All four tiers are required. The daemon refuses to start without them, and
 validates each against the live catalog when one is reachable.
+
+The file is read once, at startup: **v0.1 does not watch it**, and a change
+takes effect on the next `run`. `--port` is the only override outside the file.
+The estimator backend is likewise not a configuration key in v0.1 — the
+tokenizer is a compile-time feature (`--features tokenizer`), because which
+estimator wins is a measurement rather than an operator's choice
+(`proxy-behavior.md` §6.3). An unrecognized key is ignored rather than refused, so a
+key that does not exist yet is silently inert.
 
 ---
 

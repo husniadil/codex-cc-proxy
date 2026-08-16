@@ -76,8 +76,9 @@ pub fn worth_compressing(payload: &str) -> bool {
 
 pub struct WebSocketTransport {
     endpoint: String,
-    access_token: Option<String>,
-    account_id: Option<String>,
+    /// Asked for a token per connection, for the same reason as the HTTP
+    /// transport: a captured token goes stale when the session refreshes.
+    credentials: Option<std::sync::Arc<crate::auth::tokens::TokenSource>>,
     compression: bool,
 }
 
@@ -96,19 +97,16 @@ impl WebSocketTransport {
     pub fn new(endpoint: impl Into<String>) -> Self {
         Self {
             endpoint: endpoint.into(),
-            access_token: None,
-            account_id: None,
+            credentials: None,
             compression: true,
         }
     }
 
     pub fn with_credentials(
         mut self,
-        access_token: Option<String>,
-        account_id: Option<String>,
+        credentials: std::sync::Arc<crate::auth::tokens::TokenSource>,
     ) -> Self {
-        self.access_token = access_token;
-        self.account_id = account_id;
+        self.credentials = Some(credentials);
         self
     }
 
@@ -122,7 +120,7 @@ impl WebSocketTransport {
     /// Separate from `open` because a pooled connection outlives the turn that
     /// created it (§4.1), so opening and sending are no longer the same act.
     pub async fn connect(&self) -> Result<super::pool::PooledConnection, ProxyError> {
-        let handshake = self.handshake()?;
+        let handshake = self.handshake().await?;
         let (stream, _) = tokio_tungstenite::connect_async(handshake)
             .await
             .map_err(|error| {
@@ -131,7 +129,9 @@ impl WebSocketTransport {
         Ok(super::pool::PooledConnection::new(stream, self.compression))
     }
 
-    fn handshake(&self) -> Result<tokio_tungstenite::tungstenite::http::Request<()>, ProxyError> {
+    async fn handshake(
+        &self,
+    ) -> Result<tokio_tungstenite::tungstenite::http::Request<()>, ProxyError> {
         use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 
         let mut handshake = self
@@ -149,15 +149,16 @@ impl WebSocketTransport {
                 ProxyError::invalid_request("the beta header is not a valid header value")
             })?,
         );
-        if let Some(token) = &self.access_token
-            && let Ok(value) = format!("Bearer {token}").parse()
-        {
-            headers.insert(axum::http::header::AUTHORIZATION, value);
-        }
-        if let Some(account) = &self.account_id
-            && let Ok(value) = account.parse()
-        {
-            headers.insert("chatgpt-account-id", value);
+        if let Some(credentials) = &self.credentials {
+            let token = credentials.access_token().await?;
+            if let Ok(value) = format!("Bearer {token}").parse() {
+                headers.insert(axum::http::header::AUTHORIZATION, value);
+            }
+            if let Some(account) = credentials.account_id()
+                && let Ok(value) = account.parse()
+            {
+                headers.insert("chatgpt-account-id", value);
+            }
         }
 
         Ok(handshake)
@@ -169,7 +170,7 @@ impl WebSocketTransport {
         request: &ResponsesRequest,
         previous_response_id: Option<String>,
     ) -> Result<Connection, ProxyError> {
-        let handshake = self.handshake()?;
+        let handshake = self.handshake().await?;
 
         let (stream, _) = tokio_tungstenite::connect_async(handshake)
             .await

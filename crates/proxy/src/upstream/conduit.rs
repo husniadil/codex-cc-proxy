@@ -12,6 +12,13 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 
+/// A WebSocket attempt that did not produce a turn, and whether it happened on
+/// a connection carried over from an earlier one.
+struct WebSocketFailure {
+    error: ProxyError,
+    reused: bool,
+}
+
 /// What one turn was actually sent as, for the caller to record.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Sent {
@@ -81,19 +88,35 @@ impl Conduit {
                 Upload::Full => (request.clone(), None, Sent::Full),
             };
 
-            match self
+            let attempt = self
                 .send_over_websocket(websocket, &payload, previous)
-                .await
-            {
+                .await;
+
+            let attempt = match attempt {
                 Ok(events) => return Ok((events, sent)),
-                Err(error) => {
-                    // A policy close or a refused handshake is not a failed
-                    // turn. The turn proceeds over HTTP, and this session does
-                    // not try the WebSocket again.
-                    tracing::info!(%error, "falling back to HTTP for this session");
-                    self.latched_to_http.store(true, Ordering::SeqCst);
+                // A pooled socket the backend closed while it was idle is not
+                // evidence that this session cannot use the WebSocket. It is
+                // retried once on a fresh connection — as a *full* send, because
+                // `previous_response_id` names a response the closed socket held
+                // and the new one knows nothing about. Replaying the delta
+                // against it would attach the turn to a conversation that does
+                // not exist there, which is exactly the silent corruption a
+                // full send exists to avoid.
+                Err(failure) if failure.reused => {
+                    tracing::debug!(error = %failure.error, "the pooled connection had expired");
+                    match self.send_over_websocket(websocket, request, None).await {
+                        Ok(events) => return Ok((events, Sent::Full)),
+                        Err(failure) => failure,
+                    }
                 }
-            }
+                Err(failure) => failure,
+            };
+
+            // A policy close or a refused handshake is not a failed turn. The
+            // turn proceeds over HTTP, and this session does not try the
+            // WebSocket again.
+            tracing::info!(error = %attempt.error, "falling back to HTTP for this session");
+            self.latched_to_http.store(true, Ordering::SeqCst);
         }
 
         // HTTP is stateless: it always carries the whole conversation.
@@ -102,30 +125,30 @@ impl Conduit {
     }
 
     /// Send over the pooled connection, opening one if there is none.
+    ///
+    /// The failure says whether it happened on a connection this session had
+    /// been holding, because that distinguishes "the WebSocket does not work
+    /// here" from "the socket went stale between turns" — and only the first is
+    /// a reason to latch (§4.2).
     async fn send_over_websocket(
         &self,
         websocket: &WebSocketTransport,
         request: &ResponsesRequest,
         previous_response_id: Option<String>,
-    ) -> Result<super::EventStream, ProxyError> {
+    ) -> Result<super::EventStream, WebSocketFailure> {
         let pooled = self.connection.lock().await.take();
+        let reused = pooled.is_some();
+        let failed = |error: ProxyError| WebSocketFailure { error, reused };
 
         let mut connection = match pooled {
             Some(connection) => connection,
-            None => websocket.connect().await?,
+            None => websocket.connect().await.map_err(failed)?,
         };
 
-        // A send that fails on a reused connection is retried once on a fresh
-        // one. The backend closes idle connections, and a turn must not be lost
-        // to a socket that expired between requests.
-        if connection
-            .send(request, previous_response_id.clone(), true)
+        connection
+            .send(request, previous_response_id, true)
             .await
-            .is_err()
-        {
-            connection = websocket.connect().await?;
-            connection.send(request, previous_response_id, true).await?;
-        }
+            .map_err(failed)?;
 
         // The first event is read before the connection is handed over.
         //
@@ -133,10 +156,14 @@ impl Conduit {
         // that sent successfully is not yet a socket that works. Handing back
         // an empty stream would render as a turn where the model said nothing
         // — a silent failure standing exactly where the fallback belongs.
-        let Some(first) = connection.next_event().await else {
-            return Err(ProxyError::overloaded(
-                "the websocket closed before sending anything".to_owned(),
-            ));
+        let first = match connection.next_event().await {
+            Some(Err(error)) if reused => return Err(failed(error)),
+            Some(first) => first,
+            None => {
+                return Err(failed(ProxyError::overloaded(
+                    "the websocket closed before sending anything".to_owned(),
+                )));
+            }
         };
 
         Ok(super::pool::pump(
@@ -165,7 +192,13 @@ impl Conduit {
         match websocket.connect().await {
             Ok(mut connection) => {
                 if connection.send(request, None, false).await.is_ok() {
-                    *self.connection.lock().await = Some(connection);
+                    // Re-checked under the lock: a turn may have started
+                    // between the check above and here, and overwriting its
+                    // connection would drop an open socket mid-conversation.
+                    let mut slot = self.connection.lock().await;
+                    if slot.is_none() {
+                        *slot = Some(connection);
+                    }
                 }
             }
             Err(error) => {

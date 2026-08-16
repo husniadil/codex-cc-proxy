@@ -19,6 +19,14 @@ const CAPACITY: usize = 64;
 
 pub struct Session {
     pub baseline: Mutex<Baseline>,
+    /// §4.2 — the transport binding, created on this conversation's first turn
+    /// and kept for its life. Latching lives here, so a session that fell back
+    /// stays fallen back.
+    pub conduit: tokio::sync::OnceCell<Arc<crate::upstream::conduit::Conduit>>,
+    /// What the last turn sent and what came back, which is what a delta
+    /// continues (§4.3).
+    pub last_request: Mutex<Option<codex_cc_proxy_core::responses::ResponsesRequest>>,
+    pub last_response_id: Mutex<Option<String>>,
     pub estimator: CalibratedEstimator,
     /// Tools this conversation has seen discovered (§2.5).
     pub discovered_tools: Mutex<BTreeSet<String>>,
@@ -31,9 +39,47 @@ impl Session {
     fn new(cache_key: String) -> Self {
         Self {
             baseline: Mutex::new(Baseline::new()),
+            conduit: tokio::sync::OnceCell::new(),
+            last_request: Mutex::new(None),
+            last_response_id: Mutex::new(None),
             estimator: CalibratedEstimator::new(),
             discovered_tools: Mutex::new(BTreeSet::new()),
             cache_key,
+        }
+    }
+
+    /// The conduit for this conversation, built once.
+    pub async fn conduit(
+        &self,
+        build: impl FnOnce() -> Arc<crate::upstream::conduit::Conduit>,
+    ) -> Arc<crate::upstream::conduit::Conduit> {
+        Arc::clone(self.conduit.get_or_init(|| async { build() }).await)
+    }
+
+    pub fn previous(
+        &self,
+    ) -> (
+        Option<codex_cc_proxy_core::responses::ResponsesRequest>,
+        Option<String>,
+    ) {
+        (
+            self.last_request.lock().ok().and_then(|held| held.clone()),
+            self.last_response_id
+                .lock()
+                .ok()
+                .and_then(|held| held.clone()),
+        )
+    }
+
+    pub fn remember_request(&self, request: &codex_cc_proxy_core::responses::ResponsesRequest) {
+        if let Ok(mut held) = self.last_request.lock() {
+            *held = Some(request.clone());
+        }
+    }
+
+    pub fn remember_response(&self, id: String) {
+        if let Ok(mut held) = self.last_response_id.lock() {
+            *held = Some(id);
         }
     }
 
@@ -90,7 +136,40 @@ impl SessionStore {
             return Arc::new(Session::new(self.next_key()));
         };
 
-        let matched = sessions
+        let matched = Self::best_match(&sessions, input);
+
+        if let Some(index) = matched {
+            // Most recently used moves to the front, so eviction takes the
+            // conversation nobody is having.
+            let session = sessions.remove(index);
+            sessions.insert(0, Arc::clone(&session));
+            return session;
+        }
+
+        let session = Arc::new(Session::new(self.next_key()));
+        sessions.insert(0, Arc::clone(&session));
+        sessions.truncate(CAPACITY);
+        session
+    }
+
+    /// The session this input continues, if there already is one.
+    ///
+    /// Unlike `resolve` this creates nothing and reorders nothing. A read-only
+    /// caller — pre-flight sizing (§5) — must not enter a conversation into the
+    /// store: the entry would never advance, it would match every first turn
+    /// that followed, and at capacity it would evict a conversation someone is
+    /// actually having.
+    pub fn lookup(&self, input: &[InputItem]) -> Option<Arc<Session>> {
+        let sessions = self.sessions.lock().ok()?;
+        Self::best_match(&sessions, input)
+            .and_then(|index| sessions.get(index))
+            .map(Arc::clone)
+    }
+
+    /// The longest baseline this input extends: the most specific continuation,
+    /// of which any shorter match is a prefix.
+    fn best_match(sessions: &[Arc<Session>], input: &[InputItem]) -> Option<usize> {
+        sessions
             .iter()
             .enumerate()
             .filter(|(_, session)| {
@@ -107,20 +186,7 @@ impl SessionStore {
                     .map(|baseline| baseline.len())
                     .unwrap_or(0)
             })
-            .map(|(index, _)| index);
-
-        if let Some(index) = matched {
-            // Most recently used moves to the front, so eviction takes the
-            // conversation nobody is having.
-            let session = sessions.remove(index);
-            sessions.insert(0, Arc::clone(&session));
-            return session;
-        }
-
-        let session = Arc::new(Session::new(self.next_key()));
-        sessions.insert(0, Arc::clone(&session));
-        sessions.truncate(CAPACITY);
-        session
+            .map(|(index, _)| index)
     }
 
     pub fn len(&self) -> usize {

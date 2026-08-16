@@ -125,13 +125,13 @@ pub fn pump(
     let _ = sender.unbounded_send(first);
 
     tokio::spawn(async move {
-        let mut healthy = first_ends_turn;
+        let mut healthy = false;
 
         if first_failed {
             return;
         }
         if first_ends_turn {
-            *slot.lock().await = Some(connection);
+            park(slot, connection).await;
             return;
         }
 
@@ -159,9 +159,25 @@ pub fn pump(
         }
 
         if healthy {
-            *slot.lock().await = Some(connection);
+            park(slot, connection).await;
         }
     });
 
     receiver.boxed()
+}
+
+/// Hand a connection back, unless the session already holds one.
+///
+/// Two turns can overlap — a prewarm and the turn that overtook it, or two
+/// concurrent requests — and each opens its own socket when the slot is empty.
+/// Overwriting is how the loser's socket gets dropped while it is still open,
+/// so the loser closes instead.
+async fn park(
+    slot: std::sync::Arc<tokio::sync::Mutex<Option<PooledConnection>>>,
+    connection: PooledConnection,
+) {
+    let mut slot = slot.lock().await;
+    if slot.is_none() {
+        *slot = Some(connection);
+    }
 }

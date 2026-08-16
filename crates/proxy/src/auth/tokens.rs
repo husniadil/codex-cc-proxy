@@ -105,6 +105,11 @@ impl TokenSource {
         self.dead.load(Ordering::SeqCst)
     }
 
+    /// The account this grant belongs to, sent upstream as a header.
+    pub fn account_id(&self) -> Option<String> {
+        self.store.load().ok().flatten().and_then(|c| c.account_id)
+    }
+
     /// A usable access token, refreshing first if it is due.
     pub async fn access_token(&self) -> Result<String, ProxyError> {
         if self.is_dead() {

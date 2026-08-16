@@ -29,9 +29,21 @@ use futures::stream;
 use serde_json::Value;
 use std::sync::Arc;
 
+/// How a session's transport binding is built.
+///
+/// A factory rather than a transport, because the binding is per conversation:
+/// latching, the pooled connection, and the previous response id all belong to
+/// one conversation and must not be shared between two.
+pub type ConduitFactory = Arc<dyn Fn() -> Arc<crate::upstream::conduit::Conduit> + Send + Sync>;
+
 #[derive(Clone)]
 pub struct AppState {
+    /// Used when no factory is supplied — a single stateless transport, which
+    /// is what the probes and most tests want.
     pub transport: Arc<dyn Transport>,
+    /// Present in the running daemon. Its absence is what makes a test able to
+    /// drive one fixed transport.
+    pub conduits: Option<ConduitFactory>,
     /// Tier name to upstream model id.
     pub models: Arc<Vec<ModelMapping>>,
     /// Where captures are written. Always present: §5.4 records every empty
@@ -88,6 +100,11 @@ async fn models(State(state): State<AppState>) -> Response {
 /// knowledge. A fresh estimator per call would leave `count_tokens` permanently
 /// uncalibrated no matter how long the session had run — which is not what §5
 /// says, and not what a caller sizing a request would expect.
+///
+/// Sizing is read-only: a conversation the store does not know is answered from
+/// a fresh estimator rather than entered into it. An entry made here would never
+/// advance its baseline, an empty baseline extends into anything (§3.1), and at
+/// capacity it would evict a conversation that is actually running.
 async fn count_tokens(
     State(state): State<AppState>,
     body: Result<Json<MessagesRequest>, axum::extract::rejection::JsonRejection>,
@@ -100,8 +117,10 @@ async fn count_tokens(
     };
 
     let probe = translate_request(&request, &TranslateOptions::default());
-    let session = state.sessions.resolve(&probe.input);
-    let estimate = session.estimator.estimate(&request);
+    let estimate = match state.sessions.lookup(&probe.input) {
+        Some(session) => session.estimator.estimate(&request),
+        None => crate::estimate::estimate_input_tokens(&request),
+    };
 
     Json(serde_json::json!({ "input_tokens": estimate })).into_response()
 }
@@ -156,11 +175,39 @@ async fn messages(
         );
     }
 
-    let events = match state.transport.stream(&translated).await {
-        Ok(events) => events,
-        // Nothing has been written yet, so this can still be a status.
-        Err(error) => return error.into_response(),
+    let (previous_request, previous_response_id) = session.previous();
+
+    let events = match &state.conduits {
+        Some(factory) => {
+            let factory = Arc::clone(factory);
+            let conduit = session.conduit(move || factory()).await;
+            let baseline = session
+                .baseline
+                .lock()
+                .map(|baseline| baseline.clone())
+                .unwrap_or_default();
+
+            match conduit
+                .send(
+                    &translated,
+                    &baseline,
+                    previous_request.as_ref(),
+                    previous_response_id.as_deref(),
+                )
+                .await
+            {
+                Ok((events, _sent)) => events,
+                Err(error) => return error.into_response(),
+            }
+        }
+        None => match state.transport.stream(&translated).await {
+            Ok(events) => events,
+            // Nothing has been written yet, so this can still be a status.
+            Err(error) => return error.into_response(),
+        },
     };
+
+    session.remember_request(&translated);
 
     // §6.2 — the estimate carried in `message_start`, corrected by everything
     // this conversation has already learned.
@@ -187,6 +234,8 @@ async fn messages(
             session: Arc::clone(&session),
             estimate,
         },
+        Arc::clone(&session),
+        translated.input,
     )
 }
 
@@ -200,6 +249,8 @@ fn sse_response(
     translator: ResponseTranslator,
     empty_stream_watch: Option<(crate::recorder::Recorder, Value)>,
     calibration: Calibration,
+    session: Arc<crate::session::Session>,
+    sent_input: Vec<codex_cc_proxy_core::responses::InputItem>,
 ) -> Response {
     let state = StreamState {
         translator,
@@ -208,6 +259,8 @@ fn sse_response(
         produced_content: false,
         watch: empty_stream_watch,
         calibration,
+        session,
+        sent_input,
     };
 
     let body = stream::unfold((events, state), |(mut events, mut state)| async move {
@@ -246,6 +299,7 @@ fn sse_response(
                 let frames = state.translator.finish();
                 state.done = true;
                 state.calibrate();
+                state.close_turn();
                 state.record_if_empty();
                 if frames.is_empty() {
                     return None;
@@ -282,6 +336,10 @@ struct StreamState {
     produced_content: bool,
     watch: Option<(crate::recorder::Recorder, Value)>,
     calibration: Calibration,
+    session: Arc<crate::session::Session>,
+    /// What this turn put on the wire, which together with what the server adds
+    /// becomes the baseline the next turn must extend (§4.3).
+    sent_input: Vec<codex_cc_proxy_core::responses::InputItem>,
 }
 
 impl StreamState {
@@ -310,6 +368,32 @@ impl StreamState {
             .session
             .estimator
             .observe(self.calibration.estimate, actual);
+    }
+
+    /// §3.3 and §4.3 — record what the server added, and what it called the
+    /// response.
+    ///
+    /// The baseline is only correct once the server's own items are in it.
+    /// Without them the next turn's delta would resend what the backend already
+    /// has, or worse, be computed against a conversation neither side holds.
+    fn close_turn(&self) {
+        let mut returned: Vec<codex_cc_proxy_core::responses::InputItem> = Vec::new();
+
+        for event in &self.seen {
+            if let Some(id) = event.pointer("/response/id").and_then(Value::as_str) {
+                self.session.remember_response(id.to_owned());
+            }
+            if event.get("type").and_then(Value::as_str) == Some("response.output_item.done")
+                && let Some(item) = event.get("item")
+                && let Ok(parsed) = serde_json::from_value::<
+                    codex_cc_proxy_core::responses::InputItem,
+                >(item.clone())
+            {
+                returned.push(parsed);
+            }
+        }
+
+        self.session.advance(&self.sent_input, &returned);
     }
 
     /// §5.4 — a stream that completes having produced no content frames is

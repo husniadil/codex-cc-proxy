@@ -231,6 +231,9 @@ enum WsBehavior {
     /// Close immediately with a policy code, as the backend does on some
     /// accounts. Fallback is not a rare path.
     PolicyClose,
+    /// Serve one turn, then close — the idle connection the backend reaps
+    /// between turns. The next turn finds a socket that is already gone.
+    CloseAfterTurn,
 }
 
 impl WsServer {
@@ -299,6 +302,11 @@ impl WsServer {
                                     event.to_string().into(),
                                 ))
                                 .await;
+                        }
+
+                        if matches!(behavior, WsBehavior::CloseAfterTurn) {
+                            let _ = socket.close(None).await;
+                            break;
                         }
                     }
                 });
@@ -913,4 +921,55 @@ async fn a_latched_session_does_not_prewarm() {
         "a latched session tried to prewarm"
     );
     assert!(!conduit.has_pooled_connection().await);
+}
+
+/// §4.1 — a pooled connection the backend reaped between turns costs a
+/// handshake, not the session's transport and not the conversation.
+///
+/// Two things must hold, and the second is the dangerous one. The session must
+/// not latch to HTTP for the rest of its life over one stale socket; and the
+/// retry must go out as a *full* send, because `previous_response_id` names a
+/// response the closed socket held. Replaying the delta against a connection
+/// that never saw it uploads a fragment as though it were the conversation —
+/// the silent corruption a full send exists to avoid.
+#[tokio::test]
+async fn a_stale_pooled_connection_retries_as_a_full_send() {
+    let ws = WsServer::start(stream_events(), WsBehavior::CloseAfterTurn).await;
+    let addr = start_http().await;
+    let conduit = Conduit::new(
+        Arc::new(HttpTransport::new(format!("http://{addr}/responses"))),
+        Some(Arc::new(
+            WebSocketTransport::new(ws.url.clone()).with_compression(false),
+        )),
+    );
+
+    let (state, sends) = drive(&conduit, 2).await;
+
+    assert!(
+        !conduit.is_latched_to_http(),
+        "one expired socket latched the whole session to HTTP"
+    );
+    assert_eq!(
+        ws.connections(),
+        2,
+        "the second turn did not reopen the connection"
+    );
+    assert_eq!(
+        sends,
+        vec![Sent::Full, Sent::Full],
+        "the retry was recorded as a delta"
+    );
+
+    for frame in ws.received() {
+        let frame: Value = serde_json::from_str(&frame).unwrap();
+        assert!(
+            frame.get("previous_response_id").is_none_or(Value::is_null),
+            "a delta was replayed on a connection that never saw the response it names: {frame}"
+        );
+    }
+
+    // And the conversation upstream ends up where HTTP would have put it.
+    let http_addr = start_http().await;
+    let (http_state, _) = drive(&http_only(http_addr), 2).await;
+    assert_eq!(state, http_state);
 }

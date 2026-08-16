@@ -45,15 +45,18 @@ pub enum Behavior {
 pub struct ReplayServer {
     pub url: String,
     requests: Arc<Mutex<Vec<Value>>>,
+    headers: Arc<Mutex<Vec<std::collections::BTreeMap<String, String>>>>,
 }
 
 impl ReplayServer {
     /// Start a server on an ephemeral loopback port.
     pub async fn start(behavior: Behavior) -> Self {
         let requests = Arc::new(Mutex::new(Vec::new()));
+        let headers = Arc::new(Mutex::new(Vec::new()));
         let state = ServerState {
             behavior: Arc::new(behavior),
             requests: Arc::clone(&requests),
+            headers: Arc::clone(&headers),
         };
 
         let app = Router::new()
@@ -72,7 +75,16 @@ impl ReplayServer {
         Self {
             url: format!("http://{addr}/responses"),
             requests,
+            headers,
         }
+    }
+
+    /// Every request's headers, lowercased, in order.
+    pub fn headers(&self) -> Vec<std::collections::BTreeMap<String, String>> {
+        self.headers
+            .lock()
+            .map(|got| got.clone())
+            .unwrap_or_default()
     }
 
     /// Every request body the server received, in order.
@@ -88,9 +100,25 @@ impl ReplayServer {
 struct ServerState {
     behavior: Arc<Behavior>,
     requests: Arc<Mutex<Vec<Value>>>,
+    headers: Arc<Mutex<Vec<std::collections::BTreeMap<String, String>>>>,
 }
 
-async fn handle(State(state): State<ServerState>, body: String) -> Response {
+async fn handle(
+    State(state): State<ServerState>,
+    request_headers: axum::http::HeaderMap,
+    body: String,
+) -> Response {
+    if let Ok(mut headers) = state.headers.lock() {
+        headers.push(
+            request_headers
+                .iter()
+                .filter_map(|(name, value)| {
+                    Some((name.as_str().to_owned(), value.to_str().ok()?.to_owned()))
+                })
+                .collect(),
+        );
+    }
+
     if let Ok(parsed) = serde_json::from_str::<Value>(&body)
         && let Ok(mut requests) = state.requests.lock()
     {

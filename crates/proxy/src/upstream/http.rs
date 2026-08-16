@@ -8,6 +8,7 @@ use codex_cc_proxy_core::responses::ResponsesRequest;
 use codex_cc_proxy_core::sse::SseDecoder;
 use futures::StreamExt;
 use futures::stream;
+use std::sync::Arc;
 
 /// The identity this proxy presents upstream.
 ///
@@ -20,10 +21,12 @@ const ORIGINATOR: &str = "codex_cli_rs";
 pub struct HttpTransport {
     client: reqwest::Client,
     endpoint: String,
-    /// Supplied per request in the finished daemon. Held here so the transport
-    /// can be exercised against a replay server that wants no credentials.
-    access_token: Option<String>,
-    account_id: Option<String>,
+    /// Asked for a token per request rather than handed one at construction.
+    /// A token captured once goes stale the moment the session refreshes, and
+    /// the failure is a 401 halfway through a working conversation.
+    ///
+    /// `None` for a replay server, which wants no credentials at all.
+    credentials: Option<Arc<crate::auth::tokens::TokenSource>>,
 }
 
 impl HttpTransport {
@@ -31,18 +34,12 @@ impl HttpTransport {
         Self {
             client: reqwest::Client::new(),
             endpoint: endpoint.into(),
-            access_token: None,
-            account_id: None,
+            credentials: None,
         }
     }
 
-    pub fn with_credentials(
-        mut self,
-        access_token: Option<String>,
-        account_id: Option<String>,
-    ) -> Self {
-        self.access_token = access_token;
-        self.account_id = account_id;
+    pub fn with_credentials(mut self, credentials: Arc<crate::auth::tokens::TokenSource>) -> Self {
+        self.credentials = Some(credentials);
         self
     }
 }
@@ -61,11 +58,11 @@ impl Transport for HttpTransport {
             )
             .json(request);
 
-        if let Some(token) = &self.access_token {
-            builder = builder.bearer_auth(token);
-        }
-        if let Some(account) = &self.account_id {
-            builder = builder.header("chatgpt-account-id", account);
+        if let Some(credentials) = &self.credentials {
+            builder = builder.bearer_auth(credentials.access_token().await?);
+            if let Some(account) = credentials.account_id() {
+                builder = builder.header("chatgpt-account-id", account);
+            }
         }
 
         let response = builder.send().await.map_err(|error| {
