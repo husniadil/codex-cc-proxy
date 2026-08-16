@@ -444,3 +444,59 @@ async fn status_tells_an_unauthenticated_user_what_to_do() {
 
     assert!(rendered.contains("login"), "{rendered}");
 }
+
+/// §7.2 — `env` states the real window when the catalog knows it.
+///
+/// The client cannot recognize these model ids, so it assumes 200,000 and says
+/// so in a warning. That assumption is safe but wrong: a session compacts with
+/// a quarter of its context unused. Stating the measured figure replaces a
+/// guess with a fact.
+#[tokio::test]
+async fn env_states_the_real_context_window() {
+    let harness = Harness::start().await;
+    let result = harness.call("env").await.unwrap();
+    let rendered = render::env_shell(&result);
+
+    // The tiers here map to two models, 272000 and 200000. One variable covers
+    // all four tiers, so the smallest wins — it is the only one that cannot
+    // overrun. And the effective window rather than the raw one: 200000 × 95%.
+    assert!(
+        rendered.contains("export CLAUDE_CODE_MAX_CONTEXT_TOKENS=190000"),
+        "{rendered}"
+    );
+
+    // Stating the window without also setting where to compact is worse than
+    // saying nothing: the client drops its own 200,000 assumption and, not
+    // recognizing the model, then enforces no limit at all.
+    assert!(
+        rendered.contains("export CLAUDE_CODE_AUTO_COMPACT_WINDOW=190000"),
+        "{rendered}"
+    );
+}
+
+/// With no catalog there is no window to state, and none is invented. A guessed
+/// figure here would make the client compact against a number nobody measured.
+#[tokio::test]
+async fn env_states_no_window_when_the_catalog_is_unavailable() {
+    let dir = tempfile::tempdir().unwrap();
+    let state = ControlState {
+        port: 8787,
+        tiers: Arc::new(tiers()),
+        catalog: Arc::new(Catalog::fallback()),
+        credentials: Arc::new(FileStore::new(dir.path().join("c.json"))),
+        recording: Arc::new(AtomicBool::new(false)),
+    };
+
+    let response = control::answer(
+        &state,
+        &json!({ "jsonrpc": "2.0", "id": 1, "method": "env" }).to_string(),
+    );
+    let rendered = render::env_shell(&response.result.unwrap());
+
+    assert!(
+        !rendered.contains("CLAUDE_CODE_MAX_CONTEXT_TOKENS"),
+        "{rendered}"
+    );
+    // The one-sided floor is still set.
+    assert!(rendered.contains("CLAUDE_CODE_DISABLE_1M_CONTEXT=1"));
+}

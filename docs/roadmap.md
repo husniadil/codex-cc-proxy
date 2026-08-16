@@ -229,13 +229,14 @@ method, so whoever has quota can close it in one sitting.
 | ~~Does the backend accept the request shape — headers, `instructions`, tools? | **Answered.** Accepted as sent; a turn completes and the frame sequence is correct. |
 | What does the backend expect for a compressed request, if anything? | A bare zstd frame is refused with `400 Invalid request`. Compression is off by default until this is known. |
 | ~~Does WebSocket connect, or close with a policy code?~~ | **Answered.** It connects. No policy close was seen, and the catalog marks these models `prefer_websockets`. |
+| ~~Is `CLAUDE_CODE_DISABLE_1M_CONTEXT` inert for plain model ids?~~ | **Answered: no.** Without it the client appends `[1m]` to the unrecognized id and assumes a million tokens. The flag is load-bearing, not a precaution. |
 | ~~Does the context meter stay steady across a turn?~~ | **Answered.** `message_start` carries the estimate and `message_delta` replaces it with the true count. |
 | ~~What does the model catalog actually contain?~~ | **Answered.** It needs a `client_version` query parameter, and filters by it: a version below a model's `minimal_client_version` returns an empty list rather than an error. Entries are keyed by `slug`, state `visibility` as a word, and carry `supported_reasoning_levels`. |
 | Does it reject system and developer roles inside `input`, as assumed? | Deliberately send one; record the error |
 | Does it accept an `input_file` part, the one shape with no upstream precedent? | Read a PDF whose content is unguessable; check the answer, not the acceptance |
 | Does it accept a `tool_choice` other than `auto`? | Send `required`; the upstream client only ever sends `auto` |
-| Does `WebFetch` route through the haiku tier? | Map haiku to a distinguishable model; issue a `WebFetch`; check which model answered |
-| Does the backend emit `url_citation` annotations, or is `WebSearch` limited to opened pages? | Run a search that must cite; check whether titles arrive |
+| ~~Does `WebFetch` route through the haiku tier?~~ | **Answered for `WebSearch`.** With haiku on a distinguishable model, the client reported `query_source: web_search_tool` against the haiku model while the main turn used sonnet's. The secondary conversation does run on the cheap tier, so an unmapped haiku breaks it. `WebFetch` itself is untested. |
+| Does the backend emit `url_citation` annotations, or is `WebSearch` limited to opened pages? | **Partly answered.** A real search returns a usable URL to the client, so the reconstruction works end to end. Which source it came from — a citation or an opened page — needs a capture to distinguish. |
 | ~~Does incremental upload produce the same conversation live as on replay?~~ | **Answered, and it did not — twice.** The delta was empty on every continuing turn, so the backend answered from the previous response and the turn repeated itself. With that fixed, the session stopped matching as soon as the model returned a reasoning item, and every turn from the third on uploaded the whole conversation. Both fixed; a live four-turn conversation now uploads one item per turn. |
 | Do the real capability probes pass? | `doctor` against the live backend |
 | Is the true input count linear in the estimator's raw figure, as the offline fit assumes? | Record counts across a growing session; fit and check the residuals |

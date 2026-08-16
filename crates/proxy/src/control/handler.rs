@@ -147,6 +147,42 @@ pub fn environment(state: &ControlState) -> Vec<(String, String)> {
         ));
     }
 
+    // §7.2 — the real window, where the catalog knows it.
+    //
+    // The client cannot recognize these model ids, so it assumes 200,000 and
+    // says so. That assumption is safe but wrong: it compacts a session with a
+    // quarter of its context still unused. Stating the figure replaces a guess
+    // with a measurement.
+    //
+    // The smallest window across the mapped tiers, because one value covers
+    // them all and the smallest is the only one that cannot overrun. The
+    // effective window rather than the raw one, for the same reason the guard
+    // uses it (§7.0): what is left after instructions, tools and output.
+    if let Some(window) = state
+        .tiers
+        .iter()
+        .filter_map(|tier| state.catalog.get(&tier.model))
+        .filter_map(crate::catalog::Model::effective_window)
+        .min()
+    {
+        variables.push((
+            "CLAUDE_CODE_MAX_CONTEXT_TOKENS".to_owned(),
+            window.to_string(),
+        ));
+
+        // And compact at it.
+        //
+        // Stating the window alone is worse than saying nothing: the client
+        // stops applying its own 200,000 assumption and, not recognizing the
+        // model, enforces no limit at all — the session grows until the backend
+        // refuses it. Early compaction wastes context; late compaction fails
+        // the session, and this is the setting that decides which (§7.2).
+        variables.push((
+            "CLAUDE_CODE_AUTO_COMPACT_WINDOW".to_owned(),
+            window.to_string(),
+        ));
+    }
+
     // Inert for ordinary model ids, and set as a one-sided floor: should a
     // future client classify unknown ids as long-context, the assumption is
     // pinned down rather than raised (§7.2).

@@ -144,9 +144,17 @@ pub enum InputItem {
     Reasoning {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         id: Option<String>,
-        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        /// Always serialized, empty or not.
+        ///
+        /// The backend requires the field to be present and refuses the whole
+        /// request without it — `missing_required_parameter: input[1].summary`
+        /// — so omitting an empty one turns a reasoning turn into a rejected
+        /// request on the *next* turn, when the item is re-injected.
+        #[serde(default)]
         summary: Vec<serde_json::Value>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
+        /// Likewise present even when null, matching what the backend expects
+        /// of an item it produced.
+        #[serde(default)]
         encrypted_content: Option<String>,
     },
 }

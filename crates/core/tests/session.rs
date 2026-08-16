@@ -365,3 +365,42 @@ fn the_plan_and_the_match_agree_about_server_only_items() {
     // there would be wrong rather than merely large.
     assert_eq!(baseline.plan(&replay), Plan::Full);
 }
+
+/// §3.3 — a re-injected reasoning item carries every field the backend requires.
+///
+/// `summary` is required and refusing without it is not a soft failure: the
+/// backend rejects the whole request with `missing_required_parameter`, so a
+/// turn in which the model reasoned makes the *next* turn fail. Omitting an
+/// empty array is the easy mistake, and low effort produces empty summaries.
+#[test]
+fn a_reasoning_item_keeps_the_fields_the_backend_requires() {
+    let items: Vec<InputItem> = serde_json::from_value(json!([{
+        "type": "reasoning",
+        "id": "rs_1",
+        "summary": [],
+        "encrypted_content": "OPAQUE",
+    }]))
+    .unwrap();
+
+    let rendered = serde_json::to_value(&items[0]).unwrap();
+
+    assert!(
+        rendered.get("summary").is_some(),
+        "summary must survive even when empty: {rendered}"
+    );
+    assert_eq!(rendered["summary"], json!([]));
+    assert_eq!(rendered["encrypted_content"], json!("OPAQUE"));
+}
+
+/// And when the server sent no encrypted content at all, the field is still
+/// there rather than dropped.
+#[test]
+fn a_reasoning_item_without_encrypted_content_still_carries_the_field() {
+    let items: Vec<InputItem> =
+        serde_json::from_value(json!([{ "type": "reasoning", "id": "rs_1" }])).unwrap();
+
+    let rendered = serde_json::to_value(&items[0]).unwrap();
+
+    assert_eq!(rendered["summary"], json!([]));
+    assert!(rendered.get("encrypted_content").is_some());
+}

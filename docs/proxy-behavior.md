@@ -554,17 +554,35 @@ never fire before the window overran. The 200,000 assumption sits *below* the re
 effective window instead, so compaction runs early. Early compaction wastes
 context; late compaction fails the session.
 
-The generated environment sets `CLAUDE_CODE_DISABLE_1M_CONTEXT=1`. It has no
-effect on plain model ids and exists as a one-sided floor: should a future client
-classify unknown ids as long-context, the assumption is pinned down rather than
-raised.
+The generated environment sets `CLAUDE_CODE_DISABLE_1M_CONTEXT=1`, and it is not
+a precaution against a hypothetical future client — it is load-bearing now.
+Measured: without it, this client appends `[1m]` to the unrecognized id and
+assumes a million tokens. With it, the id stays plain. That is the four-times
+overestimate this section warns about, and the flag is what prevents it.
+
+Where the catalog knows the window, the environment also states it:
+`CLAUDE_CODE_MAX_CONTEXT_TOKENS` and `CLAUDE_CODE_AUTO_COMPACT_WINDOW`, both set
+to the effective window, and to the smallest across the mapped tiers since one
+value covers them all.
+
+Both are needed. Stating the window alone is worse than saying nothing: the
+client stops applying its own 200,000 assumption and, not recognizing the model,
+then enforces no limit at all — so the session grows until the backend refuses
+it. The compact window is what turns a stated figure into an enforced one.
+
+The client warns that its 200,000 limit is not being enforced. That warning is
+correct and expected: exceeding 200,000 is the point, and the real window is
+larger. It is silenced only by compacting at 200,000, which would discard a
+fifth of the usable context to avoid a message.
+
+The percentage the client displays is computed client-side and is now computed
+against the right number.
 
 The proxy independently enforces the real window from catalog metadata, rejecting
 an over-window request with a clear error rather than forwarding it into an opaque
 upstream rejection.
 
-The percentage the client displays is computed client-side against its own
-assumption and cannot be corrected from here.
+
 
 ---
 

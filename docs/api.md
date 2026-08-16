@@ -124,14 +124,22 @@ ANTHROPIC_DEFAULT_OPUS_MODEL=<mapped>
 ANTHROPIC_DEFAULT_SONNET_MODEL=<mapped>
 ANTHROPIC_DEFAULT_HAIKU_MODEL=<mapped>
 ANTHROPIC_DEFAULT_FABLE_MODEL=<mapped>
+CLAUDE_CODE_MAX_CONTEXT_TOKENS=<effective window>
+CLAUDE_CODE_AUTO_COMPACT_WINDOW=<effective window>
 CLAUDE_CODE_DISABLE_1M_CONTEXT=1
 ```
+
+The two window variables appear only when the catalog knows the window, and
+carry the smallest across the mapped tiers. The client will warn that its
+200,000 limit is not enforced; that is expected, because the real window is
+larger and using it is the point.
 
 All four tier variables are always emitted. `WebFetch` runs on the haiku tier, so
 an unmapped haiku breaks it in a way that looks unrelated to tier mapping.
 
-`CLAUDE_CODE_DISABLE_1M_CONTEXT` is inert for ordinary model ids and is set as a
-one-sided floor — see `proxy-behavior.md` §7.2.
+`CLAUDE_CODE_DISABLE_1M_CONTEXT` is not inert: without it this client appends
+`[1m]` to an unrecognized id and assumes a million tokens — see
+`proxy-behavior.md` §7.2.
 
 ---
 
