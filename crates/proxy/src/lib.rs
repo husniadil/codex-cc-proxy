@@ -5,6 +5,8 @@
 
 #![forbid(unsafe_code)]
 
+pub mod config;
+pub mod daemon;
 pub mod error;
 pub mod estimate;
 pub mod ingress;
