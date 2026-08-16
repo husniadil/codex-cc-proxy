@@ -8,6 +8,18 @@ transports that depend on them, because incremental upload is the one subsystem
 whose bugs corrupt conversations instead of failing loudly, and it has to land
 against tests that can catch that.
 
+## Everything here is verifiable offline
+
+**No phase's completion criterion requires a live backend, credentials, or
+quota.** The suite runs entirely against a local replay server. This is a
+constraint on the design, not a workaround: a project whose correctness can only
+be demonstrated by spending money is a project whose correctness stops being
+demonstrable at an arbitrary moment.
+
+What genuinely cannot be settled offline is collected in §L, stated as open
+rather than assumed. Nothing in §L blocks v0.1.0, and nothing in phases 1–11
+depends on it.
+
 ---
 
 ## 1. Workspace and gate
@@ -15,7 +27,7 @@ against tests that can catch that.
 The skeleton and the standard everything else is held to.
 
 Two crates, pinned toolchain, lint configuration, task runner, CI running the
-same gate as local.
+same gate as local. Each crate opts into the workspace lints explicitly.
 
 **Done when** `just check` passes on an empty implementation, and CI runs it on
 push and pull request.
@@ -28,11 +40,11 @@ push and pull request.
 
 Instructions folding, content blocks, attachments nested in tool results, tool
 flattening, `tool_choice`, deferred tool loading, web-search declaration, request
-field hardening.
+field hardening, upstream headers.
 
 **Done when** every §2 rule has a test written before its implementation, and the
-attachment path is covered for both images and documents in both positions —
-directly in a user message and nested inside a `tool_result`.
+attachment path is covered for images and documents in both positions — directly
+in a user message and nested inside a `tool_result`.
 
 ---
 
@@ -40,63 +52,87 @@ directly in a user message and nested inside a `tool_result`.
 
 `proxy-behavior.md` §5, as a state machine in `codex-cc-proxy-core`.
 
-Event mapping, deferred `tool_use` headers, stop-reason derivation, reasoning
-blocks, search-result reconstruction, error and capacity frames.
+SSE framing including multi-line `data:` reassembly, event mapping, deferred
+`tool_use` headers, stop-reason derivation, reasoning blocks, search-result
+reconstruction, error and capacity frames.
 
 **Done when** the emitted frame sequence is snapshot-tested for text, reasoning,
-tool-call, incomplete, and error streams, and a tool call whose name arrives after
-its block would have opened still produces a valid header.
+tool-call, search, incomplete, and error streams; a tool call whose name arrives
+after its block would have opened still produces a valid header; and an event
+split across several `data:` lines parses as one payload.
 
 ---
 
-## 4. Fixtures and `record`
+## 4. Fixture corpus
 
-The instrument that makes the rest test-first.
+The evidence base the rest is tested against, built without spending quota.
 
-`record` captures real exchanges to disk in a form the test suite replays.
+Three sources, in descending order of authority:
 
-**Done when** a captured exchange replays as a test without hand-editing, and the
-corpus covers at least one exchange per capability in `proxy-behavior.md` §1.
+1. **The upstream's own protocol definitions.** Its typed event set is the
+   authoritative statement of what the backend can emit, and its test harness
+   shows those events assembled into realistic streams. A fixture derived from
+   the types is not a guess — it is the contract, restated.
+2. **Ingress captures.** `record ingress` captures what Claude Code actually
+   sends. This needs a working client and no credentials, because the exchange is
+   recorded before translation. Everything on the request side — tool
+   declarations, `defer_loading` stubs, `tool_reference` results, attachment
+   blocks, `output_config`, the search sub-request — is observable this way for
+   free.
+3. **Hand-authored edge cases**, marked as such, for shapes neither source
+   covers.
 
-Phases 2 and 3 are written against hand-authored fixtures. This phase replaces
-them with recorded ones and is where guesses get corrected.
+**Done when** the corpus replays as tests without hand-editing, covers at least
+one exchange per capability in `proxy-behavior.md` §1, every fixture records
+which of the three sources it came from, and `record ingress` round-trips a real
+Claude Code turn.
+
+A fixture's provenance is part of the fixture. A derived one and a captured one
+carry different weight, and a reader must not have to guess which is which.
 
 ---
 
 ## 5. Ingress and HTTP transport
 
-The first end-to-end path. Testable against a local replay server without
-credentials.
+The first end-to-end path, against a replay server.
 
 `/v1/messages` streaming both ways, `/v1/messages/count_tokens`, `/v1/models`,
-the error taxonomy, cancellation propagation, empty-stream recording.
+the error taxonomy, cancellation propagation, empty-stream recording, port
+conflict handling.
 
-**Done when** a streaming request against a replay server returns a valid
-Anthropic SSE sequence including a tool-call round trip, and cancelling the client
-stream aborts the upstream request.
+**Done when** a streaming request returns a valid Anthropic SSE sequence
+including a tool-call round trip, cancelling the client stream aborts the
+upstream request, and every row of the `api.md` §1.1 error table is produced by a
+test.
 
 ---
 
 ## 6. Credentials, catalog, tier mapping
 
 OAuth with PKCE, the `CredentialStore` trait with its file implementation,
-scope-free single-flight refresh, dead-grant marking, live model catalog with
-fallback, four-tier validation.
+scope-free single-flight refresh, dead-grant marking, catalog fetch with TTL
+cache and fallback, four-tier validation, the `[1m]` rejection.
 
-**Done when** a real login succeeds, a token refresh survives expiry without
-invalidating the family, an incomplete tier mapping refuses startup, and the
-first real request reaches the live backend.
+**Done when** the authorization URL is built to spec, a refresh request provably
+omits `scope`, concurrent refreshes collapse to one upstream call, an
+invalid-grant response marks the connection dead without retrying, an incomplete
+tier mapping refuses startup, an unreachable catalog skips validation instead of
+failing it, and a model with no known window is treated as unknown rather than
+assumed.
+
+Every one of these is a test against a mock authorization server. The live login
+is §L.
 
 ---
 
 ## 7. Control socket and CLI
 
-`status`, `login`, `models`, `env`, `disconnect` — through the socket, not
-through private paths.
+`status`, `login`, `models`, `env`, `disconnect`, `record` — through the socket,
+not through private paths.
 
-**Done when** every verb works against a running daemon, `env` output pasted into
-a shell produces a working Claude Code session, and the CLI holds no state of its
-own.
+**Done when** every verb works against a running daemon over the socket, `env`
+emits all four tier variables plus the context floor, and the CLI holds no state
+of its own.
 
 ---
 
@@ -105,10 +141,15 @@ own.
 Upstream figures mapped to Anthropic semantics, the estimator trait, calibration,
 and both estimator implementations.
 
-**Done when** cached tokens are subtracted exactly once, `message_start` carries a
-non-zero estimate that `message_delta` replaces rather than adds to, the context
-meter is steady across a turn in a live session, and both estimators are measured
-against the corpus with the result recorded.
+**Done when** cached tokens are subtracted exactly once, a `cached_tokens` value
+exceeding `input_tokens` clamps to zero, `message_start` carries a non-zero
+estimate that `message_delta` replaces rather than adds to, calibration measurably
+improves the estimate across a replayed multi-turn session, and both estimators
+are measured against the corpus with the result recorded in
+`proxy-behavior.md` §6.3.
+
+The estimator comparison is a real measurement with a real outcome. Do not ship
+both and leave the choice open.
 
 ---
 
@@ -117,12 +158,17 @@ against the corpus with the result recorded.
 The probe suite, and whatever the probes reveal is broken.
 
 `Read` with an image, `Read` with a PDF, `WebSearch`, `WebFetch`, tool calling,
-parallel tool calls, tool search, reasoning, `count_tokens`, cache accounting.
+parallel tool calls, tool search, reasoning continuity, `count_tokens`, cache
+accounting.
 
-**Done when** every probe uses content the model could not infer, `doctor` prints
-a capability matrix against a live backend, and each probe can be run alone.
+**Done when** every probe uses content the model could not infer, every probe
+runs green against the replay corpus, `doctor` prints a capability matrix, each
+probe can be run alone, and a probe reports honestly when it cannot run.
 
-This phase is the product. A green `just check` with a failing probe is not done.
+Running the probes against a replay server proves the proxy does its half
+correctly. It does not prove the backend does its half. That is §L, and `doctor`
+must not claim otherwise — a matrix built from replayed fixtures says so on its
+face.
 
 ---
 
@@ -131,15 +177,15 @@ This phase is the product. A green `just check` with a failing probe is not done
 The last and riskiest subsystem, landing on a corpus that can catch its failures.
 
 Connection reuse, prewarm, fallback latching, strict-extension delta computation,
-zstd.
+reasoning-item retention, zstd.
 
 **Done when** the §9.4 invariants in `proxy-behavior.md` all hold as tests, a
-policy close falls back to HTTP without losing the turn, and a long recorded
-session replays identically over both transports.
+policy close mid-turn falls back to HTTP without losing the turn, retained
+reasoning items are re-injected in position, and a long replayed session produces
+byte-identical conversation state over both transports.
 
-Identical replay across transports is the acceptance criterion that matters. If
-WebSocket and HTTP disagree on a single byte of the conversation, the delta logic
-is wrong.
+Identical state across transports is the acceptance criterion that matters. If
+WebSocket and HTTP disagree on a single item, the delta logic is wrong.
 
 ---
 
@@ -149,5 +195,35 @@ Binaries for macOS, Linux, and Windows; `cargo install`; a Homebrew tap; a
 container image; an install script. `README`, `CONTRIBUTING`, `SECURITY`,
 `CODE_OF_CONDUCT`, `CHANGELOG`.
 
-**Done when** a fresh checkout can install, run `codex-cc-proxy login`, paste the
-`env` output, and drive a working Claude Code session following only the README.
+**Done when** a fresh checkout builds on all three platforms in CI, the README's
+setup instructions are followed end to end against the replay server, and the
+documented limitations match what the code actually does.
+
+---
+
+## L. The live gate
+
+Deferred, not skipped. These require a working subscription and cannot be
+settled by any amount of offline work. Each is written as a question with a
+method, so whoever has quota can close it in one sitting.
+
+| Question | Method |
+|---|---|
+| Does the login flow complete against the real authorization server? | `login`, then `status` |
+| Does a refresh survive expiry without invalidating the family? | Force expiry, refresh, confirm the prior token family still works |
+| Does the backend accept the request shape — headers, `instructions`, tools? | One minimal request; capture with `record upstream` |
+| Does it reject system and developer roles inside `input`, as assumed? | Deliberately send one; record the error |
+| Does the context meter stay steady across a turn? | Watch the statusline through a live turn |
+| Does `WebFetch` route through the haiku tier? | Map haiku to a distinguishable model; issue a `WebFetch`; check which model answered |
+| Does WebSocket connect, or close with a policy code? | Connect; record the outcome either way |
+| Does incremental upload produce the same conversation live as on replay? | Same session over both transports; diff the results |
+| Do the real capability probes pass? | `doctor` against the live backend |
+
+Until each is answered, the corresponding claim in `proxy-behavior.md` is
+**derived from the upstream's own protocol definitions, not confirmed against a
+running backend.** That is a meaningful difference and the docs say so where it
+applies.
+
+Answering these may falsify a rule. That is the expected outcome of a live gate,
+and the fix is to amend the spec in the same commit as the code — not to treat
+the offline phases as having been wrong to do.

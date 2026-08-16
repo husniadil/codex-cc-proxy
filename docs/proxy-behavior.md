@@ -23,7 +23,7 @@ returns 200.
 |---|---|---|
 | `Read` (image, PDF) | attachment blocks nested inside `tool_result` | bytes never arrive; the model describes the file from its name |
 | `WebSearch` | a server-side search tool declared in a secondary conversation | search returns nothing, reported as "no results" |
-| `WebFetch` | a model call on the haiku tier | fails in a way that looks unrelated to tier mapping |
+| `WebFetch` | a model call, believed to be on the haiku tier | fails in a way that looks unrelated to tier mapping |
 | tool search | `defer_loading` stubs and `tool_reference` discovery | discovered tools stay uncallable, or every stub inflates context |
 | context meter | `input_tokens` in `message_start` | the meter collapses to zero each turn |
 | `count_tokens` | pre-flight sizing | absent or wrong |
@@ -72,7 +72,7 @@ message placed immediately after the corresponding `function_call_output`.
 This is not an edge case. It is how every file Claude Code reads arrives. Without
 it the bytes never reach the model, and the model answers from the filename in
 hedged wording that reads as success — the failure is invisible in ordinary
-output, which is why §7.3 requires unguessable probes.
+output, which is why §9.3 requires unguessable probes.
 
 ### 2.4 Tools
 
@@ -125,6 +125,30 @@ Unsupported inbound parameters are dropped through an allowlist rather than
 forwarded. Anthropic `cache_control` blocks have no equivalent and are dropped;
 upstream caching is implicit.
 
+Server-assigned item ids from a previous response are stripped before an item is
+re-sent, and `previous_response_id` is set only by the incremental path (§4.3).
+
+### 2.8 Upstream request headers
+
+| Header | Value |
+|---|---|
+| `authorization` | `Bearer <access token>` |
+| `chatgpt-account-id` | the account id carried in the access token |
+| `originator` | a single fixed first-party originator |
+| `user-agent` | matching that originator |
+| `openai-beta` | the Responses experimental opt-in |
+| `session_id` | the session identity (§3.1), truncated to 64 characters |
+| `accept` | `text/event-stream` on the HTTP transport |
+
+One originator, always, with no alternate to fall back to. A rejection at this
+layer surfaces as an error rather than triggering a retry under a different
+identity: a fallback identity is state that has to be tracked, invalidates the
+prompt cache when it changes, and turns one clear failure into two unclear ones.
+
+A challenge response — a non-JSON body on a 403 — is reported as an `api_error`
+with the body excerpt intact, because the excerpt is the only diagnostic
+available.
+
 ---
 
 ## 3. Sessions
@@ -139,11 +163,38 @@ This is the same predicate that governs incremental upload (§4.3), so session
 matching and delta computation share one definition rather than two that can
 disagree.
 
+Two conversations that genuinely share a prefix — the same system prompt and the
+same opening turn — are indistinguishable until they diverge, and may match the
+same session. This is harmless: the shared prefix is identical, so the baseline
+is correct for both, and the first divergent turn separates them. What must not
+happen is a match on a *partial* prefix, which is why the predicate requires a
+strict extension of the full baseline rather than a longest-common-prefix score.
+
 ### 3.2 State
 
 A session holds its input baseline and the output items the server added, its
-transport binding, its discovered tool names, and its estimator calibration
-ratio. Sessions expire on idle.
+transport binding, its discovered tool names, its retained reasoning items
+(§3.3), and its estimator calibration ratio. Sessions expire on idle, and the
+store is bounded — eviction is by least recent use, never by refusing a request.
+
+### 3.3 Reasoning continuity
+
+Requests ask for `reasoning.encrypted_content`, so responses carry reasoning
+items the model expects to see again on the next turn.
+
+Those items cannot survive a round trip through the client. Anthropic `thinking`
+blocks are dropped on the request path (§2.2), and the client would not return
+encrypted upstream reasoning even if they were not. Every turn would therefore
+begin with the model's prior reasoning discarded.
+
+The session retains server-returned reasoning items and re-injects them in their
+original position on the next request. They are part of the baseline for §4.3 in
+exactly the same way other server-returned output items are, so the incremental
+and full-send paths agree on what the conversation contains.
+
+This is the one place the proxy adds content the client did not send. It is
+additive and upstream-only: nothing synthesized here is ever surfaced back to the
+client as model output.
 
 ---
 
@@ -196,7 +247,24 @@ turns where a full send is unavoidable.
 
 ## 5. Response translation
 
-Responses SSE events become Anthropic SSE frames through one state machine.
+### 5.0 Framing
+
+On the HTTP transport, events arrive as SSE. An event block may carry more than
+one `data:` line, and the SSE specification defines those as one logical payload
+joined with newlines — not as independent JSON documents. Parsing each line
+separately corrupts any event large enough to be split, which is exactly the
+events that matter: long tool-call arguments and long text deltas.
+
+A `data:` payload of `[DONE]` is a terminator, not content. A payload that does
+not parse as JSON is ignored rather than treated as an error.
+
+On the WebSocket transport the same events arrive as discrete messages and need
+no reassembly. Both transports produce the same event stream before translation
+begins, so §5.1 onward is transport-independent.
+
+### 5.1 Events
+
+Responses events become Anthropic SSE frames through one state machine.
 Anthropic permits a single open content block at a time.
 
 | Responses event | Anthropic output |
@@ -220,7 +288,7 @@ known, because Anthropic clients cannot patch a block header after it is emitted
 A stream opening with a capacity or overload condition becomes an
 `overloaded_error` frame so the client retries on its own.
 
-### 5.1 Search results
+### 5.2 Search results
 
 The backend runs web search server-side and reports it through search call items
 and citation annotations. These are reconstructed into Anthropic's structured
@@ -231,13 +299,13 @@ The client extracts `url` and `title` from those blocks. Passing the model's pro
 answer through as the tool result leaves that extraction empty, so the structured
 form is required, not preferred.
 
-### 5.2 Cancellation
+### 5.3 Cancellation
 
 Cancelling the outbound stream aborts the upstream request. Without propagation
 the backend generates to completion against a reader that no longer exists,
 spending quota on output nobody receives.
 
-### 5.3 Empty streams
+### 5.4 Empty streams
 
 A stream that completes having produced no content frames is recorded with its
 request and the raw upstream bytes. It is always a defect, and it is otherwise
@@ -296,6 +364,30 @@ Before a session's first completed request the estimate is uncalibrated.
 ---
 
 ## 7. Models
+
+### 7.0 Catalog
+
+The catalog is fetched from the backend and cached in memory with a short TTL.
+Each entry contributes an id, a visibility flag, and window metadata: a context
+window, an optional maximum context window, and an optional effective percentage.
+Hidden entries and non-conversational pseudo-models are excluded from what is
+offered for mapping, but their window metadata is retained — a session may
+reference a model the picker filters out, and knowing its window is better than
+not.
+
+The effective window is the context window scaled by the effective percentage,
+which reserves headroom for instructions, tool overhead, and output. Where the
+percentage is absent, the upstream default applies. Where both a context window
+and a maximum context window are present, the smaller-scoped `context_window` is
+authoritative — the maximum describes a ceiling the account may not have.
+
+A fixed fallback list covers a failed fetch, so the daemon starts and reports
+honestly rather than blocking on an unreachable catalog. The fallback carries ids
+only. A model with no known window is **unknown, not assumed**: the window guard
+(§7.2) does not fire for it, and no percentage is derived from a guess.
+
+Fetch failure is not the same claim as absence. Validation that depends on the
+catalog is skipped when the catalog is unavailable, never failed.
 
 ### 7.1 Tier mapping
 

@@ -24,7 +24,11 @@ ignored.
 |---|---|
 | `POST /v1/messages` | The only endpoint carrying real load. Streams SSE in both directions. |
 | `POST /v1/messages/count_tokens` | Pre-flight sizing. Returns an estimate. |
-| `GET /v1/models` | The mapped models. |
+| `GET /v1/models` | The mapped models, in the Anthropic list shape — `{"data": [{"id", "display_name", "type": "model"}]}`. Ids are the upstream model ids the tiers map to. |
+
+`run` fails immediately if the port is already bound, naming the conflict, rather
+than retrying or selecting another port. A second daemon on a different port
+would be silently unused by a client already configured for the first.
 
 ### 1.1 Errors
 
@@ -75,6 +79,20 @@ running daemon.
 `doctor` spends real inference quota. It runs only when invoked, reports what it
 cost, and accepts a single probe name to run one at a time.
 
+`record` has two modes, and the distinction matters because only one of them
+costs anything:
+
+- **ingress** captures what Claude Code sends to the proxy. It needs a working
+  client and no upstream credentials at all, since the exchange is recorded
+  before translation.
+- **upstream** captures what the backend sends back. It needs credentials and
+  spends quota.
+
+Both write to the same fixture format, so a test replays either without knowing
+which mode produced it.
+
+Logging is controlled by `RUST_LOG`. Credentials never appear at any level.
+
 ### 2.1 `env`
 
 Emits the configuration Claude Code needs, as shell exports or as a settings
@@ -112,6 +130,7 @@ A Unix domain socket, or a named pipe on Windows, carrying JSON-RPC:
 | `usage` | quota snapshot |
 | `env` | the §2.1 block |
 | `doctor` | probe results |
+| `record.start` / `record.stop` | fixture capture, either mode |
 
 The daemon holds authoritative state and any front-end is a client of this
 interface. The CLI has no privileged path of its own; a second front-end needs no

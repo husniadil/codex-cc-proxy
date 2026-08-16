@@ -1,3 +1,12 @@
 # Translation functions legitimately take many parameters where each is a
 # distinct wire field; grouping them into structs would obscure the mapping.
 too-many-arguments-threshold = 10
+
+# The panic-free lints below are denied workspace-wide because a panic mid-stream
+# drops a live conversation. Tests are the exception: an unwrap in a test is an
+# assertion, and its failure is the intended outcome.
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-panic-in-tests = true
+allow-indexing-slicing-in-tests = true
+allow-dbg-in-tests = true

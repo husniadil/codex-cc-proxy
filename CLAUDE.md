@@ -7,17 +7,22 @@ real job is keeping Claude Code's built-in tools working.
 
 ## Commands
 
-- `just test` — the fast loop. Everything that does not need the network. Run it
-  on every edit.
+- `just test` — the suite. Run it on every edit.
 - `just check` — **the gate**, and what CI runs: formatting, `clippy -D
-  warnings`, and the full suite. Run it before every commit.
+  warnings`, and the suite. Run it before every commit.
 - `just test-one <filter>` — one test, by name.
 - `just snapshots` — review pending `insta` snapshot changes.
 - `just run` / `just record` / `just doctor` — drive the daemon, capture
-  fixtures, probe a live backend.
+  fixtures, probe a backend.
 
-`just doctor` spends real inference quota. Nothing else in the suite touches the
-network.
+**No test touches the network.** Every upstream interaction in the suite runs
+against a local replay server, so the suite is fully green without credentials
+and without quota. That is a design constraint, not a convenience: a test that
+needs a live backend is a test that stops running the moment quota runs out.
+
+`just doctor` and `just record upstream` are the only things here that spend
+quota, and neither is part of the gate. `just record ingress` captures what the
+client sends and costs nothing.
 
 ## The specification comes first
 
@@ -53,9 +58,13 @@ for each.
    completed response are authoritative and are never recomputed.
    `cache_creation_input_tokens` is zero because no write event exists, and it
    stays zero rather than being synthesized into something plausible. Where a
-   figure is genuinely unavailable — §6.2's two estimation points — it is
-   estimated, corrected against ground truth within the same exchange, and
-   documented as an estimate.
+   figure is genuinely unavailable — the two estimation points in
+   `docs/proxy-behavior.md` §6.2 — it is estimated, corrected against ground
+   truth within the same exchange, and documented as an estimate.
+
+   The same rule governs claims. A capability verified against replayed fixtures
+   is derived, not confirmed; say which one it is. `docs/roadmap.md` §L holds
+   what only a live backend can settle.
 
 3. **Falling back is always safe; a wrong delta is not.** Incremental upload
    sends less by asserting the conversation is a strict extension of what was
