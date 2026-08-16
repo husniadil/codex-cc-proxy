@@ -9,6 +9,13 @@ use std::collections::BTreeMap;
 /// its own.
 const DEFAULT_EFFECTIVE_PERCENT: f64 = 95.0;
 
+/// The client version this proxy reports to the catalog.
+///
+/// Not this crate's own version: the backend uses it to decide which models a
+/// client is new enough to be told about, so reporting 0.1.0 hides every model
+/// that requires anything newer — which is all of them.
+const CLIENT_VERSION: &str = "2.0.0";
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Model {
     pub id: String,
@@ -20,6 +27,9 @@ pub struct Model {
     pub context_window: Option<u64>,
     pub effective_percent: Option<f64>,
     pub visible: bool,
+    /// Efforts this model accepts. Empty where the catalog said nothing, which
+    /// is not the same as "none are supported".
+    pub efforts: Vec<String>,
 }
 
 impl Model {
@@ -56,6 +66,22 @@ struct CatalogEntry {
     effective_context_window_percent: Option<f64>,
     #[serde(default)]
     is_visible: Option<bool>,
+    /// What the backend actually sends: `list` to offer, `hide` to withhold.
+    /// A boolean flag was the wrong shape, and the wrong shape read as
+    /// "visible" for every entry — including the ones marked hidden.
+    #[serde(default)]
+    visibility: Option<String>,
+    /// Efforts this model accepts, as `{"effort": "low", ...}` entries. A
+    /// ceiling naming an effort the model does not support is a request that
+    /// fails, so it is worth knowing what is on offer.
+    #[serde(default)]
+    supported_reasoning_levels: Vec<ReasoningLevel>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ReasoningLevel {
+    #[serde(default)]
+    effort: Option<String>,
 }
 
 /// What is known about the available models.
@@ -85,6 +111,7 @@ impl Catalog {
                         context_window: None,
                         effective_percent: None,
                         visible: true,
+                        efforts: Vec::new(),
                     },
                 )
             })
@@ -120,7 +147,19 @@ impl Catalog {
                     // account may not have.
                     context_window: entry.context_window.or(entry.max_context_window),
                     effective_percent: entry.effective_context_window_percent,
-                    visible: entry.is_visible.unwrap_or(true),
+                    visible: match (entry.is_visible, entry.visibility.as_deref()) {
+                        (Some(visible), _) => visible,
+                        (None, Some(visibility)) => visibility != "hide",
+                        // Said nothing either way. Offering it is the safer
+                        // default: withholding a model the operator can use is
+                        // a worse error than listing one they cannot.
+                        (None, None) => true,
+                    },
+                    efforts: entry
+                        .supported_reasoning_levels
+                        .into_iter()
+                        .filter_map(|level| level.effort)
+                        .collect(),
                     id: id.clone(),
                 };
                 Some((id, model))
@@ -181,10 +220,36 @@ impl Catalog {
 }
 
 /// Fetch the catalog, falling back rather than failing.
-pub async fn fetch(client: &reqwest::Client, endpoint: &str, token: &str) -> Catalog {
-    let attempt = client
+///
+/// The identity headers of §2.8 are not only for the responses endpoint. This
+/// request is rejected without them, and the rejection is a bare 400 that says
+/// nothing about which header is missing.
+pub async fn fetch(
+    client: &reqwest::Client,
+    endpoint: &str,
+    token: &str,
+    account_id: Option<&str>,
+) -> Catalog {
+    let mut request = client
         .get(endpoint)
+        // Required, and its absence is a bare 400 that names nothing. The
+        // backend also filters the list by it: each entry declares a minimum
+        // client version, and a version below every minimum returns an empty
+        // catalog rather than an error — which reads exactly like an account
+        // with no models.
+        .query(&[("client_version", CLIENT_VERSION)])
         .bearer_auth(token)
+        .header("originator", crate::upstream::http::ORIGINATOR)
+        .header(
+            axum::http::header::USER_AGENT,
+            crate::upstream::http::USER_AGENT,
+        );
+
+    if let Some(account) = account_id {
+        request = request.header("chatgpt-account-id", account);
+    }
+
+    let attempt = request
         .send()
         .await
         .and_then(reqwest::Response::error_for_status);

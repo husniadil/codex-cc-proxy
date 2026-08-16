@@ -28,6 +28,70 @@ const SAMPLE: &str = r#"{
   ]
 }"#;
 
+/// The shape the backend actually returns: `slug` rather than `id`,
+/// `visibility` as a word rather than a boolean, and reasoning levels as
+/// objects.
+const LIVE_SHAPE: &str = r#"{
+  "models": [
+    {
+      "slug": "gpt-5.6-luna",
+      "context_window": 272000,
+      "max_context_window": 272000,
+      "visibility": "list",
+      "supported_reasoning_levels": [
+        { "effort": "low", "description": "Fast responses with lighter reasoning" },
+        { "effort": "medium", "description": "Balances speed and reasoning depth" }
+      ]
+    },
+    {
+      "slug": "codex-auto-review",
+      "context_window": 272000,
+      "visibility": "hide"
+    }
+  ]
+}"#;
+
+/// §7.0 — visibility arrives as a word, not a boolean.
+///
+/// Reading it as a boolean field that is never present made every entry look
+/// visible, including the ones explicitly marked hidden — so a model the
+/// backend withholds was offered for mapping.
+#[test]
+fn a_hidden_model_is_withheld_however_visibility_is_spelled() {
+    let catalog = Catalog::parse(LIVE_SHAPE).expect("the live shape should parse");
+
+    let offered: Vec<&str> = catalog
+        .selectable()
+        .iter()
+        .map(|model| model.id.as_str())
+        .collect();
+
+    assert_eq!(offered, vec!["gpt-5.6-luna"]);
+    // Withheld from selection, still known.
+    assert!(catalog.get("codex-auto-review").is_some());
+}
+
+/// The efforts a model accepts are read from the catalog, so a ceiling naming
+/// one it does not support can be recognized rather than sent and rejected.
+#[test]
+fn supported_efforts_are_read_from_the_catalog() {
+    let catalog = Catalog::parse(LIVE_SHAPE).unwrap();
+    let luna = catalog.get("gpt-5.6-luna").unwrap();
+
+    assert_eq!(luna.efforts, vec!["low", "medium"]);
+}
+
+/// An entry keyed by `slug` is the same as one keyed by `id`.
+#[test]
+fn the_live_shape_yields_real_windows() {
+    let catalog = Catalog::parse(LIVE_SHAPE).unwrap();
+    let luna = catalog.get("gpt-5.6-luna").unwrap();
+
+    assert_eq!(luna.context_window, Some(272_000));
+    // No stated percentage, so the default applies rather than the whole window.
+    assert_eq!(luna.effective_window(), Some(258_400));
+}
+
 #[test]
 fn the_catalog_parses_ids_and_windows() {
     let catalog = Catalog::parse(SAMPLE).expect("the catalog should parse");

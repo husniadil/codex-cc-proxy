@@ -16,7 +16,10 @@ use std::sync::Arc;
 /// identity is state that has to be tracked, it invalidates the prompt cache
 /// when it changes, and it turns one clear failure into two unclear ones
 /// (§2.8).
-const ORIGINATOR: &str = "codex_cli_rs";
+pub const ORIGINATOR: &str = "codex_cli_rs";
+
+/// The user agent that goes with it.
+pub const USER_AGENT: &str = concat!("codex_cli_rs/", env!("CARGO_PKG_VERSION"));
 
 pub struct HttpTransport {
     client: reqwest::Client,
@@ -52,10 +55,7 @@ impl Transport for HttpTransport {
             .post(&self.endpoint)
             .header(axum::http::header::ACCEPT, "text/event-stream")
             .header("originator", ORIGINATOR)
-            .header(
-                axum::http::header::USER_AGENT,
-                concat!("codex_cli_rs/", env!("CARGO_PKG_VERSION")),
-            )
+            .header(axum::http::header::USER_AGENT, USER_AGENT)
             .json(request);
 
         if let Some(credentials) = &self.credentials {

@@ -186,7 +186,13 @@ async fn run_with(args: RunArgs, record_ingress: bool) -> Result<()> {
     // the network blinked is the worse failure.
     let catalog = Arc::new(match tokens.access_token().await {
         Ok(token) => {
-            codex_cc_proxy::catalog::fetch(&reqwest::Client::new(), UPSTREAM_CATALOG, &token).await
+            codex_cc_proxy::catalog::fetch(
+                &reqwest::Client::new(),
+                UPSTREAM_CATALOG,
+                &token,
+                tokens.account_id().as_deref(),
+            )
+            .await
         }
         Err(error) => {
             tracing::info!(%error, "not authenticated; the model list is the fallback");

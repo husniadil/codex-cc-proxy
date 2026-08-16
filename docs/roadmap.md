@@ -227,6 +227,7 @@ method, so whoever has quota can close it in one sitting.
 | May this client request connector scopes? | Unknown, and unasked: the proxy requests only what it uses. A refusal once suggested otherwise but was a truncated URL. |
 | Does a refresh survive expiry without invalidating the family? | Force expiry, refresh, confirm the prior token family still works |
 | Does the backend accept the request shape — headers, `instructions`, tools? | One minimal request; capture with `record upstream` |
+| ~~What does the model catalog actually contain?~~ | **Answered.** It needs a `client_version` query parameter, and filters by it: a version below a model's `minimal_client_version` returns an empty list rather than an error. Entries are keyed by `slug`, state `visibility` as a word, and carry `supported_reasoning_levels`. |
 | Does it reject system and developer roles inside `input`, as assumed? | Deliberately send one; record the error |
 | Does it accept an `input_file` part, the one shape with no upstream precedent? | Read a PDF whose content is unguessable; check the answer, not the acceptance |
 | Does it accept a `tool_choice` other than `auto`? | Send `required`; the upstream client only ever sends `auto` |
