@@ -207,6 +207,7 @@ fn sse(payload: String) -> Response {
 pub struct WsReplay {
     pub url: String,
     frames: Arc<Mutex<Vec<Value>>>,
+    serving: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl WsReplay {
@@ -217,16 +218,30 @@ impl WsReplay {
         let addr = listener.local_addr().expect("addr");
         let frames = Arc::new(Mutex::new(Vec::new()));
         let sink = Arc::clone(&frames);
+        let serving = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let live = Arc::clone(&serving);
 
         tokio::spawn(async move {
             while let Ok((stream, _)) = listener.accept().await {
                 let events = events.clone();
                 let sink = Arc::clone(&sink);
+                let live = Arc::clone(&live);
                 tokio::spawn(async move {
                     let Ok(mut socket) = tokio_tungstenite::accept_async(stream).await else {
                         return;
                     };
+                    if !live.load(std::sync::atomic::Ordering::SeqCst) {
+                        let _ = socket.close(None).await;
+                        return;
+                    }
                     while let Some(Ok(message)) = socket.next().await {
+                        // Checked per frame, so stopping affects a connection
+                        // already in use — a pooled socket is exactly what a
+                        // second turn reuses.
+                        if !live.load(std::sync::atomic::Ordering::SeqCst) {
+                            let _ = socket.close(None).await;
+                            return;
+                        }
                         let body = match message {
                             tokio_tungstenite::tungstenite::Message::Text(text) => text.to_string(),
                             tokio_tungstenite::tungstenite::Message::Binary(bytes) => {
@@ -260,7 +275,15 @@ impl WsReplay {
         Self {
             url: format!("ws://{addr}"),
             frames,
+            serving,
         }
+    }
+
+    /// Stop answering. New connections are closed as soon as they open, which
+    /// is what a backend under policy conditions does.
+    pub fn stop(&self) {
+        self.serving
+            .store(false, std::sync::atomic::Ordering::SeqCst);
     }
 
     /// Every `response.create` frame the server received, in order.

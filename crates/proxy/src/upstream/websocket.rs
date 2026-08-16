@@ -303,6 +303,12 @@ pub fn plan_upload<'a>(
     }
 
     match baseline.plan(&request.input) {
+        // An empty delta is not a small delta. The backend receives a previous
+        // response id and no new input, and answers from that response — so a
+        // client retrying an unchanged conversation would be handed the
+        // previous turn again rather than a fresh one. There is nothing to send
+        // incrementally, so everything is sent.
+        codex_cc_proxy_core::session::Plan::Delta([]) => Upload::Full,
         codex_cc_proxy_core::session::Plan::Delta(items) => Upload::Delta {
             items,
             previous_response_id: response_id.to_owned(),

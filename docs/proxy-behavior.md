@@ -234,6 +234,13 @@ original position on the next request. They are part of the baseline for §4.3 i
 exactly the same way other server-returned output items are, so the incremental
 and full-send paths agree on what the conversation contains.
 
+A conversation is therefore held in two forms. What the client replays can
+never contain the server's reasoning; what the backend holds does. Reconciling
+converts the first into the second, and the delta is computed on the second by
+strict comparison. Running the reconciling rule on an already-reconciled input
+misaligns exactly the items it put back, so the order matters and is not
+interchangeable.
+
 Re-injection is not optional, and not only about quality. A baseline holding an
 item the client cannot replay is never a strict extension of any later replay,
 so a strict comparison stops matching the moment the model reasons. Session
@@ -281,7 +288,18 @@ input is a strict extension of the previous input plus the output items the
 server added. Server-returned items are part of the baseline and are never
 resent.
 
-Any mismatch sends the full input.
+Any mismatch sends the full input. So does a delta that would be empty: the
+backend given a previous response id and no new items answers from that
+response, so a client retrying an unchanged conversation would be handed the
+previous turn again instead of a fresh one.
+
+A turn only enters the baseline once the backend has accepted it. Recording one
+that failed would make the next delta continue a response that never saw those
+items, and the question would vanish from the conversation without any error.
+A brand-new session is the exception: it claims its conversation immediately, so
+a concurrent request cannot match its empty baseline and join a conversation it
+has nothing to do with. Nothing is at risk there, because a session with no
+completed turn has no response to continue and can only send in full.
 
 **Falling back is always safe; a wrong delta is not.** A full send costs
 bandwidth. A wrong delta corrupts the conversation and does not fail visibly.

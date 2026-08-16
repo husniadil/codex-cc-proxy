@@ -1374,3 +1374,123 @@ async fn a_reasoning_turn_does_not_end_the_session() {
     let full = frames[0]["input"].as_array().map(Vec::len);
     assert_eq!(full, Some(1), "the opening turn carries only the question");
 }
+
+/// A turn the backend never accepted must not enter the baseline.
+///
+/// The baseline is what the next delta is measured against, so recording a turn
+/// the backend rejected makes the next delta skip it: the backend is asked to
+/// continue a response that never saw those items, and the question silently
+/// vanishes from the conversation.
+#[tokio::test]
+async fn a_failed_turn_does_not_advance_the_baseline() {
+    let events = vec![
+        json!({ "type": "response.created", "response": { "id": "resp_1" } }),
+        json!({
+            "type": "response.output_item.done",
+            "item": {
+                "type": "message",
+                "role": "assistant",
+                "content": [{ "type": "output_text", "text": "first answer" }],
+            },
+        }),
+        completed(),
+    ];
+
+    let ws = replay::WsReplay::start(events).await;
+    let socket = ws.url.clone();
+
+    let conduits: codex_cc_proxy::ingress::ConduitFactory = Arc::new(move || {
+        Arc::new(codex_cc_proxy::upstream::conduit::Conduit::new(
+            // Unreachable, so a failing socket fails the turn rather than
+            // quietly succeeding over HTTP.
+            Arc::new(HttpTransport::new("http://127.0.0.1:1/unused")),
+            Some(Arc::new(
+                codex_cc_proxy::upstream::websocket::WebSocketTransport::new(socket.clone())
+                    .with_compression(false),
+            )),
+        ))
+    });
+
+    let state = AppState {
+        effort_ceiling: None,
+        transport: Arc::new(HttpTransport::new("http://127.0.0.1:1/unused")),
+        conduits: Some(conduits),
+        models: Arc::new(vec![ModelMapping {
+            requested: "claude-sonnet-4".to_owned(),
+            upstream: "gpt-5-codex".to_owned(),
+        }]),
+        recorder: None,
+        record_ingress: false,
+        sessions: Arc::new(codex_cc_proxy::session::SessionStore::new()),
+    };
+    let sessions = Arc::clone(&state.sessions);
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, router(state)).await;
+    });
+
+    let client = reqwest::Client::new();
+    let opening = json!({
+        "model": "claude-sonnet-4",
+        "max_tokens": 64,
+        "messages": [{ "role": "user", "content": "question 1" }],
+    });
+    let _ = client
+        .post(format!("http://{addr}/v1/messages"))
+        .json(&opening)
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+
+    let continued = json!({
+        "model": "claude-sonnet-4",
+        "max_tokens": 64,
+        "messages": [
+            { "role": "user", "content": "question 1" },
+            { "role": "assistant", "content": "first answer" },
+            { "role": "user", "content": "question 2" },
+        ],
+    });
+
+    let before = sessions
+        .lookup(&input_of(&continued))
+        .and_then(|session| session.baseline.lock().ok().map(|held| held.len()))
+        .expect("the conversation should be known");
+
+    // The next turn cannot reach the backend at all.
+    ws.stop();
+    let failed = client
+        .post(format!("http://{addr}/v1/messages"))
+        .json(&continued)
+        .send()
+        .await
+        .unwrap();
+    assert!(!failed.status().is_success(), "the turn should have failed");
+
+    let after = sessions
+        .lookup(&input_of(&continued))
+        .and_then(|session| session.baseline.lock().ok().map(|held| held.len()))
+        .expect("the conversation should still be known");
+
+    assert_eq!(
+        after, before,
+        "a turn the backend never accepted was recorded as though it had been; \
+         the next delta would continue a response that never saw it"
+    );
+}
+
+/// Translate a Messages body the way ingress does when identifying a session.
+fn input_of(body: &Value) -> Vec<codex_cc_proxy_core::responses::InputItem> {
+    let request: codex_cc_proxy_core::anthropic::MessagesRequest =
+        serde_json::from_value(body.clone()).unwrap();
+    codex_cc_proxy_core::translate::translate_request(
+        &request,
+        &codex_cc_proxy_core::translate::TranslateOptions::default(),
+    )
+    .input
+}

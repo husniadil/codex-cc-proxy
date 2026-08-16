@@ -314,3 +314,54 @@ fn reconciliation_refuses_a_shortened_history() {
         None
     );
 }
+
+/// §3.1 — the two rules operate on different forms of the same conversation,
+/// and composing them is what makes them agree.
+///
+/// `reconcile` takes a client replay, which can never contain the server's own
+/// reasoning, and returns the conversation as the backend holds it. `plan`
+/// takes *that* and compares strictly. Running the reconciling rule twice
+/// misaligns precisely the items the first pass put back, which is why this
+/// asserts the composition rather than either rule alone.
+#[test]
+fn the_plan_and_the_match_agree_about_server_only_items() {
+    let mut baseline = Baseline::new();
+    baseline.advance(
+        &items(json!([message("first question")])),
+        &items(json!([
+            { "type": "reasoning", "id": "rs_1", "encrypted_content": "OPAQUE" },
+            {
+                "type": "message",
+                "role": "assistant",
+                "content": [{ "type": "output_text", "text": "answer" }],
+            },
+        ])),
+    );
+
+    let replay = items(json!([
+        message("first question"),
+        {
+            "type": "message",
+            "role": "assistant",
+            "content": [{ "type": "output_text", "text": "answer" }],
+        },
+        message("second question"),
+    ]));
+
+    // The session matches, and reconciliation says what the backend should see.
+    let reconciled = baseline
+        .reconcile(&replay)
+        .expect("a replay missing only server-only items still continues");
+    assert_eq!(reconciled.new_items, 1);
+
+    // Planning against that form yields the same one new item.
+    match baseline.plan(&reconciled.input) {
+        Plan::Delta(new_items) => assert_eq!(new_items.len(), 1),
+        Plan::Full => panic!("the match and the plan disagree"),
+    }
+
+    // Planning against the raw replay does not, and must not pretend to: the
+    // reasoning item sits where the replay has the answer, and a delta computed
+    // there would be wrong rather than merely large.
+    assert_eq!(baseline.plan(&replay), Plan::Full);
+}

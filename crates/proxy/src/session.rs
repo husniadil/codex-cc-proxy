@@ -19,6 +19,10 @@ const CAPACITY: usize = 64;
 
 pub struct Session {
     pub baseline: Mutex<Baseline>,
+    /// Whether a turn has ever completed on this conversation. Until one has,
+    /// the baseline is provisional and may be replaced; afterwards it is what
+    /// the backend is known to hold.
+    confirmed: std::sync::atomic::AtomicBool,
     /// §4.2 — the transport binding, created on this conversation's first turn
     /// and kept for its life. Latching lives here, so a session that fell back
     /// stays fallen back.
@@ -39,6 +43,7 @@ impl Session {
     fn new(cache_key: String) -> Self {
         Self {
             baseline: Mutex::new(Baseline::new()),
+            confirmed: std::sync::atomic::AtomicBool::new(false),
             conduit: tokio::sync::OnceCell::new(),
             last_request: Mutex::new(None),
             last_response_id: Mutex::new(None),
@@ -101,6 +106,25 @@ impl Session {
     pub fn advance(&self, sent: &[InputItem], returned: &[InputItem]) {
         if let Ok(mut baseline) = self.baseline.lock() {
             baseline.advance(sent, returned);
+        }
+        self.confirmed
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    /// Claim a brand-new session so a concurrent request cannot match its empty
+    /// baseline and join a conversation it has nothing to do with.
+    ///
+    /// Only ever applied to a session no turn has completed on. Overwriting a
+    /// confirmed baseline with a turn that has not been accepted yet is what
+    /// makes a *failed* turn corrupt the next delta: the backend never saw the
+    /// items, but the baseline says it did, so the next delta skips them and
+    /// the question silently vanishes from the conversation.
+    pub fn seed_if_unconfirmed(&self, sent: &[InputItem]) {
+        if self.confirmed.load(std::sync::atomic::Ordering::SeqCst) {
+            return;
+        }
+        if let Ok(mut baseline) = self.baseline.lock() {
+            baseline.advance(sent, &[]);
         }
     }
 

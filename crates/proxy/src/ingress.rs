@@ -176,15 +176,11 @@ async fn messages(
         translated.input = reconciled.input;
     }
 
-    // The baseline advances before the reply arrives. What was sent is what the
-    // next turn must extend, and recording it later would leave a window in
-    // which a concurrent request sees an empty baseline and matches anything.
-    //
-    // It must not be what the delta is measured against: advancing first and
-    // then diffing compares this turn's input with itself, which is always
-    // empty. An empty delta is not a small delta — the backend answers from the
-    // previous response and the turn silently repeats itself.
-    session.advance(&translated.input, &[]);
+    // A brand-new session claims its conversation immediately, so a concurrent
+    // request cannot match its empty baseline and join a conversation it has
+    // nothing to do with. A session that has already completed a turn is left
+    // alone until this one completes too — see `seed_if_unconfirmed`.
+    session.seed_if_unconfirmed(&translated.input);
 
     // Ingress capture happens here, before anything is sent. It needs no
     // credentials because nothing upstream is involved yet.

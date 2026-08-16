@@ -132,6 +132,16 @@ impl Baseline {
     }
 
     /// What to send for this request: the new items, or everything.
+    ///
+    /// This is a strict comparison, and deliberately so. It operates on input
+    /// that has already been reconciled — the conversation as the *backend*
+    /// holds it, server-only items included — so there is nothing left to match
+    /// past. `reconcile` is what converts a client replay into that form, and
+    /// running it twice misaligns exactly the items it put back.
+    ///
+    /// §3.1 asks that continuation be decided once rather than by two rules
+    /// that can disagree. It is: `reconcile` decides, and this follows from it
+    /// mechanically.
     pub fn plan<'a>(&self, candidate: &'a [InputItem]) -> Plan<'a> {
         match delta(&self.items, candidate) {
             Some(new_items) => Plan::Delta(new_items),
