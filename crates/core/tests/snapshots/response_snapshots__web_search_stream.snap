@@ -1,0 +1,14 @@
+---
+source: crates/core/tests/response_snapshots.rs
+expression: "frames(&[created(),\njson!({\n    \"type\": \"response.output_item.done\", \"item\":\n    {\n        \"type\": \"web_search_call\", \"id\": \"ws_1\", \"status\": \"completed\",\n        \"action\": { \"type\": \"search\", \"query\": \"sse framing\" },\n    },\n}),\njson!({ \"type\": \"response.output_text.delta\", \"delta\": \"Sources say so.\" }),\njson!({\n    \"type\": \"response.output_text.annotation.added\", \"annotation\":\n    {\n        \"type\": \"url_citation\", \"url\": \"https://example.invalid/spec\",\n        \"title\": \"The Specification\",\n    },\n}), completed(),])"
+---
+{"type":"message_start","message":{"id":"msg_snapshot","type":"message","role":"assistant","model":"claude-sonnet-4","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":100,"output_tokens":0,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}}
+{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}
+{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Sources say so."}}
+{"type":"content_block_stop","index":0}
+{"type":"content_block_start","index":1,"content_block":{"type":"server_tool_use","id":"ws_1","name":"web_search","input":{"query":"sse framing"}}}
+{"type":"content_block_stop","index":1}
+{"type":"content_block_start","index":2,"content_block":{"type":"web_search_tool_result","tool_use_id":"ws_1","content":[{"type":"web_search_result","url":"https://example.invalid/spec","title":"The Specification"}]}}
+{"type":"content_block_stop","index":2}
+{"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"input_tokens":100,"output_tokens":12,"cache_creation_input_tokens":0,"cache_read_input_tokens":400}}
+{"type":"message_stop"}
