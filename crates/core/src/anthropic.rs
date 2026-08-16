@@ -14,6 +14,14 @@ pub struct MessagesRequest {
     pub tools: Vec<Tool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_choice: Option<ToolChoice>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_config: Option<OutputConfig>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct OutputConfig {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort: Option<String>,
 }
 
 /// A tool declaration. Function tools carry `input_schema`; the server-side
@@ -135,6 +143,11 @@ pub struct Message {
 pub enum Role {
     User,
     Assistant,
+    /// Anything else. The backend rejects system and developer roles inside
+    /// `input`, so these fold into `instructions` — see
+    /// `docs/proxy-behavior.md` §2.1.
+    #[serde(other)]
+    Other,
 }
 
 /// Message content is either a bare string or a list of blocks.

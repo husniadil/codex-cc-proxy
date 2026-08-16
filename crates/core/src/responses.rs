@@ -16,6 +16,57 @@ pub struct ResponsesRequest {
     pub tools: Vec<ToolSpec>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_choice: Option<ToolChoice>,
+    pub reasoning: Reasoning,
+    /// Asks for reasoning that can be carried into the next turn (§3.3).
+    pub include: Vec<String>,
+    pub parallel_tool_calls: bool,
+    pub store: bool,
+    pub stream: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prompt_cache_key: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct Reasoning {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub effort: Option<Effort>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub summary: Option<Summary>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Effort {
+    None,
+    Minimal,
+    Low,
+    Medium,
+    High,
+    XHigh,
+    Max,
+}
+
+impl Effort {
+    /// Parse an inbound effort. `None` for anything unrecognized — the
+    /// backend's own default is a better guess than one invented here.
+    pub fn parse(value: &str) -> Option<Self> {
+        Some(match value {
+            "none" => Self::None,
+            "minimal" => Self::Minimal,
+            "low" => Self::Low,
+            "medium" => Self::Medium,
+            "high" => Self::High,
+            "xhigh" => Self::XHigh,
+            "max" => Self::Max,
+            _ => return None,
+        })
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Summary {
+    Auto,
 }
 
 /// A tool as the backend declares it: internally tagged, so a function tool is

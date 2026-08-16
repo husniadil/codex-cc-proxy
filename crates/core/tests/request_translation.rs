@@ -63,6 +63,25 @@ fn system_blocks_join_into_one_instructions_string() {
     );
 }
 
+/// §2.1 — a message with any role other than user or assistant folds into
+/// `instructions`. The backend rejects system and developer roles inside
+/// `input`, so emitting one as an item fails the whole request.
+#[test]
+fn a_non_conversational_role_folds_into_instructions() {
+    let out = translate(json!({
+        "model": "gpt-5",
+        "system": "Base prompt.",
+        "messages": [
+            { "role": "developer", "content": "Prefer tabs." },
+            { "role": "user", "content": "hello" },
+        ],
+    }));
+
+    assert_eq!(out["instructions"], json!("Base prompt.\n\nPrefer tabs."));
+    assert_eq!(out["input"].as_array().map(Vec::len), Some(1));
+    assert_eq!(out["input"][0]["role"], json!("user"));
+}
+
 /// §2.2 — list-form content, each block mapped in order.
 #[test]
 fn user_text_blocks_become_input_text_parts() {
@@ -154,6 +173,80 @@ fn a_message_emptied_by_translation_is_dropped() {
     }));
 
     assert_eq!(out["input"].as_array().map(Vec::len), Some(1));
+}
+
+/// §2.7 — the fields every request carries regardless of what came in.
+#[test]
+fn every_request_sets_the_fixed_fields() {
+    let out = translate(json!({
+        "model": "gpt-5",
+        "messages": [{ "role": "user", "content": "hello" }],
+    }));
+
+    assert_eq!(out["stream"], json!(true));
+    assert_eq!(out["store"], json!(false));
+    assert_eq!(out["parallel_tool_calls"], json!(true));
+    // Without this the model's reasoning cannot be carried into the next turn
+    // (§3.3), and every turn restarts its thinking from nothing.
+    assert_eq!(out["include"], json!(["reasoning.encrypted_content"]));
+    assert_eq!(out["reasoning"]["summary"], json!("auto"));
+}
+
+/// §2.7 — effort comes from the request. An absent or unrecognized value is
+/// omitted rather than defaulted: the backend's own default is a better guess
+/// than ours, and inventing one silently changes what the user asked for.
+#[rstest]
+#[case(json!({ "effort": "low" }), Some("low"))]
+#[case(json!({ "effort": "high" }), Some("high"))]
+#[case(json!({ "effort": "xhigh" }), Some("xhigh"))]
+#[case(json!({ "effort": "enthusiastic" }), None)]
+#[case(json!({}), None)]
+fn effort_derives_from_output_config(#[case] config: Value, #[case] expected: Option<&str>) {
+    let out = translate(json!({
+        "model": "gpt-5",
+        "messages": [{ "role": "user", "content": "hello" }],
+        "output_config": config,
+    }));
+
+    assert_eq!(out["reasoning"]["effort"].as_str(), expected);
+}
+
+/// §2.7 — the cache key is supplied by the caller and is stable for the life of
+/// a conversation. Cache hit rate depends on it directly.
+#[test]
+fn the_prompt_cache_key_comes_from_the_session() {
+    let request: MessagesRequest = serde_json::from_value(json!({
+        "model": "gpt-5",
+        "messages": [{ "role": "user", "content": "hello" }],
+    }))
+    .unwrap();
+
+    let options = TranslateOptions {
+        prompt_cache_key: Some("session-77".to_owned()),
+        ..TranslateOptions::default()
+    };
+    let out = serde_json::to_value(translate_request(&request, &options)).unwrap();
+
+    assert_eq!(out["prompt_cache_key"], json!("session-77"));
+}
+
+/// §2.7 — unsupported inbound parameters are dropped through an allowlist
+/// rather than forwarded. `cache_control` has no equivalent; upstream caching
+/// is implicit.
+#[test]
+fn unsupported_parameters_are_dropped() {
+    let out = translate(json!({
+        "model": "gpt-5",
+        "messages": [{ "role": "user", "content": "hello" }],
+        "temperature": 0.7,
+        "top_k": 5,
+        "metadata": { "user_id": "u1" },
+        "thinking": { "type": "enabled", "budget_tokens": 1024 },
+    }));
+
+    for dropped in ["temperature", "top_k", "metadata", "thinking"] {
+        assert_eq!(out.get(dropped), None, "{dropped} should not be forwarded");
+    }
 }
 
 /// §2.4 — function tools flatten, and `input_schema` becomes `parameters`.

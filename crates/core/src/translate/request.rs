@@ -6,15 +6,17 @@ use crate::anthropic::Message;
 use crate::anthropic::MessagesRequest;
 use crate::anthropic::Role;
 use crate::anthropic::Source;
-use crate::anthropic::SystemPrompt;
 use crate::anthropic::Tool;
 use crate::anthropic::ToolChoice;
 use crate::responses::CallOutput;
 use crate::responses::ContentPart;
+use crate::responses::Effort;
 use crate::responses::FunctionLiteral;
 use crate::responses::InputItem;
 use crate::responses::ItemRole;
+use crate::responses::Reasoning;
 use crate::responses::ResponsesRequest;
+use crate::responses::Summary;
 use crate::responses::ToolChoice as ResponsesToolChoice;
 use crate::responses::ToolChoiceMode;
 use crate::responses::ToolSpec;
@@ -32,14 +34,21 @@ pub struct TranslateOptions {
     /// The client does not clear `defer_loading` once a tool is discovered, so
     /// this set is the only signal that a deferred tool is live (§2.5).
     pub discovered_tools: BTreeSet<String>,
+    /// Stable for the life of a conversation (§3.1). Cache hit rate depends on
+    /// it directly.
+    pub prompt_cache_key: Option<String>,
 }
+
+/// The one value asked for in `include`. Without it, responses carry no
+/// reasoning that can be re-sent on the next turn (§3.3).
+const INCLUDE_ENCRYPTED_REASONING: &str = "reasoning.encrypted_content";
 
 /// Translate one Messages request into one Responses request.
 pub fn translate_request(
     request: &MessagesRequest,
     options: &TranslateOptions,
 ) -> ResponsesRequest {
-    let instructions = request.system.as_ref().map(SystemPrompt::to_text);
+    let instructions = build_instructions(request);
 
     ResponsesRequest {
         model: options
@@ -54,7 +63,62 @@ pub fn translate_request(
             .collect(),
         tools: translate_tools(&request.tools, options),
         tool_choice: request.tool_choice.as_ref().map(translate_tool_choice),
+        reasoning: Reasoning {
+            effort: request
+                .output_config
+                .as_ref()
+                .and_then(|config| config.effort.as_deref())
+                .and_then(Effort::parse),
+            summary: Some(Summary::Auto),
+        },
+        include: vec![INCLUDE_ENCRYPTED_REASONING.to_owned()],
+        parallel_tool_calls: true,
+        store: false,
+        stream: true,
+        prompt_cache_key: options.prompt_cache_key.clone(),
     }
+}
+
+/// §2.1 — the system prompt, followed by the text of any message whose role is
+/// neither user nor assistant. Such a message cannot be an input item: the
+/// backend rejects system and developer roles there, and one is enough to fail
+/// the whole request.
+fn build_instructions(request: &MessagesRequest) -> Option<String> {
+    let mut sections: Vec<String> = Vec::new();
+
+    if let Some(system) = request.system.as_ref() {
+        sections.push(system.to_text());
+    }
+
+    sections.extend(
+        request
+            .messages
+            .iter()
+            .filter(|message| message.role == Role::Other)
+            .map(|message| text_of(&message.content))
+            .filter(|text| !text.is_empty()),
+    );
+
+    let joined = sections
+        .iter()
+        .filter(|section| !section.is_empty())
+        .map(String::as_str)
+        .collect::<Vec<_>>()
+        .join("\n\n");
+
+    (!joined.is_empty()).then_some(joined)
+}
+
+fn text_of(content: &Content) -> String {
+    content
+        .blocks()
+        .iter()
+        .filter_map(|block| match block {
+            ContentBlock::Text { text } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n")
 }
 
 fn translate_tools(tools: &[Tool], options: &TranslateOptions) -> Vec<ToolSpec> {
@@ -129,6 +193,8 @@ fn translate_message(message: &Message) -> Vec<InputItem> {
     let role = match message.role {
         Role::User => ItemRole::User,
         Role::Assistant => ItemRole::Assistant,
+        // Already folded into `instructions` by `build_instructions`.
+        Role::Other => return Vec::new(),
     };
 
     let mut items = Vec::new();
@@ -136,9 +202,9 @@ fn translate_message(message: &Message) -> Vec<InputItem> {
 
     for block in message.content.blocks() {
         match block {
-            ContentBlock::Text { text } => parts.push(match message.role {
-                Role::User => ContentPart::InputText { text },
-                Role::Assistant => ContentPart::OutputText { text },
+            ContentBlock::Text { text } => parts.push(match role {
+                ItemRole::User => ContentPart::InputText { text },
+                ItemRole::Assistant => ContentPart::OutputText { text },
             }),
             ContentBlock::ToolUse { id, name, input } => {
                 flush(&mut items, role, &mut parts);
