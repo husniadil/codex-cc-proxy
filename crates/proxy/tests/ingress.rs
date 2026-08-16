@@ -36,6 +36,7 @@ impl Harness {
         let upstream = ReplayServer::start(behavior).await;
 
         let state = AppState {
+            effort_ceiling: None,
             transport: Arc::new(HttpTransport::new(upstream.url.clone())),
             conduits: None,
             models: Arc::new(vec![ModelMapping {
@@ -1013,6 +1014,7 @@ async fn ingress_sends_through_a_conduit_and_uploads_incrementally() {
     });
 
     let state = AppState {
+        effort_ceiling: None,
         transport: Arc::new(HttpTransport::new(upstream.url.clone())),
         conduits: Some(conduits),
         models: Arc::new(vec![ModelMapping {

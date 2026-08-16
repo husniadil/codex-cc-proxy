@@ -119,6 +119,7 @@ async fn run_one(probe: &probe::Probe, fixture: &Fixture) -> Outcome {
     });
 
     let state = AppState {
+        effort_ceiling: None,
         transport: Arc::clone(&transport) as Arc<dyn Transport>,
         conduits: None,
         models: Arc::new(vec![ModelMapping {

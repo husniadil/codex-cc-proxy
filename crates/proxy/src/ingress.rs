@@ -38,6 +38,8 @@ pub type ConduitFactory = Arc<dyn Fn() -> Arc<crate::upstream::conduit::Conduit>
 
 #[derive(Clone)]
 pub struct AppState {
+    /// §2.7 — an operator's ceiling on reasoning effort.
+    pub effort_ceiling: Option<codex_cc_proxy_core::responses::Effort>,
     /// Used when no factory is supplied — a single stateless transport, which
     /// is what the probes and most tests want.
     pub transport: Arc<dyn Transport>,
@@ -152,6 +154,7 @@ async fn messages(
         model: upstream_model,
         discovered_tools: session.discovered(),
         prompt_cache_key: Some(session.cache_key.clone()),
+        effort_ceiling: state.effort_ceiling,
     };
     let translated = translate_request(&request, &options);
 

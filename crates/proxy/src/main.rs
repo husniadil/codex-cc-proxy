@@ -26,6 +26,9 @@ const UPSTREAM_ENDPOINT: &str = "https://chatgpt.com/backend-api/codex/responses
 /// The same surface over a socket.
 const UPSTREAM_WEBSOCKET: &str = "wss://chatgpt.com/backend-api/codex/responses";
 
+/// Where the model catalog lives.
+const UPSTREAM_CATALOG: &str = "https://chatgpt.com/backend-api/codex/models";
+
 #[tokio::main]
 async fn main() -> Result<()> {
     init_tracing();
@@ -169,10 +172,29 @@ async fn run_with(args: RunArgs, record_ingress: bool) -> Result<()> {
     );
     let recording = Arc::new(std::sync::atomic::AtomicBool::new(record_ingress));
 
-    // The catalog is fetched with credentials when there are any. An
-    // unreachable catalog falls back rather than failing: fetch failure is not
-    // evidence that a model went away (§7.1).
-    let catalog = Arc::new(codex_cc_proxy::catalog::Catalog::fallback());
+    let tokens = Arc::new(codex_cc_proxy::auth::tokens::TokenSource::new(
+        Arc::clone(&credentials),
+        codex_cc_proxy::auth::flow::token_endpoint(),
+        codex_cc_proxy::auth::flow::CLIENT_ID,
+        Arc::new(codex_cc_proxy::auth::tokens::SystemClock),
+    ));
+
+    // §7.0 — fetched with credentials when there are any. An unreachable
+    // catalog falls back rather than failing: fetch failure is not evidence
+    // that a model went away (§7.1), and a daemon that will not start because
+    // the network blinked is the worse failure.
+    let catalog = Arc::new(match tokens.access_token().await {
+        Ok(token) => {
+            codex_cc_proxy::catalog::fetch(&reqwest::Client::new(), UPSTREAM_CATALOG, &token).await
+        }
+        Err(error) => {
+            tracing::info!(%error, "not authenticated; the model list is the fallback");
+            codex_cc_proxy::catalog::Catalog::fallback()
+        }
+    });
+
+    // An unknown model id is refused here, and the error names what the catalog
+    // does have — which is the fastest way to find the id you actually meant.
     catalog.validate(
         &tiers
             .iter()
@@ -196,13 +218,6 @@ async fn run_with(args: RunArgs, record_ingress: bool) -> Result<()> {
 
     // Credentials are fetched per request rather than captured here, so a
     // refresh part-way through a session is transparent to both transports.
-    let tokens = Arc::new(codex_cc_proxy::auth::tokens::TokenSource::new(
-        Arc::clone(&credentials),
-        codex_cc_proxy::auth::flow::token_endpoint(),
-        codex_cc_proxy::auth::flow::CLIENT_ID,
-        Arc::new(codex_cc_proxy::auth::tokens::SystemClock),
-    ));
-
     // One conduit per conversation, built on its first turn. The binding is per
     // session because latching, the pooled connection, and the previous
     // response id all belong to one conversation.
@@ -226,6 +241,7 @@ async fn run_with(args: RunArgs, record_ingress: bool) -> Result<()> {
     });
 
     let state = AppState {
+        effort_ceiling: None,
         // Only reached if the factory is absent, which it is not here.
         transport: Arc::new(
             HttpTransport::new(UPSTREAM_ENDPOINT).with_credentials(Arc::clone(&tokens)),

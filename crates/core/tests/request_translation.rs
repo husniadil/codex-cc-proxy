@@ -784,3 +784,74 @@ fn a_discovered_tool_is_forwarded_despite_still_being_marked_deferred() {
     assert_eq!(out["tools"].as_array().map(Vec::len), Some(1));
     assert_eq!(out["tools"][0]["name"], json!("Slack"));
 }
+
+/// §2.7 — an operator's effort ceiling applies to traffic that expresses no
+/// preference of its own, which is most of it. The client cannot choose this:
+/// it does not know whose quota it is spending.
+#[test]
+fn an_effort_ceiling_applies_when_the_request_asks_for_nothing() {
+    let request: MessagesRequest = serde_json::from_value(json!({
+        "model": "gpt-5",
+        "messages": [{ "role": "user", "content": "hello" }],
+    }))
+    .unwrap();
+
+    let options = TranslateOptions {
+        effort_ceiling: Some(codex_cc_proxy_core::responses::Effort::Low),
+        ..TranslateOptions::default()
+    };
+    let out = serde_json::to_value(translate_request(&request, &options)).unwrap();
+
+    assert_eq!(out["reasoning"]["effort"], json!("low"));
+}
+
+/// A ceiling caps, it does not raise. A request asking for less than the
+/// ceiling keeps its own choice — capping the maximum is not a request to
+/// spend more.
+#[rstest]
+#[case("minimal", "minimal")]
+#[case("low", "low")]
+#[case("high", "low")]
+#[case("max", "low")]
+fn a_ceiling_caps_without_raising(#[case] requested: &str, #[case] expected: &str) {
+    let request: MessagesRequest = serde_json::from_value(json!({
+        "model": "gpt-5",
+        "messages": [{ "role": "user", "content": "hello" }],
+        "output_config": { "effort": requested },
+    }))
+    .unwrap();
+
+    let options = TranslateOptions {
+        effort_ceiling: Some(codex_cc_proxy_core::responses::Effort::Low),
+        ..TranslateOptions::default()
+    };
+    let out = serde_json::to_value(translate_request(&request, &options)).unwrap();
+
+    assert_eq!(out["reasoning"]["effort"], json!(expected));
+}
+
+/// The ordering the cap relies on. A value out of place would silently let a
+/// request exceed the ceiling an operator set.
+#[test]
+fn efforts_are_ordered_from_least_to_most() {
+    use codex_cc_proxy_core::responses::Effort;
+
+    let ascending = [
+        Effort::None,
+        Effort::Minimal,
+        Effort::Low,
+        Effort::Medium,
+        Effort::High,
+        Effort::XHigh,
+        Effort::Max,
+    ];
+
+    for pair in ascending.windows(2) {
+        assert!(
+            pair[0] < pair[1],
+            "{:?} should be less than {:?}",
+            pair[0],
+            pair[1]
+        );
+    }
+}

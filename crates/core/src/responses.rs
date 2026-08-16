@@ -34,7 +34,10 @@ pub struct Reasoning {
     pub summary: Option<Summary>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+/// Ordered from least to most, so a ceiling can be applied with `min`. The
+/// order is the point: a value out of place would silently let a request exceed
+/// the ceiling an operator set.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Effort {
     None,

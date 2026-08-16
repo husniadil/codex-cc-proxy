@@ -145,8 +145,19 @@ nothing.
 Every request sets `stream: true`, `store: false`, `parallel_tool_calls: true`,
 and includes `reasoning.encrypted_content`.
 
-`reasoning.effort` derives from the inbound `output_config.effort`, clamped per
-model. `reasoning.summary` is always `auto`.
+`reasoning.effort` derives from the inbound `output_config.effort`, under an
+optional ceiling the operator sets. The client cannot choose that ceiling: it
+does not know whose quota it is spending, and effort is the largest lever on
+what a turn costs.
+
+The ceiling caps and never raises. A request asking for less keeps its own
+choice, because capping a maximum is not a request to spend more. With no
+request effort at all the ceiling still applies — an operator who capped effort
+meant it for the traffic that expresses no preference too, and that is most of
+it. With no ceiling and no request effort, the field is omitted and the
+backend's own default applies.
+
+`reasoning.summary` is always `auto`.
 
 `prompt_cache_key` derives from session identity (§3.1) and is stable for the
 life of a conversation. Cache hit rate depends on it directly, making it the

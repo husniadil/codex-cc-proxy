@@ -37,6 +37,10 @@ opus   = "gpt-5-codex"
 sonnet = "gpt-5-codex"
 haiku  = "gpt-5-codex-mini"
 fable  = "gpt-5-codex-mini"
+
+# Optional. Caps reasoning effort on every request, whatever the client asks
+# for: one of none, minimal, low, medium, high, xhigh, max.
+# effort = "low"
 "#;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -47,6 +51,13 @@ pub struct Config {
     pub tiers: Tiers,
     #[serde(default)]
     pub transport: TransportConfig,
+    /// A ceiling on reasoning effort, for operators who care what a turn costs.
+    ///
+    /// The client cannot choose this: it does not know whose quota it is
+    /// spending. Omitted means no ceiling, and the backend's own default
+    /// applies — not that effort is zero.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort: Option<String>,
 }
 
 fn default_port() -> u16 {
@@ -54,6 +65,27 @@ fn default_port() -> u16 {
 }
 
 impl Config {
+    /// The effort ceiling, if one is set and recognized.
+    ///
+    /// An unrecognized value is an error rather than a silent fallback: an
+    /// operator who wrote `effort = "cheap"` meant to cap their spending, and
+    /// quietly ignoring it spends their quota at full rate.
+    pub fn effort_ceiling(
+        &self,
+    ) -> Result<Option<codex_cc_proxy_core::responses::Effort>, ProxyError> {
+        let Some(effort) = &self.effort else {
+            return Ok(None);
+        };
+        codex_cc_proxy_core::responses::Effort::parse(effort)
+            .map(Some)
+            .ok_or_else(|| {
+                ProxyError::invalid_request(format!(
+                    "`effort = \"{effort}\"` is not a recognized effort. \
+                     One of: none, minimal, low, medium, high, xhigh, max."
+                ))
+            })
+    }
+
     /// Read the configuration, or report why it could not be read.
     ///
     /// A missing file is not an error — it is a first run, and the message says
@@ -94,6 +126,7 @@ impl Default for Config {
             port: DEFAULT_PORT,
             tiers: Tiers::default(),
             transport: TransportConfig::default(),
+            effort: None,
         }
     }
 }

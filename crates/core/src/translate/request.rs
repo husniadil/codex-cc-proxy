@@ -37,6 +37,13 @@ pub struct TranslateOptions {
     /// Stable for the life of a conversation (§3.1). Cache hit rate depends on
     /// it directly.
     pub prompt_cache_key: Option<String>,
+    /// An operator-set ceiling on reasoning effort.
+    ///
+    /// The client does not know what a turn costs the operator, so it cannot
+    /// choose this. A ceiling rather than a fixed value: a request asking for
+    /// less than the ceiling still gets less, because lowering a request's own
+    /// choice is not something an operator asked for by capping the maximum.
+    pub effort_ceiling: Option<Effort>,
 }
 
 /// The one value asked for in `include`. Without it, responses carry no
@@ -64,11 +71,7 @@ pub fn translate_request(
         tools: translate_tools(&request.tools, options),
         tool_choice: request.tool_choice.as_ref().map(translate_tool_choice),
         reasoning: Reasoning {
-            effort: request
-                .output_config
-                .as_ref()
-                .and_then(|config| config.effort.as_deref())
-                .and_then(Effort::parse),
+            effort: effort_for(request, options),
             summary: Some(Summary::Auto),
         },
         include: vec![INCLUDE_ENCRYPTED_REASONING.to_owned()],
@@ -76,6 +79,26 @@ pub fn translate_request(
         store: false,
         stream: true,
         prompt_cache_key: options.prompt_cache_key.clone(),
+    }
+}
+
+/// §2.7 — the effort this request asks for, under whatever ceiling the operator
+/// set.
+///
+/// With a ceiling and no request effort, the ceiling applies: an operator who
+/// capped effort meant it for the traffic that expresses no preference too, and
+/// that is most of it.
+fn effort_for(request: &MessagesRequest, options: &TranslateOptions) -> Option<Effort> {
+    let requested = request
+        .output_config
+        .as_ref()
+        .and_then(|config| config.effort.as_deref())
+        .and_then(Effort::parse);
+
+    match (requested, options.effort_ceiling) {
+        (Some(requested), Some(ceiling)) => Some(requested.min(ceiling)),
+        (Some(requested), None) => Some(requested),
+        (None, ceiling) => ceiling,
     }
 }
 

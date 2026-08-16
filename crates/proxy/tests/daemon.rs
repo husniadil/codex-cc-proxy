@@ -183,3 +183,56 @@ fn the_example_configuration_is_valid() {
         toml::from_str(codex_cc_proxy::config::EXAMPLE).expect("the example should parse");
     assert!(config.tiers.resolve().is_ok());
 }
+
+/// A mistyped ceiling is refused rather than ignored. An operator who wrote it
+/// meant to cap their spending, and quietly dropping it spends at full rate.
+#[test]
+fn an_unrecognized_effort_is_refused() {
+    let config: Config = toml::from_str(
+        r#"
+        effort = "cheap"
+        [tiers]
+        opus = "m"
+        sonnet = "m"
+        haiku = "m"
+        fable = "m"
+        "#,
+    )
+    .unwrap();
+
+    let error = config
+        .effort_ceiling()
+        .expect_err("an unknown effort should fail");
+    assert!(error.message.contains("cheap"), "{}", error.message);
+    assert!(
+        error.message.contains("low"),
+        "the error should list the valid values"
+    );
+}
+
+#[test]
+fn a_recognized_effort_parses() {
+    let config: Config = toml::from_str(
+        r#"
+        effort = "low"
+        [tiers]
+        opus = "m"
+        sonnet = "m"
+        haiku = "m"
+        fable = "m"
+        "#,
+    )
+    .unwrap();
+
+    assert_eq!(
+        config.effort_ceiling().unwrap(),
+        Some(codex_cc_proxy_core::responses::Effort::Low)
+    );
+}
+
+/// No ceiling means the backend's own default, not zero effort.
+#[test]
+fn no_effort_key_means_no_ceiling() {
+    let config: Config = toml::from_str(codex_cc_proxy::config::EXAMPLE).unwrap();
+    assert_eq!(config.effort_ceiling().unwrap(), None);
+}
