@@ -98,6 +98,10 @@ impl ProxyError {
         match status {
             StatusCode::TOO_MANY_REQUESTS => Self::rate_limited(message),
             StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => Self::authentication(message),
+            // The backend judged the request itself invalid. Saying so is more
+            // use than a generic upstream error: both are terminal, but only
+            // one tells the reader where to look.
+            StatusCode::BAD_REQUEST => Self::invalid_request(message),
             status if status.is_server_error() => Self::overloaded(message),
             status => Self::upstream(status, message),
         }

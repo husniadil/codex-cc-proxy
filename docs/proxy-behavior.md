@@ -326,6 +326,17 @@ Request payloads may be zstd-compressed. This compounds with §4.3: incremental
 upload removes most turns' bulk, and compression reduces what remains on the
 turns where a full send is unavoidable.
 
+**It is off by default, because the backend rejects what this sends.** A zstd
+binary frame comes back as a bare `400 Invalid request` with nothing naming
+compression. The threshold is what makes it dangerous: only payloads above it
+are compressed, so a hand-made test turn succeeds and a real conversation —
+system prompt, tool schemas, history — fails. That reads as the proxy being
+broken for large requests rather than as a compression problem, and it cost a
+real debugging session to find.
+
+Whatever the backend expects, it is not a bare zstd frame. Whether it wants a
+negotiated extension, a header, or nothing at all is roadmap §L.
+
 ---
 
 ## 5. Response translation

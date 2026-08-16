@@ -1730,3 +1730,82 @@ async fn an_unlisted_model_does_not_cap_effort() {
 
     assert_eq!(upstream.requests()[0]["reasoning"]["effort"], json!("max"));
 }
+
+/// §1.1 — a refusal that arrives as the first upstream event is a status, not a
+/// 200 carrying an error frame.
+///
+/// Nothing has been written to the client at that point, so the status is still
+/// available — and it must be used. A 200 whose body is one error frame and no
+/// `message_start` is not a message any client can read: the real one reports
+/// "empty or malformed response (HTTP 200)" and says nothing about the refusal,
+/// which sends you looking at the proxy instead of at the request.
+#[tokio::test]
+async fn an_upstream_refusal_on_the_first_event_is_a_status() {
+    let harness = Harness::start(Behavior::Events(vec![json!({
+        "type": "error",
+        "status": 400,
+        "error": { "message": "Invalid request", "type": "invalid_request_error" },
+    })]))
+    .await;
+
+    let response = harness
+        .post(
+            "/v1/messages",
+            json!({
+                "model": "claude-sonnet-4",
+                "max_tokens": 64,
+                "messages": [{ "role": "user", "content": "hello" }],
+            }),
+        )
+        .await;
+
+    assert_eq!(
+        response.status(),
+        400,
+        "the backend's status should survive"
+    );
+
+    let body: Value = response.json().await.unwrap();
+    assert_eq!(body["type"], json!("error"));
+    assert_eq!(body["error"]["type"], json!("invalid_request_error"));
+    assert!(
+        body["error"]["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("Invalid request")),
+        "the backend's own words should survive: {body}"
+    );
+}
+
+/// A refusal *after* content has been sent stays an SSE error frame, because
+/// the status is already gone.
+#[tokio::test]
+async fn a_refusal_after_content_is_still_a_frame() {
+    let harness = Harness::start(Behavior::Events(vec![
+        json!({ "type": "response.created", "response": { "id": "resp_1" } }),
+        json!({ "type": "response.output_text.delta", "delta": "partial" }),
+        json!({
+            "type": "response.failed",
+            "response": { "id": "resp_1", "error": { "code": "server_is_overloaded" } },
+        }),
+    ]))
+    .await;
+
+    let response = harness
+        .post(
+            "/v1/messages",
+            json!({
+                "model": "claude-sonnet-4",
+                "max_tokens": 64,
+                "messages": [{ "role": "user", "content": "hello" }],
+            }),
+        )
+        .await;
+
+    assert_eq!(response.status(), 200, "content was already sent");
+    let body = response.text().await.unwrap();
+    let error = payloads(&body)
+        .into_iter()
+        .find(|frame| frame["type"] == "error")
+        .expect("the failure should arrive as a frame");
+    assert_eq!(error["error"]["type"], json!("overloaded_error"));
+}

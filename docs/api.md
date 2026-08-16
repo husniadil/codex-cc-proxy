@@ -43,7 +43,8 @@ Anthropic-shaped body:
 |---|---|---|
 | Quota exhausted | `rate_limit_error` | 429 |
 | Upstream overload or 5xx | `overloaded_error` | 529 |
-| Upstream rejection | `api_error` | upstream status |
+| Upstream judged the request invalid | `invalid_request_error` | 400 |
+| Upstream rejection, otherwise | `api_error` | upstream status |
 | Credentials invalid or absent | `authentication_error` | 401 |
 | Credentials transiently unavailable | `overloaded_error` | 529 |
 | Request exceeds the model's window | `invalid_request_error` | 400 |

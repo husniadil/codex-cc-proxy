@@ -227,6 +227,7 @@ method, so whoever has quota can close it in one sitting.
 | May this client request connector scopes? | Unknown, and unasked: the proxy requests only what it uses. A refusal once suggested otherwise but was a truncated URL. |
 | Does a refresh survive expiry without invalidating the family? | Force expiry, refresh, confirm the prior token family still works |
 | ~~Does the backend accept the request shape — headers, `instructions`, tools? | **Answered.** Accepted as sent; a turn completes and the frame sequence is correct. |
+| What does the backend expect for a compressed request, if anything? | A bare zstd frame is refused with `400 Invalid request`. Compression is off by default until this is known. |
 | ~~Does WebSocket connect, or close with a policy code?~~ | **Answered.** It connects. No policy close was seen, and the catalog marks these models `prefer_websockets`. |
 | ~~Does the context meter stay steady across a turn?~~ | **Answered.** `message_start` carries the estimate and `message_delta` replaces it with the true count. |
 | ~~What does the model catalog actually contain?~~ | **Answered.** It needs a `client_version` query parameter, and filters by it: a version below a model's `minimal_client_version` returns an empty list rather than an error. Entries are keyed by `slug`, state `visibility` as a word, and carry `supported_reasoning_levels`. |

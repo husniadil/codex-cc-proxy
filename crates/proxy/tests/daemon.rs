@@ -121,7 +121,10 @@ fn configuration_parses_with_documented_defaults() {
 
     assert_eq!(config.port, 8787);
     assert!(config.transport.websocket);
-    assert!(config.transport.compression);
+    // Compression defaults off: the backend rejects the frame this sends, and
+    // only above the size threshold, so leaving it on makes small turns work
+    // and real conversations fail.
+    assert!(!config.transport.compression);
     assert!(config.tiers.resolve().is_ok());
 }
 

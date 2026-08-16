@@ -276,6 +276,24 @@ async fn messages(
 
     session.remember_request(&translated);
 
+    // An upstream refusal arriving as the very first event is not a mid-stream
+    // failure. Nothing has been written to the client yet, so it can still be a
+    // status — and it must be: a 200 whose body is one error frame and no
+    // `message_start` is not a message the client can read, and it reports it
+    // as an empty or malformed response rather than as the refusal it is.
+    let (first, events) = peek(events).await;
+    if let Some(Ok(payload)) = &first
+        && let Some(error) = upstream_refusal(payload)
+    {
+        return error.into_response();
+    }
+    let events = match first {
+        Some(first) => futures::stream::once(async move { first })
+            .chain(events)
+            .boxed(),
+        None => events,
+    };
+
     let translator = ResponseTranslator::new(ResponseOptions {
         message_id: format!("msg_{}", uuid::Uuid::new_v4().simple()),
         // The client matches this against the model it asked for, not against
@@ -481,6 +499,43 @@ impl StreamState {
              well-formed turn that simply said nothing.",
         );
     }
+}
+
+/// Read the first event without consuming the rest.
+async fn peek(
+    mut events: crate::upstream::EventStream,
+) -> (
+    Option<Result<String, ProxyError>>,
+    crate::upstream::EventStream,
+) {
+    let first = events.next().await;
+    (first, events)
+}
+
+/// An upstream event that is a refusal rather than content.
+///
+/// The status the backend gave is carried through rather than replaced, so a
+/// 400 stays a 400 and the client's retry logic sees what actually happened.
+fn upstream_refusal(payload: &str) -> Option<ProxyError> {
+    let event: Value = serde_json::from_str(payload).ok()?;
+    if event.get("type").and_then(Value::as_str) != Some("error") {
+        return None;
+    }
+
+    let message = event
+        .pointer("/error/message")
+        .and_then(Value::as_str)
+        .unwrap_or("the backend refused the request")
+        .to_owned();
+
+    let status = event
+        .get("status")
+        .and_then(Value::as_u64)
+        .and_then(|status| u16::try_from(status).ok())
+        .and_then(|status| StatusCode::from_u16(status).ok())
+        .unwrap_or(StatusCode::BAD_GATEWAY);
+
+    Some(ProxyError::from_upstream_status(status, message))
 }
 
 fn render(frames: &[codex_cc_proxy_core::anthropic::Frame]) -> String {
