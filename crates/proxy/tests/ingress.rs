@@ -919,3 +919,59 @@ async fn the_cache_key_is_stable_across_a_conversation() {
         "the cache key changed between turns of one conversation"
     );
 }
+
+/// §5 — `count_tokens` is an estimate, uncalibrated *before a session's first
+/// completed request* and calibrated after. Answering from a fresh estimator
+/// every time would leave it permanently uncalibrated however long the session
+/// ran, which is not what the documented limitation says.
+#[tokio::test]
+async fn count_tokens_uses_what_the_conversation_has_learned() {
+    let harness = Harness::start(Behavior::Events(vec![
+        json!({ "type": "response.created", "response": { "id": "resp_1" } }),
+        json!({ "type": "response.output_text.delta", "delta": "ok" }),
+        json!({
+            "type": "response.completed",
+            "response": {
+                "id": "resp_1",
+                "usage": {
+                    "input_tokens": 6000,
+                    "output_tokens": 2,
+                    "input_tokens_details": { "cached_tokens": 0 },
+                },
+            },
+        }),
+    ]))
+    .await;
+
+    let conversation = json!({
+        "model": "claude-sonnet-4",
+        "max_tokens": 512,
+        "messages": [{ "role": "user", "content": "opening turn" }],
+    });
+
+    let before: Value = harness
+        .post("/v1/messages/count_tokens", conversation.clone())
+        .await
+        .json()
+        .await
+        .unwrap();
+
+    // A completed turn teaches the session what upstream charges.
+    let _ = harness
+        .post("/v1/messages", conversation.clone())
+        .await
+        .text()
+        .await;
+
+    let after: Value = harness
+        .post("/v1/messages/count_tokens", conversation)
+        .await
+        .json()
+        .await
+        .unwrap();
+
+    assert!(
+        after["input_tokens"].as_u64().unwrap() > before["input_tokens"].as_u64().unwrap(),
+        "count_tokens learned nothing: {before} then {after}"
+    );
+}

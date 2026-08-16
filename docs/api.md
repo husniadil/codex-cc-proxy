@@ -194,14 +194,32 @@ pending work.
   window sits below the real one, which is the safe direction.
 - **`cache_creation_input_tokens` is always zero.** No upstream write event
   exists to report.
-- **`count_tokens` is an estimate**, uncalibrated before a session's first
-  completed request.
+- **`count_tokens` is an estimate.** It is answered by the conversation's own
+  estimator, so it is uncalibrated before that conversation's first completed
+  request and improves after it. It is never exact: there is no upstream
+  token-counting endpoint to be exact against.
 - **`cache_control` and `thinking` blocks are dropped** on the request path.
   Reasoning is reconstructed on responses from summary events.
 - **Image URLs are not prefetched** and resolve only if the backend can reach
   them.
 - **The catalog fallback list is fixed** and needs updating if models are renamed
-  or retired while the live fetch is unavailable.
+  or retired while the live fetch is unavailable. Its entries carry no context
+  window, so the window guard does not fire for a model the fallback named.
+
+- **Three request shapes have no upstream precedent** and are derived from the
+  public API rather than observed in use: `input_file` for documents, a
+  `tool_choice` other than `auto`, and `url_citation` annotations as the source
+  of web-search results. Each fails loudly rather than silently if this backend
+  rejects it, and each is a question in `roadmap.md` §L.
+
+- **A web search that produced no citations reports the pages the model opened**,
+  which carry a URL but no title. That is worse than a real citation and better
+  than an empty result, which the client reads as "nothing found".
+
+- **Nothing about the live backend is confirmed.** Every capability claim in this
+  project is derived from the upstream protocol definitions and verified against
+  replayed fixtures. `doctor` says so on the face of its output, and
+  `roadmap.md` §L lists what only a subscription can settle.
 
 ---
 

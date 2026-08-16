@@ -137,3 +137,49 @@ fn configuration_has_no_credential_fields() {
         );
     }
 }
+
+/// §4 — the configuration file is read from disk. A daemon that documents a
+/// configuration file and then runs on defaults ignores everything the operator
+/// wrote, silently.
+#[test]
+fn the_configuration_is_read_from_disk() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("config.toml"),
+        codex_cc_proxy::config::EXAMPLE,
+    )
+    .unwrap();
+
+    // SAFETY-adjacent: the variable is scoped to this process, and the test is
+    // the only reader.
+    unsafe { std::env::set_var("CODEX_CC_PROXY_HOME", dir.path()) };
+    let config = Config::load().expect("the example should load");
+    unsafe { std::env::remove_var("CODEX_CC_PROXY_HOME") };
+
+    assert_eq!(config.port, 8787);
+    assert!(config.tiers.resolve().is_ok());
+}
+
+/// A missing configuration is a first run, and the message says what to write
+/// and where. An error that only says "missing" leaves the reader to guess.
+#[test]
+fn a_missing_configuration_says_what_to_write() {
+    let dir = tempfile::tempdir().unwrap();
+
+    unsafe { std::env::set_var("CODEX_CC_PROXY_HOME", dir.path().join("nothing-here")) };
+    let error = Config::load().expect_err("a missing configuration should fail");
+    unsafe { std::env::remove_var("CODEX_CC_PROXY_HOME") };
+
+    assert!(error.message.contains("[tiers]"), "{}", error.message);
+    assert!(error.message.contains("haiku"), "{}", error.message);
+    assert!(error.message.contains("config.toml"), "{}", error.message);
+}
+
+/// The example in the error message is itself valid. An example that does not
+/// parse is worse than none.
+#[test]
+fn the_example_configuration_is_valid() {
+    let config: Config =
+        toml::from_str(codex_cc_proxy::config::EXAMPLE).expect("the example should parse");
+    assert!(config.tiers.resolve().is_ok());
+}

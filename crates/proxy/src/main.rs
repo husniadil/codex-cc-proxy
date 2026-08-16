@@ -150,7 +150,7 @@ async fn run(args: RunArgs) -> Result<()> {
 }
 
 async fn run_with(args: RunArgs, record_ingress: bool) -> Result<()> {
-    let config = Config::default();
+    let config = Config::load()?;
     let port = args.port.unwrap_or(config.port);
 
     // Refused before binding: a daemon that starts with an incomplete mapping

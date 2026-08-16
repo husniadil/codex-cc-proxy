@@ -8,6 +8,37 @@ use serde::Serialize;
 
 pub const DEFAULT_PORT: u16 = 8787;
 
+/// Where the configuration lives.
+///
+/// `CODEX_CC_PROXY_HOME` overrides it, which is what makes the daemon testable
+/// without touching the developer's own configuration.
+pub fn config_dir() -> std::path::PathBuf {
+    if let Some(home) = std::env::var_os("CODEX_CC_PROXY_HOME") {
+        return std::path::PathBuf::from(home);
+    }
+    let base = std::env::var_os("XDG_CONFIG_HOME")
+        .map(std::path::PathBuf::from)
+        .or_else(|| {
+            std::env::var_os("HOME").map(|home| std::path::PathBuf::from(home).join(".config"))
+        })
+        .unwrap_or_else(std::env::temp_dir);
+    base.join("codex-cc-proxy")
+}
+
+pub fn config_path() -> std::path::PathBuf {
+    config_dir().join("config.toml")
+}
+
+/// An example that can be copied verbatim into place.
+pub const EXAMPLE: &str = r#"port = 8787
+
+[tiers]
+opus   = "gpt-5-codex"
+sonnet = "gpt-5-codex"
+haiku  = "gpt-5-codex-mini"
+fable  = "gpt-5-codex-mini"
+"#;
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Config {
     #[serde(default = "default_port")]
@@ -20,6 +51,41 @@ pub struct Config {
 
 fn default_port() -> u16 {
     DEFAULT_PORT
+}
+
+impl Config {
+    /// Read the configuration, or report why it could not be read.
+    ///
+    /// A missing file is not an error — it is a first run, and the message says
+    /// what to write and where. An unreadable one *is* an error: silently
+    /// falling back to defaults would start a daemon that ignores what the
+    /// operator wrote.
+    pub fn load() -> Result<Self, ProxyError> {
+        let path = config_path();
+
+        let raw = match std::fs::read_to_string(&path) {
+            Ok(raw) => raw,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Err(ProxyError::invalid_request(format!(
+                    "no configuration at {}.\n\nWrite one first:\n\n{}\nAll four tiers are \
+                     required. WebFetch runs on the haiku tier, so leaving it unmapped breaks \
+                     WebFetch in a way that looks unrelated.",
+                    path.display(),
+                    EXAMPLE
+                )));
+            }
+            Err(error) => {
+                return Err(ProxyError::invalid_request(format!(
+                    "could not read {}: {error}",
+                    path.display()
+                )));
+            }
+        };
+
+        toml::from_str(&raw).map_err(|error| {
+            ProxyError::invalid_request(format!("{} is not valid: {error}", path.display()))
+        })
+    }
 }
 
 impl Default for Config {

@@ -82,7 +82,14 @@ async fn models(State(state): State<AppState>) -> Response {
 }
 
 /// Pre-flight sizing. Returns an estimate, and says so in `docs/api.md` §5.
+///
+/// It is answered by the conversation's own estimator where the conversation is
+/// known, so a session that has learned what upstream charges answers with that
+/// knowledge. A fresh estimator per call would leave `count_tokens` permanently
+/// uncalibrated no matter how long the session had run — which is not what §5
+/// says, and not what a caller sizing a request would expect.
 async fn count_tokens(
+    State(state): State<AppState>,
     body: Result<Json<MessagesRequest>, axum::extract::rejection::JsonRejection>,
 ) -> Response {
     let Json(request) = match body {
@@ -92,7 +99,10 @@ async fn count_tokens(
         }
     };
 
-    let estimate = crate::estimate::estimate_input_tokens(&request);
+    let probe = translate_request(&request, &TranslateOptions::default());
+    let session = state.sessions.resolve(&probe.input);
+    let estimate = session.estimator.estimate(&request);
+
     Json(serde_json::json!({ "input_tokens": estimate })).into_response()
 }
 
