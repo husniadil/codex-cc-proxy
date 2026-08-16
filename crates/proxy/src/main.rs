@@ -164,6 +164,14 @@ async fn run_with(args: RunArgs, record_ingress: bool) -> Result<()> {
     // breaks WebFetch in a way that looks unrelated to tier mapping (§7.1).
     let tiers = config.tiers.resolve()?;
 
+    // Also refused before binding, so a mistyped ceiling is caught at startup
+    // rather than silently spending at full rate.
+    let effort_ceiling = config.effort_ceiling()?;
+    match effort_ceiling {
+        Some(effort) => tracing::info!(?effort, "reasoning effort is capped"),
+        None => tracing::info!("reasoning effort is whatever the client asks for"),
+    }
+
     let listener = daemon::bind(port).await?;
     let addr = listener.local_addr()?;
     tracing::info!(%addr, "listening");
@@ -248,7 +256,7 @@ async fn run_with(args: RunArgs, record_ingress: bool) -> Result<()> {
     });
 
     let state = AppState {
-        effort_ceiling: None,
+        effort_ceiling,
         catalog: Arc::new(codex_cc_proxy::catalog::Catalog::fallback()),
         // Only reached if the factory is absent, which it is not here.
         transport: Arc::new(

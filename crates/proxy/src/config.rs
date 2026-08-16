@@ -32,18 +32,35 @@ pub fn config_path() -> std::path::PathBuf {
 /// An example that can be copied verbatim into place.
 pub const EXAMPLE: &str = r#"port = 8787
 
+# Optional. Caps reasoning effort on every request, whatever the client asks
+# for: one of none, minimal, low, medium, high, xhigh, max.
+#
+# Both keys sit above the tables on purpose. In TOML a bare key written after a
+# table header belongs to that table, so `effort` placed below `[tiers]` is
+# `tiers.effort` — a different setting entirely.
+# effort = "low"
+
 [tiers]
 opus   = "gpt-5-codex"
 sonnet = "gpt-5-codex"
 haiku  = "gpt-5-codex-mini"
 fable  = "gpt-5-codex-mini"
 
-# Optional. Caps reasoning effort on every request, whatever the client asks
-# for: one of none, minimal, low, medium, high, xhigh, max.
-# effort = "low"
+[transport]
+websocket   = true
+compression = true
 "#;
 
+/// Unknown keys are refused rather than ignored.
+///
+/// Tolerating them looks forgiving and is not: in TOML a top-level key written
+/// after a table header belongs to that table, so `effort` below `[tiers]` is
+/// `tiers.effort`. Ignored quietly, the operator believes they capped their
+/// spending and every request runs at the backend's default instead. A
+/// configuration key that does nothing is worse than one that is refused,
+/// because only one of them says so.
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct Config {
     #[serde(default = "default_port")]
     pub port: u16,
@@ -115,7 +132,14 @@ impl Config {
         };
 
         toml::from_str(&raw).map_err(|error| {
-            ProxyError::invalid_request(format!("{} is not valid: {error}", path.display()))
+            let hint = if error.to_string().contains("unknown field") {
+                "\n\nA key in the wrong place reads as an unknown one. In TOML a bare \
+                 key written after a table header belongs to that table, so a top-level \
+                 setting has to sit above `[tiers]` and `[transport]`."
+            } else {
+                ""
+            };
+            ProxyError::invalid_request(format!("{} is not valid: {error}{hint}", path.display()))
         })
     }
 }
@@ -138,6 +162,7 @@ impl Default for Config {
 /// which model handles that traffic and what it costs, so the mapping is stated
 /// rather than inferred (§7.1).
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct Tiers {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub opus: Option<String>,
@@ -150,6 +175,7 @@ pub struct Tiers {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct TransportConfig {
     #[serde(default = "yes")]
     pub websocket: bool,

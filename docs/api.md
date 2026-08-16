@@ -190,8 +190,14 @@ takes effect on the next `run`. `--port` is the only override outside the file.
 The estimator backend is likewise not a configuration key in v0.1 — the
 tokenizer is a compile-time feature (`--features tokenizer`), because which
 estimator wins is a measurement rather than an operator's choice
-(`proxy-behavior.md` §6.3). An unrecognized key is ignored rather than refused, so a
-key that does not exist yet is silently inert.
+(`proxy-behavior.md` §6.3).
+
+**An unrecognized key is refused, not ignored.** Tolerating one looks forgiving
+and is not: in TOML a bare key written after a table header belongs to that
+table, so `effort` placed below `[tiers]` is `tiers.effort`. Ignored quietly,
+the operator believes they capped their spending while every request runs at
+the backend's default. Top-level keys therefore sit above the tables, and the
+error says so when they do not.
 
 ---
 
