@@ -1,0 +1,555 @@
+//! End to end through the ingress surface, against a loopback replay server.
+//!
+//! Both halves are real: a real axum ingress, a real reqwest client, real SSE
+//! in both directions. Nothing reaches the network.
+
+#![allow(clippy::expect_used, clippy::unwrap_used, clippy::indexing_slicing)]
+
+mod replay;
+
+use codex_cc_proxy::ingress::AppState;
+use codex_cc_proxy::ingress::ModelMapping;
+use codex_cc_proxy::ingress::router;
+use codex_cc_proxy::upstream::http::HttpTransport;
+use pretty_assertions::assert_eq;
+use replay::Behavior;
+use replay::ReplayServer;
+use serde_json::Value;
+use serde_json::json;
+use std::sync::Arc;
+
+struct Harness {
+    base: String,
+    upstream: ReplayServer,
+    client: reqwest::Client,
+}
+
+impl Harness {
+    async fn start(behavior: Behavior) -> Self {
+        let upstream = ReplayServer::start(behavior).await;
+
+        let state = AppState {
+            transport: Arc::new(HttpTransport::new(upstream.url.clone())),
+            models: Arc::new(vec![ModelMapping {
+                requested: "claude-sonnet-4".to_owned(),
+                upstream: "gpt-5-codex".to_owned(),
+            }]),
+        };
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let _ = axum::serve(listener, router(state)).await;
+        });
+
+        Self {
+            base: format!("http://{addr}"),
+            upstream,
+            client: reqwest::Client::new(),
+        }
+    }
+
+    async fn post(&self, path: &str, body: Value) -> reqwest::Response {
+        self.client
+            .post(format!("{}{path}", self.base))
+            .json(&body)
+            .send()
+            .await
+            .expect("the request should reach the proxy")
+    }
+}
+
+/// Split an SSE body into its event payloads.
+fn payloads(body: &str) -> Vec<Value> {
+    body.split("\n\n")
+        .filter_map(|block| {
+            block
+                .lines()
+                .find_map(|line| line.strip_prefix("data: "))
+                .and_then(|data| serde_json::from_str(data).ok())
+        })
+        .collect()
+}
+
+fn completed() -> Value {
+    json!({
+        "type": "response.completed",
+        "response": {
+            "id": "resp_1",
+            "usage": {
+                "input_tokens": 900,
+                "output_tokens": 7,
+                "input_tokens_details": { "cached_tokens": 400 },
+            },
+        },
+    })
+}
+
+#[tokio::test]
+async fn a_streaming_request_returns_a_valid_frame_sequence() {
+    let harness = Harness::start(Behavior::Events(vec![
+        json!({ "type": "response.created", "response": { "id": "resp_1" } }),
+        json!({ "type": "response.output_text.delta", "delta": "Hello" }),
+        completed(),
+    ]))
+    .await;
+
+    let response = harness
+        .post(
+            "/v1/messages",
+            json!({
+                "model": "claude-sonnet-4",
+                "max_tokens": 512,
+                "messages": [{ "role": "user", "content": "hi" }],
+            }),
+        )
+        .await;
+
+    assert_eq!(response.status(), 200);
+    assert_eq!(
+        response
+            .headers()
+            .get("content-type")
+            .and_then(|value| value.to_str().ok()),
+        Some("text/event-stream")
+    );
+
+    let body = response.text().await.unwrap();
+    let kinds: Vec<String> = payloads(&body)
+        .iter()
+        .filter_map(|frame| frame["type"].as_str().map(str::to_owned))
+        .collect();
+
+    assert_eq!(
+        kinds,
+        vec![
+            "message_start",
+            "content_block_start",
+            "content_block_delta",
+            "content_block_stop",
+            "message_delta",
+            "message_stop",
+        ]
+    );
+}
+
+/// The tier mapping is applied on the way out, and only on the way out. The
+/// client is told the model it asked for, because that is what it matches
+/// against.
+#[tokio::test]
+async fn the_request_is_translated_and_the_tier_is_mapped() {
+    let harness = Harness::start(Behavior::Events(vec![
+        json!({ "type": "response.created", "response": { "id": "resp_1" } }),
+        completed(),
+    ]))
+    .await;
+
+    let response = harness
+        .post(
+            "/v1/messages",
+            json!({
+                "model": "claude-sonnet-4",
+                "max_tokens": 512,
+                "system": "Be brief.",
+                "messages": [{ "role": "user", "content": "hi" }],
+            }),
+        )
+        .await;
+
+    let body = response.text().await.unwrap();
+    let start = &payloads(&body)[0];
+    assert_eq!(start["message"]["model"], json!("claude-sonnet-4"));
+
+    let sent = harness.upstream.requests();
+    assert_eq!(sent[0]["model"], json!("gpt-5-codex"));
+    assert_eq!(sent[0]["instructions"], json!("Be brief."));
+    assert_eq!(sent[0]["stream"], json!(true));
+}
+
+/// A tool round trip end to end.
+#[tokio::test]
+async fn a_tool_call_survives_the_round_trip() {
+    let harness = Harness::start(Behavior::Events(vec![
+        json!({ "type": "response.created", "response": { "id": "resp_1" } }),
+        json!({
+            "type": "response.output_item.done",
+            "item": {
+                "type": "function_call",
+                "call_id": "call_1",
+                "name": "Read",
+                "arguments": "{\"file_path\":\"/tmp/a\"}",
+            },
+        }),
+        completed(),
+    ]))
+    .await;
+
+    let response = harness
+        .post(
+            "/v1/messages",
+            json!({
+                "model": "claude-sonnet-4",
+                "max_tokens": 512,
+                "messages": [{ "role": "user", "content": "read it" }],
+                "tools": [{
+                    "name": "Read",
+                    "input_schema": { "type": "object", "properties": {} },
+                }],
+            }),
+        )
+        .await;
+
+    let body = response.text().await.unwrap();
+    let frames = payloads(&body);
+
+    let start = frames
+        .iter()
+        .find(|frame| frame["content_block"]["type"] == "tool_use")
+        .expect("a tool_use block should be emitted");
+    assert_eq!(start["content_block"]["name"], json!("Read"));
+    assert_eq!(start["content_block"]["id"], json!("call_1"));
+
+    let delta = frames
+        .iter()
+        .find(|frame| frame["delta"]["type"] == "input_json_delta")
+        .unwrap();
+    assert_eq!(
+        delta["delta"]["partial_json"],
+        json!("{\"file_path\":\"/tmp/a\"}")
+    );
+
+    let message_delta = frames
+        .iter()
+        .find(|frame| frame["type"] == "message_delta")
+        .unwrap();
+    assert_eq!(message_delta["delta"]["stop_reason"], json!("tool_use"));
+}
+
+/// §5.0 — an event split across several `data:` lines is one payload. This is
+/// the case a line-at-a-time parser corrupts, and it only shows up on events
+/// large enough to be split.
+#[tokio::test]
+async fn an_event_split_across_data_lines_survives_the_transport() {
+    let raw = concat!(
+        "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_1\"}}\n\n",
+        "data: {\"type\":\"response.output_text.delta\",\n",
+        "data: \"delta\":\"split across lines\"}\n\n",
+        "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\"}}\n\n",
+    );
+    let harness = Harness::start(Behavior::Raw(raw.to_owned())).await;
+
+    let response = harness
+        .post(
+            "/v1/messages",
+            json!({
+                "model": "claude-sonnet-4",
+                "max_tokens": 512,
+                "messages": [{ "role": "user", "content": "hi" }],
+            }),
+        )
+        .await;
+
+    let body = response.text().await.unwrap();
+    let delta = payloads(&body)
+        .into_iter()
+        .find(|frame| frame["type"] == "content_block_delta")
+        .expect("the split event should have produced a delta");
+    assert_eq!(delta["delta"]["text"], json!("split across lines"));
+}
+
+/// §1.1 — upstream statuses map to the vocabulary the client understands, and
+/// `retry-after` is forwarded when supplied.
+#[tokio::test]
+async fn a_rate_limited_upstream_surfaces_as_retryable() {
+    let harness = Harness::start(Behavior::Failure {
+        status: 429,
+        body: "{\"error\":{\"message\":\"slow down\"}}".to_owned(),
+        retry_after: Some("11".to_owned()),
+    })
+    .await;
+
+    let response = harness
+        .post(
+            "/v1/messages",
+            json!({
+                "model": "claude-sonnet-4",
+                "max_tokens": 512,
+                "messages": [{ "role": "user", "content": "hi" }],
+            }),
+        )
+        .await;
+
+    assert_eq!(response.status(), 429);
+    assert_eq!(
+        response
+            .headers()
+            .get("retry-after")
+            .and_then(|value| value.to_str().ok()),
+        Some("11")
+    );
+
+    let body: Value = response.json().await.unwrap();
+    assert_eq!(body["type"], json!("error"));
+    assert_eq!(body["error"]["type"], json!("rate_limit_error"));
+}
+
+/// A server failure is an overload, which the client retries. Reporting it as
+/// terminal would end a session that a retry would have completed.
+#[tokio::test]
+async fn a_server_error_surfaces_as_overloaded() {
+    let harness = Harness::start(Behavior::Failure {
+        status: 500,
+        body: "internal".to_owned(),
+        retry_after: None,
+    })
+    .await;
+
+    let response = harness
+        .post(
+            "/v1/messages",
+            json!({
+                "model": "claude-sonnet-4",
+                "max_tokens": 512,
+                "messages": [{ "role": "user", "content": "hi" }],
+            }),
+        )
+        .await;
+
+    assert_eq!(response.status(), 529);
+    let body: Value = response.json().await.unwrap();
+    assert_eq!(body["error"]["type"], json!("overloaded_error"));
+}
+
+/// The client holds no credentials of its own, so an upstream credential
+/// failure is this proxy's to report.
+#[tokio::test]
+async fn an_upstream_credential_failure_surfaces_as_authentication() {
+    let harness = Harness::start(Behavior::Failure {
+        status: 401,
+        body: "unauthorized".to_owned(),
+        retry_after: None,
+    })
+    .await;
+
+    let response = harness
+        .post(
+            "/v1/messages",
+            json!({
+                "model": "claude-sonnet-4",
+                "max_tokens": 512,
+                "messages": [{ "role": "user", "content": "hi" }],
+            }),
+        )
+        .await;
+
+    assert_eq!(response.status(), 401);
+    let body: Value = response.json().await.unwrap();
+    assert_eq!(body["error"]["type"], json!("authentication_error"));
+}
+
+/// A 403 carrying a non-JSON challenge keeps its body excerpt, because the
+/// excerpt is the only diagnostic available.
+#[tokio::test]
+async fn a_challenge_response_keeps_its_excerpt() {
+    let harness = Harness::start(Behavior::Failure {
+        status: 403,
+        body: "<html>Attention Required! Cloudflare</html>".to_owned(),
+        retry_after: None,
+    })
+    .await;
+
+    let response = harness
+        .post(
+            "/v1/messages",
+            json!({
+                "model": "claude-sonnet-4",
+                "max_tokens": 512,
+                "messages": [{ "role": "user", "content": "hi" }],
+            }),
+        )
+        .await;
+
+    let body: Value = response.json().await.unwrap();
+    let message = body["error"]["message"].as_str().unwrap();
+    assert!(
+        message.contains("Cloudflare"),
+        "the excerpt should survive: {message}"
+    );
+}
+
+#[tokio::test]
+async fn a_malformed_body_is_an_invalid_request() {
+    let harness = Harness::start(Behavior::Events(vec![])).await;
+
+    let response = harness
+        .client
+        .post(format!("{}/v1/messages", harness.base))
+        .header("content-type", "application/json")
+        .body("{ not json")
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 400);
+    let body: Value = response.json().await.unwrap();
+    assert_eq!(body["error"]["type"], json!("invalid_request_error"));
+}
+
+#[tokio::test]
+async fn an_unknown_endpoint_is_not_found() {
+    let harness = Harness::start(Behavior::Events(vec![])).await;
+
+    let response = harness
+        .client
+        .get(format!("{}/v1/nothing", harness.base))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 404);
+    let body: Value = response.json().await.unwrap();
+    assert_eq!(body["error"]["type"], json!("not_found_error"));
+}
+
+#[tokio::test]
+async fn count_tokens_returns_an_estimate() {
+    let harness = Harness::start(Behavior::Events(vec![])).await;
+
+    let response = harness
+        .post(
+            "/v1/messages/count_tokens",
+            json!({
+                "model": "claude-sonnet-4",
+                "messages": [{ "role": "user", "content": "a fairly ordinary sentence" }],
+            }),
+        )
+        .await;
+
+    assert_eq!(response.status(), 200);
+    let body: Value = response.json().await.unwrap();
+    let estimate = body["input_tokens"].as_u64().expect("an estimate");
+    assert!(estimate > 0, "an estimate of zero would collapse the meter");
+}
+
+/// A base64 attachment is megabytes of characters that cost a fixed, much
+/// smaller number of tokens. Counting them would pin the client's context meter
+/// at full.
+#[tokio::test]
+async fn an_attachment_does_not_dominate_the_estimate() {
+    let harness = Harness::start(Behavior::Events(vec![])).await;
+    let huge = "A".repeat(400_000);
+
+    let response = harness
+        .post(
+            "/v1/messages/count_tokens",
+            json!({
+                "model": "claude-sonnet-4",
+                "messages": [{
+                    "role": "user",
+                    "content": [{
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": "image/png",
+                            "data": huge,
+                        },
+                    }],
+                }],
+            }),
+        )
+        .await;
+
+    let body: Value = response.json().await.unwrap();
+    let estimate = body["input_tokens"].as_u64().unwrap();
+    assert!(
+        estimate < 10_000,
+        "a single image should not read as {estimate} tokens"
+    );
+}
+
+#[tokio::test]
+async fn models_lists_the_mapping_in_the_anthropic_shape() {
+    let harness = Harness::start(Behavior::Events(vec![])).await;
+
+    let response = harness
+        .client
+        .get(format!("{}/v1/models", harness.base))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body: Value = response.json().await.unwrap();
+    assert_eq!(body["data"][0]["id"], json!("gpt-5-codex"));
+    assert_eq!(body["data"][0]["type"], json!("model"));
+}
+
+/// §5.3 — cancelling the outbound stream aborts the upstream request.
+///
+/// Without propagation the backend generates to completion against a reader
+/// that no longer exists, spending quota on output nobody receives. The replay
+/// server records whether it ever finished sending; a cancelled request means
+/// it never should.
+#[tokio::test]
+async fn cancelling_the_client_stream_aborts_the_upstream_request() {
+    let sent_everything = Arc::new(std::sync::Mutex::new(false));
+    let harness = Harness::start(Behavior::Stall {
+        sent_everything: Arc::clone(&sent_everything),
+    })
+    .await;
+
+    let response = harness
+        .post(
+            "/v1/messages",
+            json!({
+                "model": "claude-sonnet-4",
+                "max_tokens": 512,
+                "messages": [{ "role": "user", "content": "hi" }],
+            }),
+        )
+        .await;
+    assert_eq!(response.status(), 200);
+
+    // Drop the response without reading it to completion. That is what a client
+    // pressing escape does.
+    drop(response);
+
+    // Four times the server's own stall, so an upstream that was left running
+    // has long since finished and set the flag.
+    tokio::time::sleep(std::time::Duration::from_millis(800)).await;
+
+    assert!(
+        !*sent_everything.lock().unwrap(),
+        "upstream kept generating after the client went away"
+    );
+}
+
+/// The control for the test above. Reading the stream to completion must set
+/// the flag — otherwise that test passes for the wrong reason and would keep
+/// passing if cancellation stopped working entirely.
+#[tokio::test]
+async fn a_stream_read_to_completion_does_reach_the_end_upstream() {
+    let sent_everything = Arc::new(std::sync::Mutex::new(false));
+    let harness = Harness::start(Behavior::Stall {
+        sent_everything: Arc::clone(&sent_everything),
+    })
+    .await;
+
+    let response = harness
+        .post(
+            "/v1/messages",
+            json!({
+                "model": "claude-sonnet-4",
+                "max_tokens": 512,
+                "messages": [{ "role": "user", "content": "hi" }],
+            }),
+        )
+        .await;
+
+    let _ = response.text().await.unwrap();
+
+    assert!(
+        *sent_everything.lock().unwrap(),
+        "the flag never gets set, so the cancellation test proves nothing"
+    );
+}
