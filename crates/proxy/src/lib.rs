@@ -6,6 +6,7 @@
 #![forbid(unsafe_code)]
 
 pub mod auth;
+pub mod catalog;
 pub mod config;
 pub mod daemon;
 pub mod error;
