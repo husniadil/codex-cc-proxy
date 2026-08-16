@@ -8,9 +8,11 @@
 pub mod auth;
 pub mod catalog;
 pub mod config;
+pub mod control;
 pub mod daemon;
 pub mod error;
 pub mod estimate;
 pub mod ingress;
 pub mod recorder;
+pub mod render;
 pub mod upstream;
