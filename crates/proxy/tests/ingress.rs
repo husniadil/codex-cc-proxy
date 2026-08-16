@@ -1081,6 +1081,128 @@ async fn ingress_sends_through_a_conduit_and_uploads_incrementally() {
     );
 }
 
+/// The delta a second turn puts on the wire is the new items, and never empty.
+///
+/// This is the bug the whole suite missed. Ingress advanced the baseline to the
+/// current turn's input and *then* diffed against it, so the delta compared the
+/// turn with itself and came out empty every time. An empty delta is not a
+/// small delta: the backend receives a previous response id and no new input,
+/// answers from the previous response, and the conversation silently repeats
+/// itself with no error raised anywhere.
+///
+/// It has to be asserted on the frame that reaches the socket. Every transport
+/// test drove `Conduit` directly with a correctly-managed baseline, and an
+/// earlier attempt at this test recomputed the delta from a correct baseline
+/// too — both pass with the bug present, because neither observes what ingress
+/// actually hands over.
+#[tokio::test]
+async fn a_second_turn_uploads_the_new_items_and_not_nothing() {
+    let events = vec![
+        json!({ "type": "response.created", "response": { "id": "resp_1" } }),
+        json!({
+            "type": "response.output_item.done",
+            "item": {
+                "type": "message",
+                "role": "assistant",
+                "content": [{ "type": "output_text", "text": "first answer" }],
+            },
+        }),
+        completed(),
+    ];
+
+    let ws = replay::WsReplay::start(events).await;
+    let socket = ws.url.clone();
+
+    let conduits: codex_cc_proxy::ingress::ConduitFactory = Arc::new(move || {
+        Arc::new(codex_cc_proxy::upstream::conduit::Conduit::new(
+            // Unreachable on purpose: a fallback here would hide the failure
+            // this test exists to catch.
+            Arc::new(HttpTransport::new("http://127.0.0.1:1/unused")),
+            Some(Arc::new(
+                codex_cc_proxy::upstream::websocket::WebSocketTransport::new(socket.clone())
+                    .with_compression(false),
+            )),
+        ))
+    });
+
+    let state = AppState {
+        effort_ceiling: None,
+        transport: Arc::new(HttpTransport::new("http://127.0.0.1:1/unused")),
+        conduits: Some(conduits),
+        models: Arc::new(vec![ModelMapping {
+            requested: "claude-sonnet-4".to_owned(),
+            upstream: "gpt-5-codex".to_owned(),
+        }]),
+        recorder: None,
+        record_ingress: false,
+        sessions: Arc::new(codex_cc_proxy::session::SessionStore::new()),
+    };
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, router(state)).await;
+    });
+
+    let client = reqwest::Client::new();
+    let send = |body: Value| {
+        let client = client.clone();
+        async move {
+            let _ = client
+                .post(format!("http://{addr}/v1/messages"))
+                .json(&body)
+                .send()
+                .await
+                .unwrap()
+                .text()
+                .await
+                .unwrap();
+        }
+    };
+
+    send(json!({
+        "model": "claude-sonnet-4",
+        "max_tokens": 64,
+        "messages": [{ "role": "user", "content": "first question" }],
+    }))
+    .await;
+
+    send(json!({
+        "model": "claude-sonnet-4",
+        "max_tokens": 64,
+        "messages": [
+            { "role": "user", "content": "first question" },
+            { "role": "assistant", "content": "first answer" },
+            { "role": "user", "content": "second question" },
+        ],
+    }))
+    .await;
+
+    let frames = ws.wait_for(2).await;
+
+    // The opening turn carries the whole conversation and continues nothing.
+    assert_eq!(frames[0]["input"].as_array().map(Vec::len), Some(1));
+    assert!(frames[0].get("previous_response_id").is_none());
+
+    // The second continues it, and carries exactly what is new.
+    assert_eq!(
+        frames[1]["previous_response_id"],
+        json!("resp_1"),
+        "a delta must name the response it continues"
+    );
+    let uploaded = frames[1]["input"].as_array().map(Vec::len);
+    assert_eq!(
+        uploaded,
+        Some(1),
+        "the second turn uploaded {uploaded:?} items; an empty delta makes the \
+         backend answer from the previous response and repeat itself"
+    );
+    assert_eq!(
+        frames[1]["input"][0]["content"][0]["text"],
+        json!("second question")
+    );
+}
+
 /// Credentials reach the upstream request. Without this every real request
 ///401s, and no test that uses a credential-free replay server would notice.
 #[tokio::test]

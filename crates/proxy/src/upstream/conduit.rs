@@ -88,6 +88,13 @@ impl Conduit {
                 Upload::Full => (request.clone(), None, Sent::Full),
             };
 
+            tracing::debug!(
+                upload = ?sent,
+                items = payload.input.len(),
+                previous = ?previous,
+                "uploading"
+            );
+
             let attempt = self
                 .send_over_websocket(websocket, &payload, previous)
                 .await;

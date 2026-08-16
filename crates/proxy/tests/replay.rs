@@ -5,7 +5,12 @@
 //! suite reaches the network.
 
 #![allow(dead_code)]
-#![allow(clippy::expect_used, clippy::unwrap_used, clippy::indexing_slicing)]
+#![allow(
+    clippy::expect_used,
+    clippy::unwrap_used,
+    clippy::indexing_slicing,
+    clippy::panic
+)]
 
 use axum::Router;
 use axum::body::Body;
@@ -15,6 +20,7 @@ use axum::http::header;
 use axum::response::IntoResponse;
 use axum::response::Response;
 use axum::routing::post;
+use futures::SinkExt;
 use futures::StreamExt;
 use futures::stream;
 use serde_json::Value;
@@ -188,4 +194,95 @@ fn sse(payload: String) -> Response {
         axum::http::HeaderValue::from_static("text/event-stream"),
     );
     response
+}
+
+// ---------------------------------------------------------------------------
+// A WebSocket replay server, so the delta path can be observed end to end.
+//
+// The HTTP transport is stateless and always sends the whole conversation, so a
+// test that only speaks HTTP cannot see an upload plan at all — which is how an
+// always-empty delta survived a full suite.
+// ---------------------------------------------------------------------------
+
+pub struct WsReplay {
+    pub url: String,
+    frames: Arc<Mutex<Vec<Value>>>,
+}
+
+impl WsReplay {
+    pub async fn start(events: Vec<Value>) -> Self {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        let frames = Arc::new(Mutex::new(Vec::new()));
+        let sink = Arc::clone(&frames);
+
+        tokio::spawn(async move {
+            while let Ok((stream, _)) = listener.accept().await {
+                let events = events.clone();
+                let sink = Arc::clone(&sink);
+                tokio::spawn(async move {
+                    let Ok(mut socket) = tokio_tungstenite::accept_async(stream).await else {
+                        return;
+                    };
+                    while let Some(Ok(message)) = socket.next().await {
+                        let body = match message {
+                            tokio_tungstenite::tungstenite::Message::Text(text) => text.to_string(),
+                            tokio_tungstenite::tungstenite::Message::Binary(bytes) => {
+                                zstd::decode_all(bytes.as_ref())
+                                    .ok()
+                                    .and_then(|raw| String::from_utf8(raw).ok())
+                                    .unwrap_or_default()
+                            }
+                            tokio_tungstenite::tungstenite::Message::Close(_) => break,
+                            _ => continue,
+                        };
+
+                        if let Ok(frame) = serde_json::from_str::<Value>(&body)
+                            && let Ok(mut frames) = sink.lock()
+                        {
+                            frames.push(frame);
+                        }
+
+                        for event in &events {
+                            let _ = socket
+                                .send(tokio_tungstenite::tungstenite::Message::Text(
+                                    event.to_string().into(),
+                                ))
+                                .await;
+                        }
+                    }
+                });
+            }
+        });
+
+        Self {
+            url: format!("ws://{addr}"),
+            frames,
+        }
+    }
+
+    /// Every `response.create` frame the server received, in order.
+    pub fn frames(&self) -> Vec<Value> {
+        self.frames
+            .lock()
+            .map(|got| got.clone())
+            .unwrap_or_default()
+    }
+
+    /// Wait until at least `count` frames have arrived.
+    pub async fn wait_for(&self, count: usize) -> Vec<Value> {
+        for _ in 0..300 {
+            let frames = self.frames();
+            if frames.len() >= count {
+                return frames;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        panic!(
+            "only {} frames arrived, wanted {count}",
+            self.frames().len()
+        );
+    }
 }

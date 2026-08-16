@@ -158,9 +158,22 @@ async fn messages(
     };
     let translated = translate_request(&request, &options);
 
+    // What the conversation contained *before* this turn. The delta is computed
+    // against this, and it has to be taken before the baseline moves.
+    let baseline_before_turn = session
+        .baseline
+        .lock()
+        .map(|baseline| baseline.clone())
+        .unwrap_or_default();
+
     // The baseline advances before the reply arrives. What was sent is what the
     // next turn must extend, and recording it later would leave a window in
     // which a concurrent request sees an empty baseline and matches anything.
+    //
+    // It must not be what the delta is measured against: advancing first and
+    // then diffing compares this turn's input with itself, which is always
+    // empty. An empty delta is not a small delta — the backend answers from the
+    // previous response and the turn silently repeats itself.
     session.advance(&translated.input, &[]);
 
     // Ingress capture happens here, before anything is sent. It needs no
@@ -184,16 +197,10 @@ async fn messages(
         Some(factory) => {
             let factory = Arc::clone(factory);
             let conduit = session.conduit(move || factory()).await;
-            let baseline = session
-                .baseline
-                .lock()
-                .map(|baseline| baseline.clone())
-                .unwrap_or_default();
-
             match conduit
                 .send(
                     &translated,
-                    &baseline,
+                    &baseline_before_turn,
                     previous_request.as_ref(),
                     previous_response_id.as_deref(),
                 )

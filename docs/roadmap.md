@@ -226,16 +226,16 @@ method, so whoever has quota can close it in one sitting.
 | ~~Does the login flow complete against the real authorization server?~~ | **Answered.** It completes: the authorization request is accepted, the code exchange succeeds, and the account id is read from the id token. |
 | May this client request connector scopes? | Unknown, and unasked: the proxy requests only what it uses. A refusal once suggested otherwise but was a truncated URL. |
 | Does a refresh survive expiry without invalidating the family? | Force expiry, refresh, confirm the prior token family still works |
-| Does the backend accept the request shape — headers, `instructions`, tools? | One minimal request; capture with `record upstream` |
+| ~~Does the backend accept the request shape — headers, `instructions`, tools? | **Answered.** Accepted as sent; a turn completes and the frame sequence is correct. |
+| ~~Does WebSocket connect, or close with a policy code?~~ | **Answered.** It connects. No policy close was seen, and the catalog marks these models `prefer_websockets`. |
+| ~~Does the context meter stay steady across a turn?~~ | **Answered.** `message_start` carries the estimate and `message_delta` replaces it with the true count. |
 | ~~What does the model catalog actually contain?~~ | **Answered.** It needs a `client_version` query parameter, and filters by it: a version below a model's `minimal_client_version` returns an empty list rather than an error. Entries are keyed by `slug`, state `visibility` as a word, and carry `supported_reasoning_levels`. |
 | Does it reject system and developer roles inside `input`, as assumed? | Deliberately send one; record the error |
 | Does it accept an `input_file` part, the one shape with no upstream precedent? | Read a PDF whose content is unguessable; check the answer, not the acceptance |
 | Does it accept a `tool_choice` other than `auto`? | Send `required`; the upstream client only ever sends `auto` |
-| Does the context meter stay steady across a turn? | Watch the statusline through a live turn |
 | Does `WebFetch` route through the haiku tier? | Map haiku to a distinguishable model; issue a `WebFetch`; check which model answered |
 | Does the backend emit `url_citation` annotations, or is `WebSearch` limited to opened pages? | Run a search that must cite; check whether titles arrive |
-| Does WebSocket connect, or close with a policy code? | Connect; record the outcome either way |
-| Does incremental upload produce the same conversation live as on replay? | Same session over both transports; diff the results |
+| ~~Does incremental upload produce the same conversation live as on replay?~~ | **Answered, and it did not.** The delta was empty on every continuing turn, so the backend answered from the previous response and the turn repeated itself. Fixed; the frame on the wire is now asserted. |
 | Do the real capability probes pass? | `doctor` against the live backend |
 | Is the true input count linear in the estimator's raw figure, as the offline fit assumes? | Record counts across a growing session; fit and check the residuals |
 
