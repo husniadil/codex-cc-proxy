@@ -102,7 +102,9 @@ costs anything:
   client and no upstream credentials at all, since the exchange is recorded
   before translation.
 - **upstream** captures what the backend sends back. It needs credentials and
-  spends quota.
+  spends quota, and is **not implemented in v0.1** — there was no quota to
+  develop it against, and a capture path that has never captured anything is
+  not something to claim.
 
 Both write to the same fixture format, so a test replays either without knowing
 which mode produced it.
@@ -136,17 +138,23 @@ one-sided floor — see `proxy-behavior.md` §7.2.
 
 A Unix domain socket, or a named pipe on Windows, carrying JSON-RPC:
 
-| Method | Returns |
-|---|---|
-| `status` | connection state, tier mapping, quota windows |
-| `login` | authorization URL, then completion |
-| `disconnect` | clears credentials |
-| `models` | live catalog |
-| `tiers.get` / `tiers.set` | tier mapping |
-| `usage` | quota snapshot |
-| `env` | the §2.1 block |
-| `doctor` | probe results |
-| `record.start` / `record.stop` | fixture capture, either mode |
+| Method | Returns | v0.1 |
+|---|---|---|
+| `status` | connection state, tier mapping, whether the catalog was authoritative | yes |
+| `disconnect` | clears credentials | yes |
+| `models` | catalog, and whether it is the fallback list | yes |
+| `tiers.get` | tier mapping | yes |
+| `usage` | quota snapshot, or that none has been seen | yes |
+| `env` | the §2.1 block | yes |
+| `record.start` / `record.stop` | fixture capture | yes |
+| `login` | authorization URL, then completion | no — `login` runs in the CLI, which owns the browser and the callback port |
+| `tiers.set` | tier mapping | no — edit the configuration file |
+| `doctor` | probe results | no — `doctor` runs in the CLI against the fixture corpus |
+
+The names are reserved whether or not v0.1 answers them: they are semver-bound
+(§6), and a method that appears later must mean what its name said all along. A
+reserved method reports that it is unimplemented rather than failing as though
+it were unknown.
 
 The daemon holds authoritative state and any front-end is a client of this
 interface. The CLI has no privileged path of its own; a second front-end needs no

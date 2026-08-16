@@ -8,6 +8,16 @@ transports that depend on them, because incremental upload is the one subsystem
 whose bugs corrupt conversations instead of failing loudly, and it has to land
 against tests that can catch that.
 
+## Where this stands
+
+Phases 1 through 11 are complete: `just check` is green, every capability probe
+passes against the replay corpus, a long session leaves identical conversation
+state over both transports, and the estimator comparison is measured and
+decided.
+
+§L is untouched, and is the honest remainder. Nothing in it blocked v0.1.0 and
+nothing in it is answered by v0.1.0.
+
 ## Everything here is verifiable offline
 
 **No phase's completion criterion requires a live backend, credentials, or
