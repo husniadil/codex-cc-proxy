@@ -445,6 +445,14 @@ impl StreamState {
             return;
         }
 
+        // Logged so the fit can be checked against real counts rather than a
+        // modelled one — roadmap §L.
+        tracing::debug!(
+            estimated = self.calibration.estimate,
+            actual,
+            "input tokens"
+        );
+
         self.calibration
             .session
             .estimator

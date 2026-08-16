@@ -511,13 +511,28 @@ that, because the gap is not in the text.
 The calibrated estimator therefore ships and the tokenizer stays behind a
 feature flag, as a comparison instrument rather than a candidate.
 
-What the measurement does **not** settle is accuracy against this backend. The
-modelled count is linear in the same structure the raw estimate measures, so a
-linear fit can absorb it exactly; that the real relationship is equally
-tractable is not demonstrated here and belongs to §L. What is demonstrated is
-the mechanism: a multiplicative correction cannot absorb a fixed cost, a linear
-one can, and exactness over the wrong quantity loses to self-correction over
-roughly the right one.
+That comparison was against a *modelled* count, linear in the same structure the
+raw estimate measures, so a linear fit could absorb it exactly. It demonstrated
+the mechanism and not the accuracy.
+
+**Measured against the real backend**, over a growing six-turn conversation:
+
+| turn | estimated | actual | error |
+|---|---|---|---|
+| 1 | 146 | 75 | +95% |
+| 2 | 221 | 215 | +2.8% |
+| 3 | 420 | 427 | −1.6% |
+| 4 | 703 | 687 | +2.3% |
+| 5 | 1026 | 1007 | +1.9% |
+| 6 | 1406 | 1387 | +1.4% |
+
+So the real relationship is tractable: one observation is enough to bring the
+estimate inside 3%, and it stays there as the conversation grows.
+
+The first turn is the weak point and cannot be otherwise — nothing has been
+observed yet, so it is the uncalibrated ratio and here it nearly doubled the
+true figure. It is the one turn where the context meter is visibly wrong, and it
+corrects on the next one.
 
 Before a session's first completed request the estimate is uncalibrated.
 
