@@ -480,6 +480,40 @@ fn a_base64_image_becomes_a_data_url() {
     );
 }
 
+/// §2.2 — a document directly in a user message becomes an `input_file` part
+/// in place, with no trailing message: it is already in the only position where
+/// `input_file` is defined.
+#[test]
+fn a_document_in_a_user_message_becomes_an_input_file_part() {
+    let out = translate(json!({
+        "model": "gpt-5",
+        "messages": [{
+            "role": "user",
+            "content": [
+                { "type": "text", "text": "summarize" },
+                {
+                    "type": "document",
+                    "source": {
+                        "type": "base64",
+                        "media_type": "application/pdf",
+                        "data": "TUFSSzc3",
+                    },
+                },
+            ],
+        }],
+    }));
+
+    assert_eq!(out["input"].as_array().map(Vec::len), Some(1));
+    assert_eq!(
+        out["input"][0]["content"][1],
+        json!({
+            "type": "input_file",
+            "filename": "attachment.pdf",
+            "file_data": "data:application/pdf;base64,TUFSSzc3",
+        })
+    );
+}
+
 /// §2.2 — a URL source passes through unchanged and is not prefetched.
 #[test]
 fn an_image_url_passes_through() {
