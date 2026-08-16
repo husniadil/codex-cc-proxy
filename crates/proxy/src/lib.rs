@@ -10,4 +10,5 @@ pub mod daemon;
 pub mod error;
 pub mod estimate;
 pub mod ingress;
+pub mod recorder;
 pub mod upstream;

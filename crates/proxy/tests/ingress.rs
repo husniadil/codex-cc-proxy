@@ -26,6 +26,13 @@ struct Harness {
 
 impl Harness {
     async fn start(behavior: Behavior) -> Self {
+        Self::start_with(behavior, None).await
+    }
+
+    async fn start_with(
+        behavior: Behavior,
+        recorder: Option<codex_cc_proxy::recorder::Recorder>,
+    ) -> Self {
         let upstream = ReplayServer::start(behavior).await;
 
         let state = AppState {
@@ -34,6 +41,8 @@ impl Harness {
                 requested: "claude-sonnet-4".to_owned(),
                 upstream: "gpt-5-codex".to_owned(),
             }]),
+            recorder: recorder.clone(),
+            record_ingress: recorder.is_some(),
         };
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -552,4 +561,206 @@ async fn a_stream_read_to_completion_does_reach_the_end_upstream() {
         *sent_everything.lock().unwrap(),
         "the flag never gets set, so the cancellation test proves nothing"
     );
+}
+
+/// §5.4 — a stream that completes having produced no content is recorded with
+/// its request and the upstream events that produced nothing.
+///
+/// It is always a defect, and it is otherwise invisible: the client receives a
+/// well-formed turn that simply said nothing, and reports nothing wrong.
+#[tokio::test]
+async fn an_empty_stream_is_recorded() {
+    let dir = tempfile::tempdir().unwrap();
+    let recorder = codex_cc_proxy::recorder::Recorder::new(dir.path());
+
+    let harness = Harness::start_with(
+        Behavior::Events(vec![
+            json!({ "type": "response.created", "response": { "id": "resp_1" } }),
+            completed(),
+        ]),
+        Some(recorder),
+    )
+    .await;
+
+    let response = harness
+        .post(
+            "/v1/messages",
+            json!({
+                "model": "claude-sonnet-4",
+                "max_tokens": 512,
+                "messages": [{ "role": "user", "content": "hi" }],
+            }),
+        )
+        .await;
+    let _ = response.text().await.unwrap();
+
+    let captures: Vec<_> = std::fs::read_dir(dir.path())
+        .unwrap()
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with("upstream-"))
+        })
+        .collect();
+
+    assert_eq!(
+        captures.len(),
+        1,
+        "the empty stream should have been recorded"
+    );
+
+    let body: Value =
+        serde_json::from_str(&std::fs::read_to_string(&captures[0]).unwrap()).unwrap();
+    assert_eq!(body["provenance"], json!("captured"));
+    // The raw upstream events are kept, since they are the evidence of what
+    // produced nothing.
+    assert_eq!(body["upstream"].as_array().map(Vec::len), Some(2));
+    assert_eq!(body["request"]["model"], json!("claude-sonnet-4"));
+}
+
+/// A stream that produced content is not recorded. Recording every exchange
+/// would bury the defective ones.
+#[tokio::test]
+async fn a_stream_that_produced_content_is_not_recorded() {
+    let dir = tempfile::tempdir().unwrap();
+    let recorder = codex_cc_proxy::recorder::Recorder::new(dir.path());
+
+    let harness = Harness::start_with(
+        Behavior::Events(vec![
+            json!({ "type": "response.created", "response": { "id": "resp_1" } }),
+            json!({ "type": "response.output_text.delta", "delta": "content" }),
+            completed(),
+        ]),
+        Some(recorder),
+    )
+    .await;
+
+    let response = harness
+        .post(
+            "/v1/messages",
+            json!({
+                "model": "claude-sonnet-4",
+                "max_tokens": 512,
+                "messages": [{ "role": "user", "content": "hi" }],
+            }),
+        )
+        .await;
+    let _ = response.text().await.unwrap();
+
+    let upstream_captures = std::fs::read_dir(dir.path())
+        .unwrap()
+        .filter_map(Result::ok)
+        .filter(|entry| {
+            entry
+                .file_name()
+                .to_str()
+                .is_some_and(|name| name.starts_with("upstream-"))
+        })
+        .count();
+
+    assert_eq!(upstream_captures, 0);
+}
+
+/// `record ingress` captures what the client sends, before translation. No
+/// credentials are involved, because nothing upstream is yet.
+#[tokio::test]
+async fn ingress_capture_records_the_untranslated_request() {
+    let dir = tempfile::tempdir().unwrap();
+    let recorder = codex_cc_proxy::recorder::Recorder::new(dir.path());
+
+    let harness = Harness::start_with(
+        Behavior::Events(vec![
+            json!({ "type": "response.created", "response": { "id": "resp_1" } }),
+            json!({ "type": "response.output_text.delta", "delta": "hi" }),
+            completed(),
+        ]),
+        Some(recorder),
+    )
+    .await;
+
+    let response = harness
+        .post(
+            "/v1/messages",
+            json!({
+                "model": "claude-sonnet-4",
+                "max_tokens": 512,
+                "system": "You are Claude Code.",
+                "messages": [{ "role": "user", "content": "hello" }],
+                "tools": [{
+                    "name": "Read",
+                    "input_schema": { "type": "object", "properties": {} },
+                }],
+            }),
+        )
+        .await;
+    let _ = response.text().await.unwrap();
+
+    let capture = std::fs::read_dir(dir.path())
+        .unwrap()
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .find(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with("ingress-"))
+        })
+        .expect("the request should have been captured");
+
+    let body: Value = serde_json::from_str(&std::fs::read_to_string(&capture).unwrap()).unwrap();
+
+    // Untranslated: the Anthropic shape, not the Responses one. A capture that
+    // had already been translated could not test the translation.
+    assert_eq!(body["request"]["system"], json!("You are Claude Code."));
+    assert_eq!(body["request"]["messages"][0]["role"], json!("user"));
+    assert_eq!(body["request"]["tools"][0]["name"], json!("Read"));
+    assert_eq!(body["provenance"], json!("captured"));
+}
+
+/// A capture replays through the corpus loader without hand-editing. A capture
+/// that needs editing before it can be used is not a fixture, it is a note.
+#[tokio::test]
+async fn a_capture_parses_as_a_corpus_fixture() {
+    let dir = tempfile::tempdir().unwrap();
+    let recorder = codex_cc_proxy::recorder::Recorder::new(dir.path());
+
+    let harness = Harness::start_with(
+        Behavior::Events(vec![
+            json!({ "type": "response.created", "response": { "id": "resp_1" } }),
+            json!({ "type": "response.output_text.delta", "delta": "hi" }),
+            completed(),
+        ]),
+        Some(recorder),
+    )
+    .await;
+
+    let response = harness
+        .post(
+            "/v1/messages",
+            json!({
+                "model": "claude-sonnet-4",
+                "max_tokens": 512,
+                "messages": [{ "role": "user", "content": "hello" }],
+            }),
+        )
+        .await;
+    let _ = response.text().await.unwrap();
+
+    let capture = std::fs::read_dir(dir.path())
+        .unwrap()
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .find(|path| path.extension().is_some_and(|ext| ext == "json"))
+        .expect("something should have been captured");
+
+    let raw = std::fs::read_to_string(&capture).unwrap();
+    let fixture: codex_cc_proxy_core::fixture::Fixture =
+        serde_json::from_str(&raw).expect("a capture should parse as a fixture");
+
+    assert_eq!(
+        fixture.provenance,
+        codex_cc_proxy_core::fixture::Provenance::Captured
+    );
+    assert!(!fixture.note.is_empty());
 }

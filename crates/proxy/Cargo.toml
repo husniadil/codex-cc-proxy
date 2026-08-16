@@ -39,6 +39,7 @@ tracing-subscriber.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
+codex-cc-proxy-core.workspace = true
 insta.workspace = true
 pretty_assertions.workspace = true
 reqwest.workspace = true

@@ -33,6 +33,12 @@ pub struct AppState {
     pub transport: Arc<dyn Transport>,
     /// Tier name to upstream model id.
     pub models: Arc<Vec<ModelMapping>>,
+    /// Where captures are written. Always present: §5.4 records every empty
+    /// stream regardless of whether capture was asked for, because an empty
+    /// stream is always a defect and is otherwise invisible.
+    pub recorder: Option<crate::recorder::Recorder>,
+    /// Whether to capture every request, not only the defective ones.
+    pub record_ingress: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -110,6 +116,21 @@ async fn messages(
     };
     let translated = translate_request(&request, &options);
 
+    // Ingress capture happens here, before anything is sent. It needs no
+    // credentials because nothing upstream is involved yet.
+    if state.record_ingress
+        && let Some(recorder) = &state.recorder
+        && let Ok(raw) = serde_json::to_value(&request)
+    {
+        recorder.record(
+            crate::recorder::Mode::Ingress,
+            &raw,
+            Vec::new(),
+            "Captured from a live client before translation. No credentials were \
+             involved: this is what the client sent, not what the backend replied.",
+        );
+    }
+
     let events = match state.transport.stream(&translated).await {
         Ok(events) => events,
         // Nothing has been written yet, so this can still be a status.
@@ -124,7 +145,12 @@ async fn messages(
         estimated_input_tokens: crate::estimate::estimate_input_tokens(&request),
     });
 
-    sse_response(events, translator)
+    let empty_stream_watch = state
+        .recorder
+        .clone()
+        .zip(serde_json::to_value(&request).ok());
+
+    sse_response(events, translator, empty_stream_watch)
 }
 
 /// Turn upstream events into Anthropic frames on the wire.
@@ -132,45 +158,63 @@ async fn messages(
 /// Dropping this response cancels the upstream request with it: the stream is
 /// owned by the response body, so a client that disconnects drops the whole
 /// chain rather than leaving the backend generating into nothing (§5.3).
-fn sse_response(events: crate::upstream::EventStream, translator: ResponseTranslator) -> Response {
-    let state = (translator, false);
+fn sse_response(
+    events: crate::upstream::EventStream,
+    translator: ResponseTranslator,
+    empty_stream_watch: Option<(crate::recorder::Recorder, Value)>,
+) -> Response {
+    let state = StreamState {
+        translator,
+        done: false,
+        seen: Vec::new(),
+        produced_content: false,
+        watch: empty_stream_watch,
+    };
 
-    let body = stream::unfold(
-        (events, state),
-        |(mut events, (mut translator, done))| async move {
-            if done {
-                return None;
-            }
+    let body = stream::unfold((events, state), |(mut events, mut state)| async move {
+        if state.done {
+            return None;
+        }
 
-            match events.next().await {
-                Some(Ok(payload)) => {
-                    let frames = translator.push(&payload);
-                    let chunk = render(&frames);
-                    Some((
-                        Ok::<_, std::io::Error>(chunk),
-                        (events, (translator, false)),
-                    ))
+        match events.next().await {
+            Some(Ok(payload)) => {
+                if let Ok(parsed) = serde_json::from_str::<Value>(&payload) {
+                    state.seen.push(parsed);
                 }
-                Some(Err(error)) => {
-                    // The status is already sent, so a mid-stream failure is an
-                    // error frame rather than a status change (§1.1).
-                    let frame = codex_cc_proxy_core::anthropic::Frame::Error {
-                        error: error.body(),
-                    };
-                    let chunk = encode_frame(&frame);
-                    Some((Ok(chunk), (events, (translator, true))))
+                let frames = state.translator.push(&payload);
+                if frames.iter().any(|frame| {
+                    matches!(
+                        frame,
+                        codex_cc_proxy_core::anthropic::Frame::ContentBlockDelta { .. }
+                    )
+                }) {
+                    state.produced_content = true;
                 }
-                None => {
-                    let frames = translator.finish();
-                    if frames.is_empty() {
-                        return None;
-                    }
-                    let chunk = render(&frames);
-                    Some((Ok(chunk), (events, (translator, true))))
-                }
+                let chunk = render(&frames);
+                Some((Ok::<_, std::io::Error>(chunk), (events, state)))
             }
-        },
-    );
+            Some(Err(error)) => {
+                // The status is already sent, so a mid-stream failure is an
+                // error frame rather than a status change (§1.1).
+                let frame = codex_cc_proxy_core::anthropic::Frame::Error {
+                    error: error.body(),
+                };
+                let chunk = encode_frame(&frame);
+                state.done = true;
+                Some((Ok(chunk), (events, state)))
+            }
+            None => {
+                let frames = state.translator.finish();
+                state.done = true;
+                state.record_if_empty();
+                if frames.is_empty() {
+                    return None;
+                }
+                let chunk = render(&frames);
+                Some((Ok(chunk), (events, state)))
+            }
+        }
+    });
 
     let mut response = Response::new(Body::from_stream(body));
     response.headers_mut().insert(
@@ -182,6 +226,39 @@ fn sse_response(events: crate::upstream::EventStream, translator: ResponseTransl
         .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-cache"));
     *response.status_mut() = StatusCode::OK;
     response
+}
+
+struct StreamState {
+    translator: ResponseTranslator,
+    done: bool,
+    seen: Vec<Value>,
+    produced_content: bool,
+    watch: Option<(crate::recorder::Recorder, Value)>,
+}
+
+impl StreamState {
+    /// §5.4 — a stream that completes having produced no content frames is
+    /// recorded with its request and the upstream events that produced nothing.
+    ///
+    /// It is always a defect, and it is otherwise invisible: the client sees a
+    /// well-formed empty turn and reports nothing wrong.
+    fn record_if_empty(&mut self) {
+        if self.produced_content {
+            return;
+        }
+        let Some((recorder, request)) = self.watch.take() else {
+            return;
+        };
+
+        recorder.record(
+            crate::recorder::Mode::Upstream,
+            &request,
+            std::mem::take(&mut self.seen),
+            "An empty stream: the upstream events below produced no content at all. \
+             Always a defect, and invisible without this record — the client sees a \
+             well-formed turn that simply said nothing.",
+        );
+    }
 }
 
 fn render(frames: &[codex_cc_proxy_core::anthropic::Frame]) -> String {

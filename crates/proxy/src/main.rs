@@ -33,11 +33,29 @@ async fn main() -> Result<()> {
         Command::Models => bail!("`models` is not implemented yet"),
         Command::Env(_) => bail!("`env` is not implemented yet"),
         Command::Doctor(_) => bail!("`doctor` is not implemented yet"),
-        Command::Record(_) => bail!("`record` is not implemented yet"),
+        Command::Record(args) => record(args).await,
+    }
+}
+
+/// Capture exchanges as fixtures.
+///
+/// Ingress capture runs the daemon normally and records what the client sends
+/// before translation. It needs no credentials, because nothing upstream is
+/// involved at the point of capture.
+async fn record(args: cli::RecordArgs) -> Result<()> {
+    match args.mode {
+        cli::RecordMode::Ingress => run_with(RunArgs { port: None }, true).await,
+        cli::RecordMode::Upstream => {
+            bail!("`record upstream` needs credentials and is not implemented yet")
+        }
     }
 }
 
 async fn run(args: RunArgs) -> Result<()> {
+    run_with(args, false).await
+}
+
+async fn run_with(args: RunArgs, record_ingress: bool) -> Result<()> {
     let config = Config::default();
     let port = args.port.unwrap_or(config.port);
 
@@ -60,6 +78,13 @@ async fn run(args: RunArgs) -> Result<()> {
                 })
                 .collect(),
         ),
+        // §5.4 — empty streams are recorded whether or not capture was asked
+        // for, because an empty stream is always a defect and is otherwise
+        // invisible.
+        recorder: Some(codex_cc_proxy::recorder::Recorder::new(
+            std::env::temp_dir().join("codex-cc-proxy-captures"),
+        )),
+        record_ingress,
     };
 
     daemon::serve(listener, state).await?;
