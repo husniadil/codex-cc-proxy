@@ -145,19 +145,26 @@ async fn doctor(args: cli::DoctorArgs) -> Result<()> {
     Ok(())
 }
 
-/// Login runs in the CLI rather than through the socket: it needs a browser and
-/// a callback port, and the daemon need not be running to authenticate.
+/// Login runs in the CLI rather than through the socket: it needs a callback
+/// port, and the daemon need not be running to authenticate.
+///
+/// **The URL is printed, never opened.** Opening it hands the authorization to
+/// whichever account the default browser is already signed into, which is a
+/// choice this command has no basis for making — the grant it produces is the
+/// one every later request spends. Printing it leaves the choice where it
+/// belongs, and costs one paste.
 async fn login() -> Result<()> {
     let store: Arc<dyn codex_cc_proxy::auth::store::CredentialStore> = Arc::new(
         codex_cc_proxy::auth::store::FileStore::new(credential_path()),
     );
 
     let credentials = codex_cc_proxy::auth::login::run(store, |url| {
-        // Printed as well as opened. An environment with no browser — a remote
-        // shell, a container — still needs a way through, and one line of URL
-        // is less in the way than an explanation of where to find it.
-        println!("Open this URL to authorize:\n\n{url}\n");
-        let _ = open_in_browser(url);
+        println!(
+            "Open this URL to authorize:\n\n{url}\n\n\
+             It authorizes whichever ChatGPT account that browser is signed into. \
+             Sign in as the account you want first, or use a private window to \
+             pick a different one.\n"
+        );
     })
     .await?;
 
@@ -166,26 +173,6 @@ async fn login() -> Result<()> {
         None => println!("Signed in."),
     }
     Ok(())
-}
-
-fn open_in_browser(url: &str) -> std::io::Result<()> {
-    #[cfg(target_os = "macos")]
-    let mut command = std::process::Command::new("open");
-    #[cfg(target_os = "linux")]
-    let mut command = std::process::Command::new("xdg-open");
-    #[cfg(target_os = "windows")]
-    let mut command = {
-        let mut command = std::process::Command::new("cmd");
-        command.args(["/C", "start", ""]);
-        command
-    };
-
-    command
-        .arg(url)
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn()
-        .map(|_| ())
 }
 
 /// Every verb but `run` works through the control socket. The CLI holds no

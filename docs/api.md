@@ -77,11 +77,16 @@ codex-cc-proxy record     capture exchanges as fixtures
 Every verb except `run` and `login` operates through the control socket (§3)
 against a running daemon.
 
-`login` runs in the CLI. It needs a browser and a fixed callback port, and the
-daemon need not be running to authenticate — requiring it would mean starting a
-daemon that cannot serve a request in order to obtain the credentials it needs
-to serve one. The authorization URL is printed as well as opened, so an
-environment with no browser still has a way through.
+`login` runs in the CLI. It needs a fixed callback port, and the daemon need not
+be running to authenticate — requiring it would mean starting a daemon that
+cannot serve a request in order to obtain the credentials it needs to serve one.
+
+**The authorization URL is printed, never opened.** Opening it would hand the
+authorization to whichever account the default browser happens to be signed
+into, and that is a choice this command has no basis for making: the grant it
+produces is the one every later request spends. The printed URL says so, and
+names a private window as the way to pick a different account. It also means an
+environment with no browser at all is not a special case.
 
 `doctor` runs the capability probes and prints a matrix. Against the fixture
 corpus — the default — it contacts nothing and costs nothing. `--live` answers
@@ -175,7 +180,7 @@ A Unix domain socket, or a named pipe on Windows, carrying JSON-RPC:
 | `usage` | quota snapshot, or that none has been seen | yes |
 | `env` | the §2.1 block | yes |
 | `record.start` / `record.stop` | fixture capture | yes — `{"mode": "ingress"}` by default, `"upstream"` must be named because it bills every turn that follows |
-| `login` | authorization URL, then completion | no — `login` runs in the CLI, which owns the browser and the callback port |
+| `login` | authorization URL, then completion | no — `login` runs in the CLI, which owns the callback port |
 | `tiers.set` | tier mapping | no — edit the configuration file |
 | `doctor` | probe results | no — `doctor` runs in the CLI, which is where `--live` can be given credentials without a daemon already holding them |
 
