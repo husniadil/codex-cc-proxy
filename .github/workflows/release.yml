@@ -40,7 +40,11 @@ jobs:
             target: aarch64-unknown-linux-gnu
           - os: macos-latest
             target: aarch64-apple-darwin
-          - os: macos-13
+          # Cross-compiled from the arm64 runner. The `macos-13` label that
+          # used to build this natively has been retired, and a job requesting
+          # it queues forever rather than failing — verified by watching one do
+          # exactly that. Apple's toolchain builds both slices either way.
+          - os: macos-latest
             target: x86_64-apple-darwin
           - os: windows-latest
             target: x86_64-pc-windows-msvc
