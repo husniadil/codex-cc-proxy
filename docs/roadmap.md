@@ -18,8 +18,8 @@ decided.
 What is intended beyond that release is in **After v0.1.0**, stated as
 intentions rather than commitments.
 
-§L has since been worked through against a live backend, and every row is
-answered. That was not free of consequence: it falsified four things the
+§L has since been worked through against a live backend, and every row that
+could be settled is answered. That was not free of consequence: it falsified four things the
 offline work had believed, and each correction is in the commit that proved it.
 The section is kept in full rather than deleted, because what a claim rests on
 is part of the claim.
@@ -324,6 +324,7 @@ alongside what they cost to learn.
 | ~~Does the backend emit `url_citation` annotations, or is `WebSearch` limited to opened pages?~~ | **Answered: it emits them.** A captured live search carried two `response.output_text.annotation.added` events, each a `url_citation` with a title, a URL, and the span of the reply it supports. Both reached the client as `web_search_result` entries, so the reconstruction is built on citations rather than on opened pages. |
 | ~~Does incremental upload produce the same conversation live as on replay?~~ | **Answered, and it did not — twice.** The delta was empty on every continuing turn, so the backend answered from the previous response and the turn repeated itself. With that fixed, the session stopped matching as soon as the model returned a reasoning item, and every turn from the third on uploaded the whole conversation. Both fixed; a live four-turn conversation now uploads one item per turn. |
 | ~~Do the real capability probes pass?~~ | **Answered: all eight, twice.** `doctor --live` was built to ask, and asking found two things replay could not. The corpus's attachments were stand-ins — a base64 string that was not a PNG — so the image and document probes passed on replay while proving nothing; they now carry a real PNG and a real PDF. And a marker spoken across several deltas was never contiguous in the raw frames, so every attachment probe failed against a backend that had read the attachment and said so. |
+| Does compaction actually fire at the window the proxy supplies? | **Open.** The client warns that its own 200,000 limit is not enforced for an unrecognized model, and names `CLAUDE_CODE_AUTO_COMPACT_WINDOW` as the mechanism — which the proxy sets to the model's real effective window. That the variable is read is strong evidence; that compaction fires at that number has not been watched happen. Needs a session long enough to reach it. |
 | ~~Is the true input count linear in the estimator's raw figure?~~ | **Answered: yes.** Six live turns, residuals under 3% from the second turn on. The uncalibrated first turn was +95%. Recorded in §6.3. |
 
 Before a question was answered, the corresponding claim in `proxy-behavior.md`
