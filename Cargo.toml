@@ -58,7 +58,6 @@ url = "2"
 # server is the only way to prove the client negotiates deflate offline.
 hyper = { version = "1", features = ["server", "http1"] }
 hyper-util = { version = "0.1", features = ["tokio"] }
-http-body-util = "0.1"
 uuid = { version = "1", features = ["v4"] }
 zstd = "0.13"
 

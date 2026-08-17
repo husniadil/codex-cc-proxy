@@ -83,14 +83,26 @@ fn status(state: &ControlState) -> Value {
         .flatten()
         .map(|credentials| {
             let id_token = credentials.id_token.as_deref();
+
+            // Two sources know the plan, and they can disagree. The backend
+            // reports it on every turn; the grant reports what it was when the
+            // operator last authenticated and is never updated unless a refresh
+            // happens to return a new id token. The live one wins, and which
+            // one answered is said out loud — a plan read to explain an
+            // entitlement refusal is worth nothing if its age is unknown.
+            let (plan, source) = match state.usage.latest().and_then(|latest| latest.plan) {
+                Some(plan) => (Some(plan), "backend"),
+                None => (crate::auth::jwt::plan(id_token), "grant"),
+            };
+
             json!({
                 "connected": true,
                 "account_id": credentials.account_id,
-                // Read from the grant, reported, and never acted on. Null where
-                // the token said nothing: a defaulted plan would either explain
-                // away a refusal that has another cause or deny one that is
-                // real.
-                "plan": crate::auth::jwt::plan(id_token),
+                // Reported, never acted on. Null where neither source said
+                // anything: a defaulted plan would either explain away a
+                // refusal that has another cause or deny one that is real.
+                "plan": plan,
+                "plan_source": source,
                 "email": crate::auth::jwt::email(id_token),
                 "expires_at": credentials.expires_at,
             })
@@ -140,15 +152,13 @@ fn tiers(state: &ControlState) -> Value {
 
 /// Every model a tier points at, once each.
 fn mapped_models(state: &ControlState) -> Vec<String> {
-    let mut models: Vec<String> = state
+    state
         .tiers
         .iter()
         .map(|tier| tier.model.clone())
         .collect::<std::collections::BTreeSet<_>>()
         .into_iter()
-        .collect();
-    models.sort();
-    models
+        .collect()
 }
 
 fn tier_map(state: &ControlState) -> Value {
@@ -159,9 +169,6 @@ fn tier_map(state: &ControlState) -> Value {
     Value::Object(map)
 }
 
-/// Quota is reported by the backend on live responses. Until one has been seen,
-/// saying so is the honest answer — a zeroed window would read as "no quota
-/// used" rather than "not yet known".
 /// What quota is left, as of the last turn.
 ///
 /// Read from the snapshot the backend opens each stream with, never polled and

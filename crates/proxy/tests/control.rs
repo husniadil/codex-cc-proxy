@@ -55,6 +55,8 @@ fn tiers() -> Vec<ResolvedTier> {
 struct Harness {
     path: std::path::PathBuf,
     store: Arc<FileStore>,
+    /// The same store the ingress path writes a quota snapshot into.
+    usage: Arc<codex_cc_proxy::usage::UsageStore>,
     /// The same switches the ingress path would read. Asserting on these is
     /// the difference between testing that a flag round-trips and testing that
     /// the method does anything.
@@ -103,6 +105,7 @@ impl Harness {
             path,
             store,
             switches,
+            usage,
             _dir: dir,
         }
     }
@@ -750,4 +753,68 @@ async fn env_states_no_window_when_the_catalog_is_unavailable() {
     );
     // The one-sided floor is still set.
     assert!(rendered.contains("CLAUDE_CODE_DISABLE_1M_CONTEXT=1"));
+}
+
+/// The plan the backend reported on the last turn wins over the one in the
+/// grant.
+///
+/// Two sources say what plan this account is on. The id token says what it was
+/// when the operator last authenticated; the backend says what it is now, on
+/// every turn, in the snapshot it opens each stream with. Preferring the token
+/// would report a stale plan indefinitely after an upgrade — and the plan is
+/// read precisely to explain refusals that turn on entitlement.
+#[tokio::test]
+async fn a_plan_the_backend_reported_wins_over_the_one_in_the_grant() {
+    let harness = Harness::start().await;
+    harness
+        .store
+        .save(&Credentials {
+            access_token: "a".to_owned(),
+            refresh_token: "r".to_owned(),
+            id_token: Some(id_token(json!({
+                "https://api.openai.com/auth": { "chatgpt_plan_type": "free" },
+            }))),
+            account_id: Some("acct_9".to_owned()),
+            expires_at: None,
+        })
+        .unwrap();
+
+    let snapshot = codex_cc_proxy::usage::Snapshot::parse(
+        &json!({
+            "type": "codex.rate_limits",
+            "plan_type": "plus",
+            "rate_limits": { "limit_reached": false },
+        })
+        .to_string(),
+    )
+    .expect("a rate-limit event");
+    harness.usage.record(&snapshot);
+
+    let status = harness.call("status").await.unwrap();
+
+    assert_eq!(status["auth"]["plan"], json!("plus"));
+}
+
+/// With no turn yet made there is nothing more current, so the grant's claim
+/// stands — labelled as what it is rather than dropped.
+#[tokio::test]
+async fn the_grants_plan_is_used_until_the_backend_has_said_otherwise() {
+    let harness = Harness::start().await;
+    harness
+        .store
+        .save(&Credentials {
+            access_token: "a".to_owned(),
+            refresh_token: "r".to_owned(),
+            id_token: Some(id_token(json!({
+                "https://api.openai.com/auth": { "chatgpt_plan_type": "free" },
+            }))),
+            account_id: Some("acct_9".to_owned()),
+            expires_at: None,
+        })
+        .unwrap();
+
+    let status = harness.call("status").await.unwrap();
+
+    assert_eq!(status["auth"]["plan"], json!("free"));
+    assert_eq!(status["auth"]["plan_source"], json!("grant"));
 }

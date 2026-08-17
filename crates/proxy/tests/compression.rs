@@ -27,6 +27,9 @@ struct DeflateServer {
     url: String,
     offered: Arc<Mutex<Vec<String>>>,
     received: Arc<Mutex<Vec<String>>>,
+    /// Every upgrade's headers, lowercased. The upgrade is a request like any
+    /// other and carries the same identity (§2.8); nothing else checks that.
+    headers: Arc<Mutex<Vec<std::collections::BTreeMap<String, String>>>>,
 }
 
 impl DeflateServer {
@@ -35,12 +38,15 @@ impl DeflateServer {
 
         let offered: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
         let received: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        let headers: Arc<Mutex<Vec<std::collections::BTreeMap<String, String>>>> =
+            Arc::new(Mutex::new(Vec::new()));
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
 
         let offered_for_server = Arc::clone(&offered);
         let received_for_server = Arc::clone(&received);
+        let headers_for_server = Arc::clone(&headers);
 
         tokio::spawn(async move {
             loop {
@@ -50,13 +56,30 @@ impl DeflateServer {
                 let events = events.clone();
                 let offered = Arc::clone(&offered_for_server);
                 let received = Arc::clone(&received_for_server);
+                let headers = Arc::clone(&headers_for_server);
 
                 tokio::spawn(async move {
                     let service = hyper::service::service_fn(move |mut request| {
                         let events = events.clone();
                         let offered = Arc::clone(&offered);
                         let received = Arc::clone(&received);
+                        let headers = Arc::clone(&headers);
                         async move {
+                            if let Ok(mut headers) = headers.lock() {
+                                headers.push(
+                                    request
+                                        .headers()
+                                        .iter()
+                                        .filter_map(|(name, value)| {
+                                            Some((
+                                                name.as_str().to_ascii_lowercase(),
+                                                value.to_str().ok()?.to_owned(),
+                                            ))
+                                        })
+                                        .collect(),
+                                );
+                            }
+
                             if let Some(extensions) = request
                                 .headers()
                                 .get("sec-websocket-extensions")
@@ -117,7 +140,15 @@ impl DeflateServer {
             url: format!("ws://{addr}"),
             offered,
             received,
+            headers,
         }
+    }
+
+    fn headers(&self) -> Vec<std::collections::BTreeMap<String, String>> {
+        self.headers
+            .lock()
+            .map(|got| got.clone())
+            .unwrap_or_default()
     }
 
     fn offered(&self) -> Vec<String> {
@@ -268,5 +299,48 @@ async fn compression_can_be_declined_and_the_turn_still_runs() {
         received[0].contains(MARKER),
         "the turn should run regardless: {}",
         received[0]
+    );
+}
+
+// ---------------------------------------------------------------------------
+// The upgrade's identity headers. Nothing covered these before, which is how
+// two of them went missing without a test noticing.
+// ---------------------------------------------------------------------------
+
+/// `docs/proxy-behavior.md` §2.8 — the upgrade carries the same identity as
+/// every other upstream request.
+///
+/// `originator` and `user-agent` were absent here while the HTTP transport and
+/// the catalog fetch both sent them. The catalog endpoint rejects a request
+/// without them with a bare 400 that names nothing, so an endpoint that starts
+/// enforcing them would look like an unexplained connection failure.
+#[tokio::test]
+async fn the_upgrade_carries_the_identity_headers() {
+    let server = DeflateServer::start(vec![
+        r#"{"type":"response.completed","response":{"id":"r1"}}"#.to_owned(),
+    ])
+    .await;
+
+    let transport = WebSocketTransport::new(&server.url);
+    let connection = transport
+        .open(&request("hello"), None)
+        .await
+        .expect("the connection should open");
+    let _ = connection.into_events().collect::<Vec<_>>().await;
+
+    let headers = server.headers();
+    let seen = headers.first().expect("one upgrade should have arrived");
+
+    assert_eq!(
+        seen.get("openai-beta").map(String::as_str),
+        Some(codex_cc_proxy::upstream::websocket::BETA_HEADER)
+    );
+    assert_eq!(
+        seen.get("originator").map(String::as_str),
+        Some(codex_cc_proxy::upstream::http::ORIGINATOR)
+    );
+    assert_eq!(
+        seen.get("user-agent").map(String::as_str),
+        Some(codex_cc_proxy::upstream::http::USER_AGENT)
     );
 }

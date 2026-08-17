@@ -222,7 +222,7 @@ A Unix domain socket, or a named pipe on Windows, carrying JSON-RPC:
 
 | Method | Returns | v0.1 |
 |---|---|---|
-| `status` | connection state, tier mapping, whether the catalog was authoritative | yes |
+| `status` | connection state, plan and which source reported it, tier mapping, any mapped model the catalog withholds, whether the catalog was authoritative | yes |
 | `disconnect` | clears credentials | yes |
 | `models` | catalog, and whether it is the fallback list | yes |
 | `tiers.get` | tier mapping | yes |
@@ -266,7 +266,31 @@ compression = true
 [instructions]
 identity = true
 append   = "..."
+
+[upstream]
+client_version           = "2.0.0"
+effective_window_percent = 95.0
+endpoint                 = "https://..."
+websocket                = "wss://..."
+catalog                  = "https://..."
 ```
+
+`[upstream]` is entirely optional; every key defaults to what ships. It exists so
+a pinned binary can be repointed rather than rebuilt, and because two of the keys
+fail in ways nothing else can diagnose.
+
+`client_version` is what the proxy reports when asking for the model list — not
+this crate's version. The backend filters the list by it, and a version below
+every model's minimum returns an **empty list rather than an error**, which reads
+exactly like an account with no models. Startup says so by name when the catalog
+comes back empty.
+
+`effective_window_percent` is the share of a context window left usable once
+instructions, tool overhead, and output are accounted for, applied where the
+catalog states no share of its own. It is the figure the client is told, so it
+decides when compaction fires: lower compacts sooner and wastes window, higher
+risks a turn refused for length. A value outside `(0, 100]` is refused at
+startup rather than clamped.
 
 All four tiers are required. The daemon refuses to start without them, and
 validates each against the live catalog when one is reachable.

@@ -159,10 +159,23 @@ impl WebSocketTransport {
 
     /// The identity headers §2.8 requires, on the upgrade request.
     ///
+    /// The upgrade is an HTTP request like any other and carries the same
+    /// identity. `originator` and `user-agent` were absent here for a while
+    /// while both the HTTP transport and the catalog fetch sent them — the
+    /// socket happened not to enforce them, and the catalog endpoint rejects
+    /// their absence with a bare 400 that names nothing. One originator,
+    /// always, on every path.
+    ///
     /// The token is fetched per connection rather than captured: one taken at
     /// construction goes stale the moment the session refreshes.
     async fn request_builder(&self) -> Result<yawc::HttpRequestBuilder, ProxyError> {
-        let mut builder = yawc::HttpRequestBuilder::new().header("openai-beta", BETA_HEADER);
+        let mut builder = yawc::HttpRequestBuilder::new()
+            .header("openai-beta", BETA_HEADER)
+            .header("originator", super::http::ORIGINATOR)
+            .header(
+                axum::http::header::USER_AGENT.as_str(),
+                super::http::USER_AGENT,
+            );
 
         if let Some(credentials) = &self.credentials {
             let token = credentials.access_token().await?;

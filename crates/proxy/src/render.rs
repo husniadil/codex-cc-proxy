@@ -92,11 +92,22 @@ pub fn status(result: &Value) -> String {
     // missing — so this line is often the only local half of the explanation.
     // Absent where the grant said nothing: a guessed plan misleads in whichever
     // direction it guesses.
+    //
+    // The grant's copy is a snapshot from the last login and can be arbitrarily
+    // old, so it says so. The backend's is current as of the last turn and
+    // needs no qualifier.
     if let Some(plan) = auth
         .and_then(|auth| field(auth, "plan"))
         .and_then(Value::as_str)
     {
-        lines.push(format!("plan       {plan}"));
+        let qualifier = match auth
+            .and_then(|auth| field(auth, "plan_source"))
+            .and_then(Value::as_str)
+        {
+            Some("grant") => " (as of last login)",
+            _ => "",
+        };
+        lines.push(format!("plan       {plan}{qualifier}"));
     }
 
     if let Some(tiers) = field(result, "tiers").and_then(Value::as_object) {
@@ -124,8 +135,9 @@ pub fn status(result: &Value) -> String {
         .map(|entries| entries.iter().filter_map(Value::as_str).collect())
         .unwrap_or_default();
     if !withheld.is_empty() {
+        let verb = if withheld.len() == 1 { "is" } else { "are" };
         lines.push(format!(
-            "catalog    {} is mapped but not offered by the catalog",
+            "catalog    {} {verb} mapped but not offered by the catalog",
             withheld.join(", ")
         ));
     }

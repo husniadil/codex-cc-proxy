@@ -381,13 +381,25 @@ chosen per message. The client offers the extension and the server selects it
 is text JSON either way — the library compresses that same text frame and marks
 it in the frame header, not in the payload.
 
-Measured on a real first turn: 107,842 bytes of request became 37,488, and
-297,531 bytes of events became 99,100 — about two thirds off in both directions.
-The inbound half is the larger one and grows with the conversation, because the
-backend echoes the entire request back in `response.created`,
-`response.in_progress`, and `response.completed`. Context takeover is negotiated
-but contributes almost nothing (3%), since deflate's 32 KiB window cannot reach
-back across a 99 KB event.
+**Measured live**, one identical turn with the extension offered and declined,
+counted on the wire rather than simulated:
+
+| | offered | declined |
+|---|---|---|
+| inbound | 104,566 | 300,879 |
+| outbound | 40,335 | 110,608 |
+
+About 65% in both directions. The inbound half is the larger one and grows with
+the conversation, because the backend echoes the entire request back in
+`response.created`, `response.in_progress`, and `response.completed` — three
+copies of it per turn, which nothing else here has a lever on.
+
+Two further figures are **derived, not confirmed**: running deflate offline over
+a captured turn predicted 37,488 and 99,100 bytes, and put the contribution of
+context takeover at about 3% — the window is 32 KiB and cannot reach back across
+a 99 KB event. The server does negotiate takeover (it selects bare
+`permessage-deflate`, with no `no_context_takeover` and no window limit), but
+nothing here has measured what it is worth on the wire.
 
 The read limit is raised far above the library's 1 MiB default for the same
 reason: one event legitimately carries a whole conversation, and a cap sized for
