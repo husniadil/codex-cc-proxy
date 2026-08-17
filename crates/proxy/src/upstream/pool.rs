@@ -10,12 +10,10 @@ use crate::error::ProxyError;
 use codex_cc_proxy_core::responses::ResponsesRequest;
 use futures::SinkExt;
 use futures::StreamExt;
-use tokio::net::TcpStream;
-use tokio_tungstenite::MaybeTlsStream;
-use tokio_tungstenite::WebSocketStream;
-use tokio_tungstenite::tungstenite::Message;
+use yawc::frame::Frame;
+use yawc::frame::OpCode;
 
-type Socket = WebSocketStream<MaybeTlsStream<TcpStream>>;
+type Socket = yawc::TcpWebSocket;
 
 /// A connection that outlives the turn that opened it.
 pub struct PooledConnection {
@@ -46,12 +44,14 @@ impl PooledConnection {
             ProxyError::invalid_request(format!("could not serialize the request: {error}"))
         })?;
 
-        // Always text. A binary frame carries no signal that its contents are
-        // compressed, so the backend cannot parse it and refuses the request —
-        // and the reference client rejects binary frames outright. WebSocket
-        // compression is `permessage-deflate`, negotiated in the upgrade.
+        // Always a text frame. A binary frame carries no signal that its
+        // contents are compressed, so the backend cannot parse it and refuses
+        // the request — and the reference client rejects binary frames
+        // outright. Compression here is `permessage-deflate`, applied by the
+        // library to this same text frame and marked in the frame header rather
+        // than in the payload.
         self.socket
-            .send(Message::Text(payload.into()))
+            .send(Frame::text(payload))
             .await
             .map_err(|error| {
                 ProxyError::overloaded(format!("could not send over the websocket: {error}"))
@@ -61,17 +61,33 @@ impl PooledConnection {
     /// The next event payload, or `None` when the turn or the connection ends.
     pub async fn next_event(&mut self) -> Option<Result<String, ProxyError>> {
         loop {
-            match self.socket.next().await {
-                Some(Ok(Message::Text(text))) => return Some(Ok(text.to_string())),
-                // Pings are answered by the library; anything else that is not
-                // text carries no events.
-                Some(Ok(Message::Close(_))) | None => return None,
-                Some(Ok(_)) => continue,
-                Some(Err(error)) => {
+            let frame = match self.socket.next_frame().await {
+                Ok(frame) => frame,
+                // A closed connection is the end of the stream, not a failure
+                // in it. Reporting it as one would turn every ordinary shutdown
+                // into an error the caller has to reason about.
+                Err(yawc::WebSocketError::ConnectionClosed) => return None,
+                Err(error) => {
                     return Some(Err(ProxyError::overloaded(format!(
                         "the websocket failed mid-turn: {error}"
                     ))));
                 }
+            };
+
+            let (opcode, payload) = <(OpCode, bytes::Bytes)>::from(frame);
+            match opcode {
+                OpCode::Text => match String::from_utf8(payload.to_vec()) {
+                    Ok(text) => return Some(Ok(text)),
+                    Err(error) => {
+                        return Some(Err(ProxyError::overloaded(format!(
+                            "the websocket sent a text frame that is not utf-8: {error}"
+                        ))));
+                    }
+                },
+                OpCode::Close => return None,
+                // Pings are answered by the library; nothing else carries
+                // events.
+                _ => continue,
             }
         }
     }

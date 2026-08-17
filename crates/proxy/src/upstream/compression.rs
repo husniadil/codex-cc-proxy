@@ -1,11 +1,14 @@
 //! `docs/proxy-behavior.md` §4.4 — request compression.
 //!
-//! zstd applies to the HTTP body and is announced with `Content-Encoding`.
-//! There is no way to announce it on a WebSocket message: the payload is JSON
-//! text either way, and a binary frame carries no signal that says otherwise —
-//! the backend simply fails to parse it and refuses the request. WebSocket
-//! compression is `permessage-deflate`, negotiated in the upgrade, which this
-//! client cannot yet offer.
+//! This module is the HTTP half: zstd on the body, announced with
+//! `Content-Encoding`.
+//!
+//! The socket half is not here, because it is not a per-message decision.
+//! WebSocket compression is `permessage-deflate`, negotiated once during the
+//! upgrade and applied by the library to every frame — see
+//! `upstream::websocket`. A binary frame is not an alternative way to say
+//! "compressed": nothing in the protocol attaches that meaning to it, and the
+//! backend simply fails to parse it.
 
 use crate::error::ProxyError;
 

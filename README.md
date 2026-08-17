@@ -176,9 +176,10 @@ refusal has been seen** — it connects, and the catalog marks these models as
 preferring sockets. The fallback is tested as a normal path anyway: one
 account's experience is not evidence about every account's.
 
-Set `websocket = false` under `[transport]` to use HTTP only. Compression is
-HTTP-only in either case — the socket's extension is `permessage-deflate`, which
-no published Rust WebSocket library implements.
+Set `websocket = false` under `[transport]` to use HTTP only. Compression
+applies to both: zstd on an HTTP body, `permessage-deflate` on the socket,
+negotiated during the upgrade. It takes roughly two thirds off the wire in both
+directions and **saves no tokens** — quota is unaffected either way.
 
 ---
 

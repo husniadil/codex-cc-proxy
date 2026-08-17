@@ -70,6 +70,8 @@ so every claim it makes is about the proxy's own half. The backend's half was
 settled separately, against a live subscription: `docs/roadmap.md` §L records
 each question and its answer, including the four rules the answers falsified.
 
-Compression over WebSocket is the one thing still unavailable — the extension
-the endpoint offers is `permessage-deflate`, which no published Rust WebSocket
-library implements.
+Compression applies to both transports: zstd on an HTTP body,
+`permessage-deflate` on the socket. Measured on a real turn, it takes about two
+thirds off the wire in each direction, and the inbound half is the larger one —
+the backend echoes the whole request back three times per turn. It saves no
+tokens; quota is unaffected.

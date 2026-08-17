@@ -43,11 +43,22 @@ tokio = { version = "1", features = [
     "io-util",
 ] }
 tokio-tungstenite = { version = "0.28", features = ["rustls-tls-webpki-roots"] }
+# The WebSocket client. Chosen over tokio-tungstenite for one reason:
+# `permessage-deflate`, which the backend negotiates and which takes roughly two
+# thirds off every frame in both directions. tungstenite has no deflate at any
+# published version, and its public API is message-level — the RSV1 bit a
+# compressed frame is marked with is not reachable from outside the crate.
+yawc = { version = "0.3", default-features = false, features = ["rustls-ring", "zlib"] }
 toml = "0.9"
 tower-http = { version = "0.6", features = ["timeout"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 url = "2"
+# Test-only: yawc's server side upgrades a hyper request, and a deflate-speaking
+# server is the only way to prove the client negotiates deflate offline.
+hyper = { version = "1", features = ["server", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+http-body-util = "0.1"
 uuid = { version = "1", features = ["v4"] }
 zstd = "0.13"
 

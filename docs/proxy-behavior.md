@@ -375,10 +375,27 @@ the backend cannot parse, and it refuses the request with an error naming
 nothing. Only bodies above a threshold are compressed; below it, compression
 adds more than it removes.
 
-**WebSocket**: nothing at this layer. Compression there is `permessage-deflate`,
-negotiated during the upgrade, and this client cannot yet offer it — the
-WebSocket library in use has no support for the extension. The payload is text
-JSON either way.
+**WebSocket**: `permessage-deflate`, negotiated during the upgrade rather than
+chosen per message. The client offers the extension and the server selects it
+(RFC 7692), so declining to offer it is the only way to switch it off. The frame
+is text JSON either way — the library compresses that same text frame and marks
+it in the frame header, not in the payload.
+
+Measured on a real first turn: 107,842 bytes of request became 37,488, and
+297,531 bytes of events became 99,100 — about two thirds off in both directions.
+The inbound half is the larger one and grows with the conversation, because the
+backend echoes the entire request back in `response.created`,
+`response.in_progress`, and `response.completed`. Context takeover is negotiated
+but contributes almost nothing (3%), since deflate's 32 KiB window cannot reach
+back across a 99 KB event.
+
+The read limit is raised far above the library's 1 MiB default for the same
+reason: one event legitimately carries a whole conversation, and a cap sized for
+ordinary messages would sever long ones mid-turn.
+
+This saves bytes and **no tokens at all**. It is worth doing because two thirds
+of the traffic is an echo the proxy has no other lever on, not because bandwidth
+is scarce.
 
 A binary frame is *not* a way to say "compressed". Nothing in the protocol
 attaches that meaning to it: the backend reads a binary frame as JSON, fails,
