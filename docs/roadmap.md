@@ -15,6 +15,9 @@ passes against the replay corpus, a long session leaves identical conversation
 state over both transports, and the estimator comparison is measured and
 decided.
 
+What is intended beyond that release is in **After v0.1.0**, stated as
+intentions rather than commitments.
+
 §L has since been worked through against a live backend, and every row is
 answered. That was not free of consequence: it falsified four things the
 offline work had believed, and each correction is in the commit that proved it.
@@ -215,6 +218,84 @@ container image; an install script. `README`, `CONTRIBUTING`, `SECURITY`,
 **Done when** a fresh checkout builds on all three platforms in CI, the README's
 setup instructions are followed end to end against the replay server, and the
 documented limitations match what the code actually does.
+
+---
+
+## After v0.1.0
+
+Intended, not committed. Each entry says what it is for and what would make it
+done, in the same terms as the phases above — an entry nobody can tell is
+finished is an entry that never finishes. Order within a version is not fixed;
+between versions it is.
+
+### v0.2.0
+
+**A launcher.** Starting the client currently means evaluating the output of
+`env` in a shell first, which is one manual step that a reader can get wrong and
+a script has to reimplement. A verb that sets the environment and execs a
+command removes it, forwarding every argument it does not own so the client's
+own flags keep working unchanged.
+
+The verb should name what it does rather than what it launches — the naming rule
+holds here, and a launcher that only ever starts one program is a launcher that
+cannot start the next one. `env` stays: a launcher is a convenience over it, not
+a replacement for it.
+
+**Done when** a client started this way is indistinguishable from one started
+after `eval "$(codex-cc-proxy env)"`, unknown arguments reach the child
+untouched, and the child's exit status is the launcher's.
+
+**More than one upstream account.** One credential file means one account, and
+an account that has run out of quota stops all work rather than some of it.
+Credentials are already behind a trait and already carry the account id they
+belong to, so what is missing is naming, selection, and a store that holds
+several.
+
+Rotation was measured not to revoke the superseded token (§L), so a second
+account is not in danger from the first refreshing. Two clients sharing *one*
+account still are, which is the thing to keep out of the design.
+
+**Done when** logging in twice leaves two usable accounts rather than one, the
+account in use is stated by `status` and selectable without editing a file, and
+a refresh on one account provably leaves the other's grant intact.
+
+**Credentials that are not a subscription.** The proxy authenticates one way
+today: an OAuth grant against a consumer subscription. An API key is a different
+credential against a different endpoint with different billing, and supporting
+it makes the proxy useful to someone who has no subscription at all.
+
+This is the first real test of the adapter seam, which has been present and
+unused since v0.1. If the seam is wrong, this is where it shows.
+
+**Done when** a key-authenticated request completes end to end, the two
+credential kinds are selectable per tier or per account rather than globally,
+and no code path can send one kind of credential to the endpoint that expects
+the other.
+
+**Editing configuration without hand-writing TOML.** `tiers.set` is already
+reserved for this and already answers that it is unimplemented. The hard part is
+not writing the file: it is that configuration is read once at startup, so a
+written change and a running daemon disagree until the next `run`.
+
+**Done when** a change made through the interface is either applied to the
+running daemon or reported as pending with the reason, never written and left to
+look applied. An unreadable or invalid edit must leave the previous
+configuration in place.
+
+### v0.3.0
+
+**A graphical front-end.** The control socket was built for exactly this: the
+daemon holds authoritative state, the CLI has no privileged path of its own, and
+a second front-end needs no new daemon work. Whether that promise is true is
+unproven until something other than the CLI speaks the protocol.
+
+Which platforms, and whether it is native per platform or one cross-platform
+shell, is open. So is whether the method names survive contact with a second
+caller — they become a compatibility surface the moment one exists, and that is
+worth settling before it does rather than after.
+
+**Done when** every daemon capability is reachable without the CLI, and the
+socket needed no method that only the graphical client would ever call.
 
 ---
 
