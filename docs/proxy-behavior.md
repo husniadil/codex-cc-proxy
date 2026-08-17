@@ -630,8 +630,11 @@ Authentication uses OAuth with PKCE. The proxy operates its own client
 registration and owns its own refresh-token family.
 
 Credentials belonging to other tools are not imported. Refresh-token families
-rotate, so sharing one means whichever client refreshes last invalidates the
-other. One flow, one family, no ambiguity about which tool holds a valid session.
+rotate, and sharing one means two clients writing over each other's stored
+grant. A superseded token was measured still redeeming shortly after rotation,
+so this is about ownership rather than immediate breakage — but a client that
+does not hold the current token is one refresh away from holding nothing. One
+flow, one family, no ambiguity about which tool holds a valid session.
 
 Refresh requests send `grant_type`, `refresh_token`, and `client_id` — **never
 `scope`**. Including it causes the authorization server to re-scope the grant and
@@ -639,13 +642,16 @@ invalidate sibling refresh-token families. The body is JSON; the authorization
 code exchange that precedes it is form-encoded. They differ, and sending the
 wrong encoding is rejected.
 
-A token response carries no expiry field. The expiry is a claim inside the
-access token, and is read from there. Nothing verifies the signature, and
-nothing should: the token arrived over TLS from the server that issued it, and
-the proxy is reading its own credentials to learn when they lapse — not
-deciding whether to trust them. Where no expiry can be read the token counts as
-expired, because refreshing needlessly costs one request while using a dead
-token fails the turn.
+The expiry is a claim inside the access token, and is read from there. That is
+the figure the backend validates against, so it is the one that decides.
+Nothing verifies the signature, and nothing should: the token arrived over TLS
+from the server that issued it, and the proxy is reading its own credentials to
+learn when they lapse — not deciding whether to trust them.
+
+The token response also carries `expires_in`, which agrees with the claim. It is
+the fallback for an access token this proxy cannot read, and only that. Where
+neither can be read the token counts as expired, because refreshing needlessly
+costs one request while using a dead token fails the turn.
 
 The account id is likewise a claim, read from the id token and sent upstream as
 a header.

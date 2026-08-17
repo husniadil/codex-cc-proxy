@@ -36,12 +36,18 @@ struct TokenResponse {
     #[serde(default)]
     access_token: Option<String>,
     /// Refresh-token families rotate, so a response carrying a new one
-    /// replaces the old. Keeping the old one after rotation invalidates the
-    /// grant on its next use.
+    /// replaces the old. The superseded token was measured to keep working, so
+    /// this is not about avoiding a broken grant — it is that the new one
+    /// carries the current lifetime, and a family left to age out is one that
+    /// eventually cannot be renewed at all.
     #[serde(default)]
     refresh_token: Option<String>,
     #[serde(default)]
     id_token: Option<String>,
+    /// Seconds of remaining life, relative to receipt. Used only when the
+    /// access token itself carries no readable claim.
+    #[serde(default)]
+    expires_in: Option<u64>,
 }
 
 /// The refresh body. Three fields, and `scope` is not one of them.
@@ -214,10 +220,20 @@ impl TokenSource {
         let id_token = parsed.id_token.or(credentials.id_token);
 
         let updated = Credentials {
-            // The response carries no expiry field. It is a claim inside the
-            // access token itself, so it is read from there rather than
-            // invented — an absent expiry means every request refreshes.
-            expires_at: super::jwt::expiry(&access_token),
+            // The claim inside the access token first: it is what the backend
+            // validates against, so it is the expiry that decides. The
+            // response's own `expires_in` is the fallback for a token this
+            // proxy cannot read, and it matters — an absent expiry is treated
+            // as expired, so falling through to nothing would refresh on every
+            // single request.
+            //
+            // Measured, not assumed: a live refresh returns `expires_in`, and
+            // it agreed with the token's `exp` to within a second.
+            expires_at: super::jwt::expiry(&access_token).or_else(|| {
+                parsed
+                    .expires_in
+                    .map(|lifetime| self.clock.now_unix().saturating_add(lifetime))
+            }),
             account_id: super::jwt::account_id(id_token.as_deref()).or(credentials.account_id),
             access_token: access_token.clone(),
             // Rotation: a response carrying a new refresh token replaces the

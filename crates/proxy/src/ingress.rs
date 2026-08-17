@@ -182,6 +182,16 @@ async fn messages(
     };
     let mut translated = translate_request(&request, &options);
 
+    // Which tier a turn arrived on is otherwise invisible, and it is the only
+    // way to see that a secondary conversation — the client's own summarization
+    // and search-refinement calls — really did route to the cheap tier rather
+    // than the one the user is watching.
+    tracing::debug!(
+        requested = %request.model,
+        upstream = %translated.model,
+        "routing a turn"
+    );
+
     // What the conversation contained *before* this turn. The delta is computed
     // against this, and it has to be taken before the baseline moves.
     let baseline_before_turn = session

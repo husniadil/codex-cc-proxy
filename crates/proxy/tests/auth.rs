@@ -240,8 +240,8 @@ fn expired_store(dir: &tempfile::TempDir) -> Arc<FileStore> {
     Arc::new(store)
 }
 
-/// A refresh reply. The access token is a JWT because that is where the expiry
-/// lives — the response body has no expiry field of its own.
+/// A refresh reply. The access token is a JWT because the claim inside it is
+/// the expiry that decides; the body's own `expires_in` is only a fallback.
 fn fresh_token_response(exp: u64) -> String {
     serde_json::json!({
         "access_token": token_with(serde_json::json!({ "exp": exp })),
@@ -283,8 +283,11 @@ async fn a_refresh_never_sends_scope() {
     );
 }
 
-/// A rotated refresh token replaces the stored one. Keeping the old one after
-/// rotation invalidates the grant on its next use.
+/// A rotated refresh token replaces the stored one.
+///
+/// Not because the old one stops working — a superseded token was measured
+/// still redeeming successfully — but because the new one carries the current
+/// lifetime, and a family left to age out eventually cannot be renewed.
 #[tokio::test]
 async fn a_rotated_refresh_token_is_persisted() {
     let dir = tempfile::tempdir().unwrap();
@@ -306,10 +309,69 @@ async fn a_rotated_refresh_token_is_persisted() {
     assert_eq!(stored.expires_at, Some(5_600));
 }
 
+/// §8 — when the access token carries no readable claim, the response's own
+/// `expires_in` is used rather than nothing.
+///
+/// An absent expiry is treated as expired, so falling through to `None` makes
+/// every single request refresh: a rotation per turn against an authorization
+/// server that rate-limits them. The field is measured, not assumed — a live
+/// refresh returns `expires_in`, and it agrees with the token's `exp`.
+#[tokio::test]
+async fn an_opaque_access_token_takes_its_expiry_from_the_response() {
+    let dir = tempfile::tempdir().unwrap();
+    let body = serde_json::json!({
+        "access_token": "opaque-not-a-jwt",
+        "refresh_token": "new-refresh",
+        "expires_in": 864_000,
+    })
+    .to_string();
+    let server = AuthServer::start(200, &body, 0).await;
+    let store = expired_store(&dir);
+    let source = TokenSource::new(
+        Arc::clone(&store) as Arc<dyn CredentialStore>,
+        server.url.clone(),
+        "client-abc",
+        Arc::new(FixedClock(2_000)),
+    );
+
+    source.access_token().await.unwrap();
+
+    let stored = store.load().unwrap().unwrap();
+    assert_eq!(stored.expires_at, Some(866_000));
+}
+
+/// A claim inside the token wins over the response field when both are present.
+///
+/// They agreed to within a second when measured, but the token is what the
+/// backend validates, so it is the one that decides.
+#[tokio::test]
+async fn the_token_claim_outranks_the_response_field() {
+    let dir = tempfile::tempdir().unwrap();
+    let body = serde_json::json!({
+        "access_token": token_with(serde_json::json!({ "exp": 5_600 })),
+        "refresh_token": "new-refresh",
+        "expires_in": 99_999,
+    })
+    .to_string();
+    let server = AuthServer::start(200, &body, 0).await;
+    let store = expired_store(&dir);
+    let source = TokenSource::new(
+        Arc::clone(&store) as Arc<dyn CredentialStore>,
+        server.url.clone(),
+        "client-abc",
+        Arc::new(FixedClock(2_000)),
+    );
+
+    source.access_token().await.unwrap();
+
+    assert_eq!(store.load().unwrap().unwrap().expires_at, Some(5_600));
+}
+
 /// Concurrent callers collapse to one upstream refresh. Ten simultaneous turns
-/// must not produce ten refresh requests: the authorization server rotates the
-/// token on each, so the losers would be left holding tokens that are already
-/// invalid.
+/// must not produce ten refresh requests: each rotates the family and each is
+/// a request against an authorization server that rate-limits them, so nine of
+/// them are pure cost. The last writer also wins the store, so the other nine
+/// results are discarded even when every one of them succeeded.
 #[tokio::test]
 async fn concurrent_refreshes_collapse_to_one_request() {
     let dir = tempfile::tempdir().unwrap();
