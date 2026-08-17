@@ -112,6 +112,17 @@ reporting success is the same failure in miniature.
 `--probe <name>` runs one at a time, and naming an unknown one lists the
 known ones.
 
+The corpus resolves in one of three ways, and the matrix names which. `--fixtures
+<dir>` is answered from that directory and never from anywhere else — a
+recording just captured by `record` must be what a run against it sees, not a
+copy compiled in months earlier, so a named directory missing a fixture skips
+the probe rather than falling back. With no `--fixtures`, a `fixtures/`
+directory in the working directory wins if there is one, and otherwise the
+corpus compiled into the binary answers. That last case is the one an installed
+binary is in: `doctor` has to establish something on a first run, and a run that
+skipped all eight probes for want of a checkout would establish nothing at the
+moment it is most likely to be run.
+
 `usage` reports the account's quota as of the last turn. It costs nothing to
 ask: the backend opens every stream with a snapshot, before it says anything
 about the response, so the figure rides along with a turn already being made and

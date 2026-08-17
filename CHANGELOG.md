@@ -4,6 +4,24 @@ All notable changes to this project are recorded here. This project follows
 [semantic versioning](https://semver.org). The semver-bound surfaces are listed
 in [`docs/api.md`](docs/api.md) §6.
 
+## [Unreleased]
+
+### Fixed
+
+- **`doctor` works on an installed binary.** The fixture corpus was read from a
+  `fixtures/` directory relative to the working directory, which only a checkout
+  has — so the first command the README suggests skipped all eight probes and
+  established nothing. The corpus is now compiled into the binary and answers
+  when there is no directory. A directory named with `--fixtures` is still the
+  only thing that answers for it, so a fresh `record` capture is never shadowed
+  by the compiled-in copy, and the matrix names which corpus it read.
+
+### Added
+
+- **Install instructions**, with the checksum step, and `cargo install --git`.
+  The absent package-manager routes — tap, container image, install script — are
+  named as absent rather than left to be discovered.
+
 ## [0.1.0]
 
 First release.

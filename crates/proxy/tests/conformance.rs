@@ -9,6 +9,7 @@
 
 mod replay;
 
+use codex_cc_proxy::doctor::Corpus;
 use codex_cc_proxy::probe;
 use codex_cc_proxy::probe::Outcome;
 use codex_cc_proxy::probe::Status;
@@ -24,7 +25,7 @@ fn corpus() -> PathBuf {
 /// Run one probe through `doctor`, which is the path that ships. A test harness
 /// that reimplements the runner proves the harness works, not the tool.
 async fn run_via_doctor(name: &str) -> Outcome {
-    codex_cc_proxy::doctor::run(&corpus(), Some(name))
+    codex_cc_proxy::doctor::run(&Corpus::Dir(corpus()), Some(name))
         .await
         .expect("the probe should be known")
         .into_iter()
@@ -35,7 +36,7 @@ async fn run_via_doctor(name: &str) -> Outcome {
 /// Every probe passes against the corpus.
 #[tokio::test]
 async fn every_probe_passes_against_the_replay_corpus() {
-    let outcomes = codex_cc_proxy::doctor::run(&corpus(), None)
+    let outcomes = codex_cc_proxy::doctor::run(&Corpus::Dir(corpus()), None)
         .await
         .expect("the suite should run");
 
@@ -73,7 +74,7 @@ async fn each_probe_runs_on_its_own() {
 /// Asking for a probe that does not exist names the ones that do.
 #[tokio::test]
 async fn an_unknown_probe_lists_the_known_ones() {
-    let error = codex_cc_proxy::doctor::run(&corpus(), Some("not-a-probe"))
+    let error = codex_cc_proxy::doctor::run(&Corpus::Dir(corpus()), Some("not-a-probe"))
         .await
         .expect_err("an unknown probe should fail");
 
@@ -87,7 +88,7 @@ async fn an_unknown_probe_lists_the_known_ones() {
 async fn a_probe_that_cannot_run_reports_honestly() {
     let empty = tempfile::tempdir().unwrap();
 
-    let outcomes = codex_cc_proxy::doctor::run(empty.path(), None)
+    let outcomes = codex_cc_proxy::doctor::run(&Corpus::Dir(empty.path().to_path_buf()), None)
         .await
         .expect("the suite should still run");
 
@@ -105,6 +106,60 @@ async fn a_probe_that_cannot_run_reports_honestly() {
     // And a skip is never counted as a pass.
     let rendered = probe::matrix(&outcomes, "an empty corpus");
     assert!(rendered.contains("0 passed"), "{rendered}");
+}
+
+/// The corpus travels with the binary. An installed `codex-cc-proxy` has no
+/// checkout to read `fixtures/` out of, and a `doctor` that skips every probe
+/// there is a first run that establishes nothing.
+#[tokio::test]
+async fn every_probe_passes_against_the_embedded_corpus() {
+    let outcomes = codex_cc_proxy::doctor::run(&Corpus::Embedded, None)
+        .await
+        .expect("the suite should run with no directory at all");
+
+    assert_eq!(outcomes.len(), probe::all().len());
+    for outcome in &outcomes {
+        assert_eq!(outcome.status, Status::Passed, "{} failed", outcome.name);
+    }
+}
+
+/// The embedded copy is compiled from the files, so it cannot go stale — but a
+/// fixture added to the directory and not to the list would be missing from
+/// every installed binary while the checkout's own runs stayed green.
+#[test]
+fn the_embedded_corpus_holds_every_fixture_on_disk() {
+    let mut on_disk: Vec<String> = std::fs::read_dir(corpus())
+        .expect("the corpus directory")
+        .filter_map(|entry| {
+            let path = entry.ok()?.path();
+            (path.extension()? == "json")
+                .then(|| path.file_stem()?.to_str().map(str::to_owned))
+                .flatten()
+        })
+        .collect();
+    on_disk.sort();
+
+    let mut embedded: Vec<String> = Corpus::embedded_names()
+        .iter()
+        .map(|name| (*name).to_owned())
+        .collect();
+    embedded.sort();
+
+    assert_eq!(embedded, on_disk);
+}
+
+/// Resolution is explicit-first: a directory the operator named is the one that
+/// answers, and it is never quietly substituted for the embedded copy. A
+/// `--fixtures` that points somewhere empty must still skip, or `record` output
+/// could be shadowed by a recording compiled in months earlier.
+#[test]
+fn a_named_directory_is_never_substituted() {
+    let empty = tempfile::tempdir().unwrap();
+
+    assert!(matches!(
+        Corpus::resolve(Some(empty.path().to_path_buf())),
+        Corpus::Dir(_)
+    ));
 }
 
 /// The probes must be able to fail. A check that passes against a proxy which
@@ -227,7 +282,9 @@ fn every_marker_is_absent_from_the_rest_of_the_corpus() {
 /// output §9.3 exists to prevent.
 #[tokio::test]
 async fn the_matrix_states_its_evidence() {
-    let outcomes = codex_cc_proxy::doctor::run(&corpus(), None).await.unwrap();
+    let outcomes = codex_cc_proxy::doctor::run(&Corpus::Dir(corpus()), None)
+        .await
+        .unwrap();
     let rendered = probe::matrix(&outcomes, codex_cc_proxy::doctor::AGAINST_REPLAY);
 
     assert!(
@@ -258,7 +315,7 @@ async fn a_live_run_uses_the_transport_and_labels_itself() {
     ));
 
     let outcomes = codex_cc_proxy::doctor::run_live(
-        &corpus(),
+        &Corpus::Dir(corpus()),
         Some("tool-calling"),
         transport,
         std::sync::Arc::new(vec![codex_cc_proxy::ingress::ModelMapping {
@@ -301,7 +358,7 @@ async fn a_live_run_honours_the_configured_effort_ceiling() {
     ));
 
     codex_cc_proxy::doctor::run_live(
-        &corpus(),
+        &Corpus::Dir(corpus()),
         Some("tool-calling"),
         transport,
         std::sync::Arc::new(vec![codex_cc_proxy::ingress::ModelMapping {

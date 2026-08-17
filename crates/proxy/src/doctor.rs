@@ -17,12 +17,113 @@ use codex_cc_proxy_core::fixture::Fixture;
 use codex_cc_proxy_core::responses::ResponsesRequest;
 use futures::StreamExt;
 use serde_json::Value;
-use std::path::Path;
 use std::sync::Arc;
 use std::sync::Mutex;
 
 /// What the probes ran against, in words the matrix prints verbatim.
 pub const AGAINST_REPLAY: &str = "replayed fixtures (the backend was not contacted)";
+
+/// The corpus compiled into the binary, one entry per fixture.
+///
+/// `include_str!` rather than a build script, so the compiler tracks the files
+/// and a re-recorded fixture cannot leave a stale copy behind. What it does not
+/// track is a *new* file; `the_embedded_corpus_holds_every_fixture_on_disk`
+/// covers that.
+const EMBEDDED: &[(&str, &str)] = &[
+    (
+        "context-meter",
+        include_str!("../../../fixtures/context-meter.json"),
+    ),
+    (
+        "count-tokens",
+        include_str!("../../../fixtures/count-tokens.json"),
+    ),
+    (
+        "read-document",
+        include_str!("../../../fixtures/read-document.json"),
+    ),
+    (
+        "read-image",
+        include_str!("../../../fixtures/read-image.json"),
+    ),
+    (
+        "tool-calling",
+        include_str!("../../../fixtures/tool-calling.json"),
+    ),
+    (
+        "tool-search",
+        include_str!("../../../fixtures/tool-search.json"),
+    ),
+    (
+        "web-fetch",
+        include_str!("../../../fixtures/web-fetch.json"),
+    ),
+    (
+        "web-search",
+        include_str!("../../../fixtures/web-search.json"),
+    ),
+];
+
+/// Where a probe's fixture is read from.
+///
+/// An installed binary has no checkout to read `fixtures/` out of, and a first
+/// `doctor` that skipped every probe would establish nothing at the one moment
+/// it is most likely to be run. So the corpus travels with the binary — but a
+/// directory the operator named is never substituted for it, because a
+/// recording just captured by `record` must be what answers.
+pub enum Corpus {
+    /// A directory: `--fixtures`, or the checkout's own.
+    Dir(std::path::PathBuf),
+    /// The copy compiled in. Reads nothing.
+    Embedded,
+}
+
+impl Corpus {
+    /// `--fixtures` when the operator gave one; otherwise the checkout's
+    /// directory when it is there, and the embedded copy when it is not.
+    pub fn resolve(explicit: Option<std::path::PathBuf>) -> Self {
+        match explicit {
+            Some(path) => Self::Dir(path),
+            None => {
+                let default = std::path::PathBuf::from("fixtures");
+                if default.is_dir() {
+                    Self::Dir(default)
+                } else {
+                    Self::Embedded
+                }
+            }
+        }
+    }
+
+    /// The fixtures compiled in, by name. For the drift check.
+    pub fn embedded_names() -> Vec<&'static str> {
+        EMBEDDED.iter().map(|(name, _)| *name).collect()
+    }
+
+    /// The corpus in one phrase, for the line under the matrix.
+    pub fn describe(&self) -> String {
+        match self {
+            Self::Dir(path) => path.display().to_string(),
+            Self::Embedded => "the corpus compiled into this binary".to_owned(),
+        }
+    }
+
+    /// A fixture's text, or the reason the probe has to be skipped.
+    fn read(&self, name: &str) -> Result<String, String> {
+        match self {
+            Self::Dir(dir) => {
+                let path = dir.join(format!("{name}.json"));
+                std::fs::read_to_string(&path)
+                    .map_err(|_| format!("no fixture at {}", path.display()))
+            }
+            Self::Embedded => EMBEDDED
+                .iter()
+                .find(|(fixture, _)| *fixture == name)
+                .map(|(_, body)| (*body).to_owned())
+                .ok_or_else(|| format!("no fixture named {name} is compiled in")),
+        }
+    }
+}
 
 /// The live counterpart. It spends quota, and the matrix says so.
 pub const AGAINST_LIVE: &str = "a live backend (the backend answered, and was billed)";
@@ -85,7 +186,7 @@ enum Backend {
 }
 
 /// Run the probe suite against the fixture corpus.
-pub async fn run(fixtures: &Path, only: Option<&str>) -> Result<Vec<Outcome>, ProxyError> {
+pub async fn run(fixtures: &Corpus, only: Option<&str>) -> Result<Vec<Outcome>, ProxyError> {
     run_against(fixtures, only, Backend::Replay).await
 }
 
@@ -100,7 +201,7 @@ pub async fn run(fixtures: &Path, only: Option<&str>) -> Result<Vec<Outcome>, Pr
 /// reason it is applied to a turn: this is the one command that bills by
 /// design, so it is the last place a configured cap should be quietly ignored.
 pub async fn run_live(
-    fixtures: &Path,
+    fixtures: &Corpus,
     only: Option<&str>,
     transport: Arc<dyn Transport>,
     models: Arc<Vec<ModelMapping>>,
@@ -119,7 +220,7 @@ pub async fn run_live(
 }
 
 async fn run_against(
-    fixtures: &Path,
+    fixtures: &Corpus,
     only: Option<&str>,
     backend: Backend,
 ) -> Result<Vec<Outcome>, ProxyError> {
@@ -132,14 +233,16 @@ async fn run_against(
             continue;
         }
 
-        let path = fixtures.join(format!("{}.json", probe.fixture));
-        let Ok(raw) = std::fs::read_to_string(&path) else {
-            outcomes.push(Outcome {
-                name: probe.name.to_owned(),
-                capability: probe.capability,
-                status: Status::Skipped(format!("no fixture at {}", path.display())),
-            });
-            continue;
+        let raw = match fixtures.read(probe.fixture) {
+            Ok(raw) => raw,
+            Err(reason) => {
+                outcomes.push(Outcome {
+                    name: probe.name.to_owned(),
+                    capability: probe.capability,
+                    status: Status::Skipped(reason),
+                });
+                continue;
+            }
         };
 
         let fixture: Fixture = match serde_json::from_str(&raw) {

@@ -106,9 +106,7 @@ fn live_models() -> Result<Arc<Vec<ModelMapping>>> {
 
 /// Probe the capabilities, and say what the answer rests on.
 async fn doctor(args: cli::DoctorArgs) -> Result<()> {
-    let fixtures = args
-        .fixtures
-        .unwrap_or_else(|| std::path::PathBuf::from("fixtures"));
+    let fixtures = codex_cc_proxy::doctor::Corpus::resolve(args.fixtures);
 
     let (outcomes, against) = if args.live {
         (
@@ -120,16 +118,23 @@ async fn doctor(args: cli::DoctorArgs) -> Result<()> {
                 Config::load()?.effort_ceiling()?,
             )
             .await?,
-            codex_cc_proxy::doctor::AGAINST_LIVE,
+            codex_cc_proxy::doctor::AGAINST_LIVE.to_owned(),
         )
     } else {
         (
             codex_cc_proxy::doctor::run(&fixtures, args.probe.as_deref()).await?,
-            codex_cc_proxy::doctor::AGAINST_REPLAY,
+            // Which corpus answered is part of what the run establishes: a
+            // directory can hold a recording made minutes ago, the embedded
+            // copy is whatever this binary was built from.
+            format!(
+                "{} — {}",
+                codex_cc_proxy::doctor::AGAINST_REPLAY,
+                fixtures.describe()
+            ),
         )
     };
 
-    println!("{}", codex_cc_proxy::probe::matrix(&outcomes, against));
+    println!("{}", codex_cc_proxy::probe::matrix(&outcomes, &against));
 
     let failed = outcomes
         .iter()

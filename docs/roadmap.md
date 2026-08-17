@@ -228,6 +228,19 @@ container image; an install script. `README`, `CONTRIBUTING`, `SECURITY`,
 setup instructions are followed end to end against the replay server, and the
 documented limitations match what the code actually does.
 
+**Shipped:** five binaries per tag with a checksum file covering all of them,
+and `cargo install --git`. **Not shipped:** the tap, the container image, and
+the install script, which are named here rather than quietly dropped — the
+README says the same, because a missing package is better stated than
+discovered.
+
+Following the README's own instructions is what found the last defect in this
+phase: an installed binary's `doctor` skipped all eight probes, because the
+corpus was read from a `fixtures/` directory that only a checkout has. The
+corpus now travels inside the binary. The lesson generalizes past this bug — every
+acceptance check here had been run from a checkout, which is the one environment
+no user of a release is in.
+
 ---
 
 ## After v0.1.0
