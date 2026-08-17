@@ -1143,6 +1143,12 @@ async fn the_effort_ceiling_can_be_raised_without_a_restart() {
         harness.policy.get().effort_ceiling,
         Some(codex_cc_proxy_core::responses::Effort::High)
     );
+    // And `status` says so. A capped turn succeeds, so without this nothing
+    // anywhere would ever mention that every request is being capped.
+    assert_eq!(
+        harness.call("status").await.unwrap()["effort_ceiling"],
+        json!("high")
+    );
 }
 
 /// And removed entirely, which is not the same as setting it to the highest
@@ -1162,6 +1168,12 @@ async fn the_effort_ceiling_can_be_removed() {
 
     assert_eq!(result["effort"], Value::Null);
     assert_eq!(harness.policy.get().effort_ceiling, None);
+    // Null, not the highest value the catalog lists: with no ceiling the only
+    // cap left is the model's own.
+    assert_eq!(
+        harness.call("status").await.unwrap()["effort_ceiling"],
+        Value::Null
+    );
 }
 
 /// The login flow, end to end short of the browser.

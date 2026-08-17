@@ -141,6 +141,15 @@ fn status(state: &ControlState) -> Value {
         "base_url": format!("http://127.0.0.1:{}", state.port),
         "auth": authenticated,
         "tiers": tier_map(state),
+        // The ceiling, because a capped turn SUCCEEDS. It is simply shallower
+        // than it was asked to be, and nothing else anywhere would ever mention
+        // that every request a front-end makes is being capped. Null means no
+        // ceiling, which is not the same as a ceiling at the highest value.
+        "effort_ceiling": state
+            .policy
+            .get()
+            .effort_ceiling
+            .and_then(|effort| serde_json::to_value(effort).ok()),
         // Mapped models the catalog knows but withholds. These pass validation,
         // so without this nothing would ever mention that a tier points at a
         // model the backend does not offer. Present and empty rather than
