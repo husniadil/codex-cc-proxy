@@ -72,6 +72,7 @@ codex-cc-proxy models     available models
 codex-cc-proxy env        environment for Claude Code
 codex-cc-proxy doctor     probe live backend capabilities
 codex-cc-proxy usage      what quota is left
+codex-cc-proxy statusline wrap a status-line script, adding that quota
 codex-cc-proxy record     capture exchanges as fixtures
 ```
 
@@ -117,14 +118,46 @@ about the response, so the figure rides along with a turn already being made and
 is never polled. Before any turn has been made it says so rather than answering
 with zeroes. `--json` emits the snapshot as it stands, for a status line.
 
-The same snapshot is put on the response as `anthropic-ratelimit-unified-*`
-headers, which is where this client reads a quota from — so the built-in status
-line shows it with no script at all. **Only where a window genuinely matches.**
-Those headers name two fixed windows, five hours and seven days, and the
-backend's windows are not fixed: it has reported a five-hour window in the past,
-does not currently, and may again. Windows are matched to header slots by
-duration, and one matching neither is reported by `usage` — where it can state
-its real length — rather than announced as a window it is not.
+The same snapshot is also put on the response as `anthropic-ratelimit-unified-*`
+headers, which are the names this client's own code parses a quota from.
+**Measured: that is not enough to make it appear in the status line.** A stub
+endpoint setting those headers, with nothing else changed, left `rate_limits`
+absent from the status-line payload — the client appears to track a subscription
+quota only for its own account, and a proxy is not one. They are emitted because
+they are the accurate wire form of a figure the response really carries, not
+because anything is known to read them here.
+
+### 2.1 `statusline`
+
+The status line is a script the user supplies, and the client hands it a JSON
+payload on stdin. `statusline` wraps that script: it reads the payload, merges
+in the quota, and passes it on. A script written against the client's own shape
+keeps working unchanged and gains a figure it could not otherwise have.
+
+```json
+{ "statusLine": { "type": "command",
+                  "command": "codex-cc-proxy statusline -- ~/.claude/my-statusline.sh" } }
+```
+
+The merged payload gains `rate_limits.five_hour` and `rate_limits.seven_day`
+where a window genuinely is one of those, in the fields a script already reads —
+plus `rate_limits.windows`, which carries every window the backend reported with
+its real length. A script wanting a window the client has no name for reads that.
+
+Omit the command to print the merged payload instead, for a script that would
+rather pipe it. The wrapped command's exit status becomes this command's.
+
+**It never breaks the status line.** A daemon that is not running, a socket that
+does not answer, a payload that will not parse: each passes through unchanged. A
+status line renders constantly, and one that breaks is worse than one missing a
+figure.
+
+Where headers do apply, only a window that genuinely matches one gets one. Those
+headers name two fixed windows, five hours and seven days, and the backend's
+windows are not fixed: it has reported a five-hour window in the past, does not
+currently, and may again. Windows are matched to header slots by duration, and
+one matching neither is reported by `usage` — where it can state its real length
+— rather than announced as a window it is not.
 
 `record` has two modes, and the distinction matters because only one of them
 costs anything:
@@ -152,7 +185,7 @@ messages, and whatever the tools read.
 
 Logging is controlled by `RUST_LOG`. Credentials never appear at any level.
 
-### 2.1 `env`
+### 2.2 `env`
 
 Emits the configuration Claude Code needs, as shell exports or as a settings
 fragment:
@@ -194,7 +227,7 @@ A Unix domain socket, or a named pipe on Windows, carrying JSON-RPC:
 | `models` | catalog, and whether it is the fallback list | yes |
 | `tiers.get` | tier mapping | yes |
 | `usage` | quota snapshot as of the last turn, or that no turn has been made | yes |
-| `env` | the §2.1 block | yes |
+| `env` | the §2.2 block | yes |
 | `record.start` / `record.stop` | fixture capture | yes — `{"mode": "ingress"}` by default, `"upstream"` must be named because it bills every turn that follows |
 | `login` | authorization URL, then completion | no — `login` runs in the CLI, which owns the callback port |
 | `tiers.set` | tier mapping | no — edit the configuration file |

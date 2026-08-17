@@ -27,6 +27,8 @@ pub enum Command {
     Doctor(DoctorArgs),
     /// What quota is left, as of the last turn.
     Usage(UsageArgs),
+    /// Wrap a status-line script, adding the quota the client cannot supply.
+    Statusline(StatuslineArgs),
     /// Capture exchanges as fixtures.
     Record(RecordArgs),
 }
@@ -66,6 +68,17 @@ pub struct UsageArgs {
     /// Emit the raw snapshot, for a status line or a script.
     #[arg(long)]
     pub json: bool,
+}
+
+#[derive(Debug, clap::Args)]
+pub struct StatuslineArgs {
+    /// The status-line command to run, after `--`.
+    ///
+    /// Its stdin is the client's payload with the quota merged in, and its
+    /// output is passed through untouched. Omit it to print the merged payload
+    /// instead, which is what a script that would rather pipe it wants.
+    #[arg(last = true)]
+    pub command: Vec<String>,
 }
 
 #[derive(Debug, clap::Args)]

@@ -16,6 +16,10 @@ in [`docs/api.md`](docs/api.md) §6.
 - **`[instructions]`** puts operator text around the client's system prompt: a
   lead naming the model that is actually answering, on by default, and an
   optional trailer placed where an instruction outranks the prompt above it.
+- **`usage`** reports the quota the backend volunteers at the start of every
+  stream — free, never polled, and absent rather than zero before a turn.
+- **`statusline`** wraps an existing status-line script and merges that quota
+  into the payload it already reads, so the script keeps working as written.
 
 ### Fixed
 

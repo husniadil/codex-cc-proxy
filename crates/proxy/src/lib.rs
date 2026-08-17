@@ -18,5 +18,6 @@ pub mod probe;
 pub mod recorder;
 pub mod render;
 pub mod session;
+pub mod statusline;
 pub mod upstream;
 pub mod usage;
