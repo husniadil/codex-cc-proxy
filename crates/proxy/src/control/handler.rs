@@ -186,13 +186,35 @@ fn tier_map(state: &ControlState) -> Value {
 /// that is said rather than answered with zeroes — an invented quota figure
 /// reads as headroom that may not be there.
 fn usage(state: &ControlState) -> Value {
-    match state.usage.latest() {
+    let mut answer = match state.usage.latest() {
         Some(snapshot) => snapshot.to_json(),
         None => json!({
             "known": false,
             "detail": "the backend reports quota when a turn is made; none has been made yet",
         }),
+    };
+
+    // Which sessions this quota belongs to. A status line is configured once and
+    // renders for every session the client runs, including sessions pointed
+    // somewhere else entirely; without this it would paint one account's quota
+    // over another's. Reported whether or not a quota is known, because the
+    // question is about who is asking rather than about the answer.
+    //
+    // The configured tiers and the ids turns were actually made against: a
+    // client that names a model itself passes it straight through, so the tiers
+    // alone would not recognize its own session.
+    let mut served: Vec<String> = state
+        .tiers
+        .iter()
+        .map(|tier| tier.model.clone())
+        .chain(state.usage.served())
+        .collect();
+    served.sort_unstable();
+    served.dedup();
+    if let Some(object) = answer.as_object_mut() {
+        object.insert("models".to_owned(), json!(served));
     }
+    answer
 }
 
 /// `docs/api.md` §2.1 — the environment Claude Code needs.

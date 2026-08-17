@@ -170,6 +170,21 @@ does not answer, a payload that will not parse: each passes through unchanged. A
 status line renders constantly, and one that breaks is worse than one missing a
 figure.
 
+**And it never merges another session's quota.** A status line is configured
+once and renders for every session the client runs, including sessions pointed
+at their own provider rather than at this proxy — and the daemon answers `usage`
+whenever it is up. So the merge is conditional on the model: `usage` reports
+the ids this daemon serves, and a payload naming something else is passed
+through untouched. That is what makes the wrapper safe to leave configured
+permanently while switching back and forth.
+
+The ids are the configured tiers plus every id a turn has actually been made
+against, because a client that names a model itself passes that id straight
+through and no tier would recognize it. **An unanswerable question merges**: a
+snapshot that names no models, or a payload that names none, leaves nothing to
+compare, and withholding the figure there would take it from every session that
+has it today to prevent a case that may not be happening.
+
 Where headers do apply, only a window that genuinely matches one gets one. Those
 headers name two fixed windows, five hours and seven days, and the backend's
 windows are not fixed: it has reported a five-hour window in the past, does not
@@ -244,7 +259,7 @@ A Unix domain socket, or a named pipe on Windows, carrying JSON-RPC:
 | `disconnect` | clears credentials | yes |
 | `models` | catalog, and whether it is the fallback list | yes |
 | `tiers.get` | tier mapping | yes |
-| `usage` | quota snapshot as of the last turn, or that no turn has been made | yes |
+| `usage` | quota snapshot as of the last turn, or that no turn has been made, plus `models` — the ids this daemon serves | yes |
 | `env` | the §2.2 block | yes |
 | `record.start` / `record.stop` | fixture capture | yes — `{"mode": "ingress"}` by default, `"upstream"` must be named because it bills every turn that follows |
 | `login` | authorization URL, then completion | no — `login` runs in the CLI, which owns the callback port |

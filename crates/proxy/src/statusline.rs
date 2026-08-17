@@ -29,6 +29,30 @@ fn matches(window_minutes: u64, nominal: u64) -> bool {
     (actual - nominal).abs() <= nominal * TOLERANCE
 }
 
+/// Whether this session's quota is the one the snapshot describes.
+///
+/// A status line is configured once and renders for every session the client
+/// runs, including sessions pointed at their own provider rather than at this
+/// proxy. The daemon answers `usage` whenever it is up, so a merge that asked
+/// nothing would paint one account's quota over another's — wrong in the
+/// direction that reads as headroom.
+///
+/// The question is answered by the model: the snapshot names the ids this
+/// daemon serves, and a payload naming something else belongs to a session this
+/// daemon knows nothing about. **An unanswerable question merges.** A snapshot
+/// that names no models or a payload that names none leaves nothing to compare,
+/// and withholding the figure there would take it from every session that has
+/// it today to prevent a case that may not be happening.
+fn serves(usage: &Value, payload: &Value) -> bool {
+    let Some(served) = usage.get("models").and_then(Value::as_array) else {
+        return true;
+    };
+    let Some(model) = payload.pointer("/model/id").and_then(Value::as_str) else {
+        return true;
+    };
+    served.iter().any(|id| id.as_str() == Some(model))
+}
+
 /// Merge a quota snapshot into the payload a status line receives.
 ///
 /// `usage` is the control socket's answer. Anything unrecognizable leaves the
@@ -42,6 +66,9 @@ pub fn merge(mut payload: Value, usage: &Value) -> Value {
     let Some(windows) = usage.get("windows").and_then(Value::as_array) else {
         return payload;
     };
+    if !serves(usage, &payload) {
+        return payload;
+    }
     let Some(object) = payload.as_object_mut() else {
         return payload;
     };

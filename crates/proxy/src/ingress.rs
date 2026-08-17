@@ -224,6 +224,10 @@ async fn messages(
         "routing a turn"
     );
 
+    // The id the *client* asked for, not the one it maps to: a status line reads
+    // the client's own id, so that is the only one it can be recognized by.
+    state.usage.record_model(&request.model);
+
     // What the conversation contained *before* this turn. The delta is computed
     // against this, and it has to be taken before the baseline moves.
     let baseline_before_turn = session

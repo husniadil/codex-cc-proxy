@@ -25,6 +25,8 @@ struct Harness {
     /// The same switches the control socket holds, so a test can turn capture
     /// on the way `record.start` does.
     switches: Arc<codex_cc_proxy::recorder::Switches>,
+    /// The same store the control socket answers `usage` from.
+    usage: Arc<codex_cc_proxy::usage::UsageStore>,
 }
 
 impl Harness {
@@ -64,6 +66,7 @@ impl Harness {
     ) -> Self {
         let upstream = ReplayServer::start(behavior).await;
         let switches = Arc::new(codex_cc_proxy::recorder::Switches::new(mode));
+        let usage = Arc::new(codex_cc_proxy::usage::UsageStore::default());
 
         let state = AppState {
             effort_ceiling: None,
@@ -76,7 +79,7 @@ impl Harness {
             }]),
             recorder: recorder.clone(),
             capture: Arc::clone(&switches),
-            usage: Arc::new(codex_cc_proxy::usage::UsageStore::default()),
+            usage: Arc::clone(&usage),
             instructions: Arc::new(codex_cc_proxy::config::InstructionsConfig {
                 identity: false,
                 append: None,
@@ -96,6 +99,7 @@ impl Harness {
             upstream,
             client: reqwest::Client::new(),
             switches,
+            usage,
         }
     }
 
@@ -133,6 +137,38 @@ fn completed() -> Value {
             },
         },
     })
+}
+
+/// A turn makes the model it was asked for recognizable afterwards.
+///
+/// The configured tiers name what this daemon is set up to serve, but a client
+/// can name a model itself and that id passes straight through — so a status
+/// line asking "is this session mine" would not recognize its own. Asserted on
+/// the store the control socket answers from, not on a flag: a switch that is
+/// set and read by nothing is the failure this project has shipped before.
+#[tokio::test]
+async fn a_turn_makes_its_model_recognizable() {
+    let harness = Harness::start(Behavior::Events(vec![
+        json!({ "type": "response.created", "response": { "id": "resp_1" } }),
+        completed(),
+    ]))
+    .await;
+
+    assert!(harness.usage.served().is_empty());
+
+    harness
+        .post(
+            "/v1/messages",
+            json!({
+                // Not one of the mapped tiers — an id the client chose.
+                "model": "gpt-5.6-luna",
+                "max_tokens": 512,
+                "messages": [{ "role": "user", "content": "hi" }],
+            }),
+        )
+        .await;
+
+    assert_eq!(harness.usage.served(), vec!["gpt-5.6-luna".to_owned()]);
 }
 
 #[tokio::test]

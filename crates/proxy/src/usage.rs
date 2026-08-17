@@ -165,6 +165,13 @@ fn parse_window(value: &Value) -> Option<Window> {
 #[derive(Debug, Default)]
 pub struct UsageStore {
     latest: Mutex<Option<Snapshot>>,
+    /// Every model id a turn has actually been made against.
+    ///
+    /// The configured tiers are the ids this daemon is *set up* to serve; an id
+    /// the client sent itself passes straight through and is never one of them.
+    /// Both are needed to answer "is this session mine" for a status line, and
+    /// only a turn can report the second kind.
+    served: Mutex<std::collections::BTreeSet<String>>,
 }
 
 impl UsageStore {
@@ -176,5 +183,20 @@ impl UsageStore {
 
     pub fn latest(&self) -> Option<Snapshot> {
         self.latest.lock().ok().and_then(|latest| latest.clone())
+    }
+
+    pub fn record_model(&self, model: &str) {
+        if let Ok(mut served) = self.served.lock()
+            && !served.contains(model)
+        {
+            served.insert(model.to_owned());
+        }
+    }
+
+    pub fn served(&self) -> Vec<String> {
+        self.served
+            .lock()
+            .map(|served| served.iter().cloned().collect())
+            .unwrap_or_default()
     }
 }

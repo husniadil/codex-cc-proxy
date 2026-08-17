@@ -442,6 +442,30 @@ async fn unseen_quota_reports_unknown_rather_than_zero() {
     assert!(usage.get("used_percent").is_none());
 }
 
+/// `usage` names the models this daemon serves.
+///
+/// That is what lets a globally-configured status line tell a session running
+/// through this proxy from one running against its own provider. Reported
+/// whether or not a quota has been seen, because the question is about which
+/// session is asking rather than about the answer.
+#[tokio::test]
+async fn usage_names_the_models_this_daemon_serves() {
+    let harness = Harness::start().await;
+
+    let usage = harness.call("usage").await.unwrap();
+    let served: Vec<&str> = usage["models"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|model| model.as_str().unwrap())
+        .collect();
+
+    assert!(served.contains(&"gpt-5.6-terra"));
+    assert!(served.contains(&"gpt-5.4-mini"));
+    // Each id once, however many tiers map to it.
+    assert_eq!(served.len(), 2);
+}
+
 /// Starting a capture over the socket changes what the daemon captures.
 ///
 /// Asserted on the switches the ingress path actually reads, not only on what

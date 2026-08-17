@@ -4,6 +4,20 @@ All notable changes to this project are recorded here. This project follows
 [semantic versioning](https://semver.org). The semver-bound surfaces are listed
 in [`docs/api.md`](docs/api.md) §6.
 
+## [Unreleased]
+
+### Fixed
+
+- **A status line showed this account's quota to a session that was not using
+  it.** The wrapper is configured once and renders for every session the client
+  runs, including ones pointed at their own provider, and the daemon answers
+  `usage` whenever it is up — so switching back and forth painted one account's
+  quota over another's, in the direction that reads as headroom. The merge now
+  asks whether the session's model is one this daemon serves, and passes the
+  payload through untouched when it is not. `usage` reports those ids: the
+  configured tiers plus every id a turn was actually made against, since a
+  client that names its own model bypasses the tiers entirely.
+
 ## [0.1.2]
 
 A cost fix on the HTTP transport, and an install script.

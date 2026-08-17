@@ -122,6 +122,71 @@ fn a_payload_that_is_not_an_object_is_untouched() {
     );
 }
 
+/// A session that did not come through the proxy keeps its own quota.
+///
+/// The status line is configured once, globally, and renders for every session
+/// the client runs — including ones pointed at their own provider. The daemon
+/// answers `usage` whenever it is up, so without this the quota of one account
+/// would be painted over a session belonging to another. The figure would be
+/// wrong in the direction that reads as headroom.
+#[test]
+fn a_model_the_proxy_does_not_serve_is_left_alone() {
+    let mut input = payload();
+    input["model"] = json!({ "id": "claude-opus-5", "display_name": "Opus" });
+    let before = input.clone();
+
+    let mut snapshot = usage(json!([{ "used_percent": 42.0, "window_minutes": 300 }]));
+    snapshot["models"] = json!(["gpt-5.6-luna", "gpt-5.6-terra"]);
+
+    assert_eq!(merge(input, &snapshot), before);
+}
+
+/// And one that did is merged as before.
+#[test]
+fn a_model_the_proxy_serves_is_merged() {
+    let mut input = payload();
+    input["model"] = json!({ "id": "gpt-5.6-luna", "display_name": "gpt-5.6-luna" });
+
+    let mut snapshot = usage(json!([{ "used_percent": 42.0, "window_minutes": 300 }]));
+    snapshot["models"] = json!(["gpt-5.6-luna", "gpt-5.6-terra"]);
+
+    assert_eq!(
+        merge(input, &snapshot)["rate_limits"]["five_hour"]["used_percentage"],
+        json!(42.0)
+    );
+}
+
+/// With nothing to tell the two apart, the quota is still merged.
+///
+/// A daemon too old to report which models it serves, or a payload that names
+/// no model, leaves the question unanswerable. Suppressing on an unanswered
+/// question would take the figure away from every session that has it today, to
+/// prevent a case that may not be occurring.
+#[test]
+fn an_unanswerable_question_merges_as_before() {
+    let mut named = payload();
+    named["model"] = json!({ "id": "claude-opus-5" });
+
+    // No `models` in the snapshot — nothing to compare against.
+    let merged = merge(
+        named,
+        &usage(json!([{ "used_percent": 42.0, "window_minutes": 300 }])),
+    );
+    assert_eq!(
+        merged["rate_limits"]["five_hour"]["used_percentage"],
+        json!(42.0)
+    );
+
+    // A snapshot that names models, against a payload that names none.
+    let mut snapshot = usage(json!([{ "used_percent": 42.0, "window_minutes": 300 }]));
+    snapshot["models"] = json!(["gpt-5.6-luna"]);
+    let merged = merge(payload(), &snapshot);
+    assert_eq!(
+        merged["rate_limits"]["five_hour"]["used_percentage"],
+        json!(42.0)
+    );
+}
+
 /// An existing `rate_limits` object is added to, not replaced.
 #[test]
 fn fields_already_present_under_rate_limits_survive() {
