@@ -27,5 +27,13 @@ pub trait Transport: Send + Sync {
     /// Failures that happen before any event is emitted surface here; failures
     /// after that arrive as an error item in the stream, because the client has
     /// already received a status and a mid-stream failure cannot change it.
-    async fn stream(&self, request: &ResponsesRequest) -> Result<EventStream, ProxyError>;
+    ///
+    /// `session_id` scopes the prompt cache and must be stable for the life of
+    /// a conversation. It is carried per request rather than per transport
+    /// because one transport serves every session (§2.7).
+    async fn stream(
+        &self,
+        request: &ResponsesRequest,
+        session_id: Option<&str>,
+    ) -> Result<EventStream, ProxyError>;
 }

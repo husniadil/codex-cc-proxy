@@ -41,8 +41,9 @@ pub struct Session {
     pub estimator: CalibratedEstimator,
     /// Tools this conversation has seen discovered (§2.5).
     pub discovered_tools: Mutex<BTreeSet<String>>,
-    /// A stable key for the life of the conversation. Cache hit rate depends on
-    /// it directly (§2.7).
+    /// A stable id for the life of the conversation: the `session_id` header's
+    /// value, and the body's `prompt_cache_key`. The header is what the cache
+    /// actually keys on over HTTP (§2.8).
     pub cache_key: String,
     /// When this conversation was last used, for idle expiry.
     last_used: Mutex<std::time::Instant>,
@@ -281,10 +282,17 @@ impl SessionStore {
         self.len() == 0
     }
 
+    /// A fresh conversation id.
+    ///
+    /// A UUID because that is the shape measured to work as the cache scope
+    /// (§2.8); whether the backend accepts an arbitrary string there is
+    /// unmeasured, and this is not the place to find out. The counter is kept
+    /// for the log line, where a readable ordinal beats a UUID.
     fn next_key(&self) -> String {
         let index = self
             .counter
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        format!("session-{index}")
+        tracing::debug!(conversation = index, "assigning a session id");
+        uuid::Uuid::new_v4().to_string()
     }
 }

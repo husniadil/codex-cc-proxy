@@ -57,7 +57,11 @@ impl HttpTransport {
 
 #[async_trait::async_trait]
 impl Transport for HttpTransport {
-    async fn stream(&self, request: &ResponsesRequest) -> Result<EventStream, ProxyError> {
+    async fn stream(
+        &self,
+        request: &ResponsesRequest,
+        session_id: Option<&str>,
+    ) -> Result<EventStream, ProxyError> {
         let body = serde_json::to_string(request).map_err(|error| {
             ProxyError::invalid_request(format!("could not serialize the request: {error}"))
         })?;
@@ -69,6 +73,15 @@ impl Transport for HttpTransport {
             .header("originator", ORIGINATOR)
             .header(axum::http::header::USER_AGENT, USER_AGENT)
             .header(axum::http::header::CONTENT_TYPE, "application/json");
+
+        // §2.8 — the prompt cache scope. This matters most here: every HTTP
+        // turn is a full send with no `previous_response_id` chain, so without
+        // it nothing is cached at all. Measured on one four-turn conversation,
+        // uncached input per turn fell from ~4,480 tokens to ~640. The body's
+        // `prompt_cache_key` did nothing on its own.
+        if let Some(session_id) = session_id {
+            builder = builder.header("session_id", session_id);
+        }
 
         // The header is the whole mechanism. Compressed bytes without it are
         // just bytes the backend cannot parse.

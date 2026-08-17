@@ -188,7 +188,7 @@ async fn the_upgrade_offers_permessage_deflate() {
 
     let transport = WebSocketTransport::new(&server.url).with_compression(true);
     let connection = transport
-        .open(&request("hello"), None)
+        .open(&request("hello"), None, None)
         .await
         .expect("the connection should open");
     let _ = connection.into_events().collect::<Vec<_>>().await;
@@ -219,7 +219,7 @@ async fn a_compressed_request_arrives_intact() {
 
     let transport = WebSocketTransport::new(&server.url).with_compression(true);
     let connection = transport
-        .open(&request(MARKER), None)
+        .open(&request(MARKER), None, None)
         .await
         .expect("the connection should open");
     let _ = connection.into_events().collect::<Vec<_>>().await;
@@ -250,7 +250,7 @@ async fn compressed_events_arrive_intact() {
 
     let transport = WebSocketTransport::new(&server.url).with_compression(true);
     let connection = transport
-        .open(&request("hello"), None)
+        .open(&request("hello"), None, None)
         .await
         .expect("the connection should open");
 
@@ -281,7 +281,7 @@ async fn compression_can_be_declined_and_the_turn_still_runs() {
 
     let transport = WebSocketTransport::new(&server.url).with_compression(false);
     let connection = transport
-        .open(&request(MARKER), None)
+        .open(&request(MARKER), None, None)
         .await
         .expect("the connection should open");
     let _ = connection.into_events().collect::<Vec<_>>().await;
@@ -323,7 +323,7 @@ async fn the_upgrade_carries_the_identity_headers() {
 
     let transport = WebSocketTransport::new(&server.url);
     let connection = transport
-        .open(&request("hello"), None)
+        .open(&request("hello"), None, None)
         .await
         .expect("the connection should open");
     let _ = connection.into_events().collect::<Vec<_>>().await;

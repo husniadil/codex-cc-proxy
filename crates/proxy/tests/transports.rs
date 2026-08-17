@@ -359,7 +359,7 @@ async fn the_websocket_transport_carries_a_turn() {
     let transport = WebSocketTransport::new(server.url.clone());
 
     let connection = transport
-        .open(&request(items(json!([message("hello")]))), None)
+        .open(&request(items(json!([message("hello")]))), None, None)
         .await
         .expect("the socket should open");
 
@@ -389,6 +389,7 @@ async fn a_delta_names_the_response_it_continues() {
         .open(
             &request(items(json!([message("only the new turn")]))),
             Some("resp_previous".to_owned()),
+            None,
         )
         .await
         .unwrap();
@@ -405,7 +406,7 @@ async fn a_full_send_carries_no_previous_response_id() {
     let transport = WebSocketTransport::new(server.url.clone());
 
     let _ = transport
-        .open(&request(items(json!([message("everything")]))), None)
+        .open(&request(items(json!([message("everything")]))), None, None)
         .await
         .unwrap();
 
@@ -444,6 +445,7 @@ async fn a_policy_close_falls_back_without_losing_the_turn() {
     let conduit = Conduit::new(
         Arc::new(HttpTransport::new(format!("http://{addr}/responses"))),
         Some(Arc::new(WebSocketTransport::new(ws.url.clone()))),
+        "test-session".to_owned(),
     );
 
     let (events, sent) = conduit
@@ -497,6 +499,7 @@ async fn a_latched_session_stops_trying_the_websocket() {
     let conduit = Conduit::new(
         Arc::new(HttpTransport::new(format!("http://{addr}/responses"))),
         Some(Arc::new(WebSocketTransport::new(ws.url.clone()))),
+        "test-session".to_owned(),
     );
 
     for _ in 0..3 {
@@ -637,6 +640,7 @@ fn http_only(addr: std::net::SocketAddr) -> Conduit {
     Conduit::new(
         Arc::new(HttpTransport::new(format!("http://{addr}/responses"))),
         None,
+        "test-session".to_owned(),
     )
 }
 
@@ -711,6 +715,7 @@ async fn a_long_session_leaves_identical_state_over_both_transports() {
             http_addr.0
         ))),
         None,
+        "test-session".to_owned(),
     );
     let over_websocket = Conduit::new(
         Arc::new(HttpTransport::new(format!(
@@ -720,6 +725,7 @@ async fn a_long_session_leaves_identical_state_over_both_transports() {
         Some(Arc::new(
             WebSocketTransport::new(ws.url.clone()).with_compression(false),
         )),
+        "test-session".to_owned(),
     );
 
     let (_, http_sends) = drive(&over_http, 20).await;
@@ -768,6 +774,7 @@ async fn a_session_that_falls_back_midway_ends_in_the_same_state() {
     let mixed = Conduit::new(
         Arc::new(HttpTransport::new(format!("http://{addr}/responses"))),
         Some(Arc::new(WebSocketTransport::new(ws.url.clone()))),
+        "test-session".to_owned(),
     );
     let pure_http = http_only(addr);
 
@@ -790,7 +797,10 @@ async fn a_delta_sends_less_than_the_whole_conversation() {
     for turn in 0..40 {
         long.extend(items(json!([message(&format!("turn {turn}"))])));
     }
-    let _ = transport.open(&request(long.clone()), None).await.unwrap();
+    let _ = transport
+        .open(&request(long.clone()), None, None)
+        .await
+        .unwrap();
     let full = ws.wait_for_request().await.len();
 
     // The same conversation continued by one item.
@@ -798,7 +808,7 @@ async fn a_delta_sends_less_than_the_whole_conversation() {
     let transport2 = WebSocketTransport::new(ws2.url.clone()).with_compression(false);
     let one_more = items(json!([message("just the new turn")]));
     let _ = transport2
-        .open(&request(one_more), Some("resp_previous".to_owned()))
+        .open(&request(one_more), Some("resp_previous".to_owned()), None)
         .await
         .unwrap();
     let delta = ws2.wait_for_request().await.len();
@@ -823,6 +833,7 @@ async fn one_connection_serves_a_whole_session() {
         Some(Arc::new(
             WebSocketTransport::new(ws.url.clone()).with_compression(false),
         )),
+        "test-session".to_owned(),
     );
 
     let (_, sends) = drive(&conduit, 8).await;
@@ -851,6 +862,7 @@ async fn a_prewarm_opens_the_connection_without_producing_a_turn() {
         Some(Arc::new(
             WebSocketTransport::new(ws.url.clone()).with_compression(false),
         )),
+        "test-session".to_owned(),
     );
 
     conduit
@@ -897,6 +909,7 @@ async fn a_latched_session_does_not_prewarm() {
     let conduit = Conduit::new(
         Arc::new(HttpTransport::new(format!("http://{addr}/responses"))),
         Some(Arc::new(WebSocketTransport::new(ws.url.clone()))),
+        "test-session".to_owned(),
     );
 
     let _ = conduit
@@ -941,6 +954,7 @@ async fn a_stale_pooled_connection_retries_as_a_full_send() {
         Some(Arc::new(
             WebSocketTransport::new(ws.url.clone()).with_compression(false),
         )),
+        "test-session".to_owned(),
     );
 
     let (state, sends) = drive(&conduit, 2).await;

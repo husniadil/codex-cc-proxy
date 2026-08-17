@@ -6,6 +6,16 @@ in [`docs/api.md`](docs/api.md) §6.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The HTTP transport cached nothing.** Every turn over it is a full send with
+  no `previous_response_id` chain, and the body's `prompt_cache_key` — which the
+  spec called the thing that drives caching — turns out to do nothing on its
+  own. A `session_id` header, stable for the life of a conversation, is what the
+  cache is scoped by. Measured on one four-turn conversation with the WebSocket
+  disabled: uncached input per turn fell from 4,465–4,497 tokens to 625–657.
+  Over WebSocket it changes nothing, because chaining already caches.
+
 ### Added
 
 - **An install script.** One command detects the platform, downloads the

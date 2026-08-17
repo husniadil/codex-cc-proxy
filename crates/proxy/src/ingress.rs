@@ -34,7 +34,10 @@ use std::sync::Arc;
 /// A factory rather than a transport, because the binding is per conversation:
 /// latching, the pooled connection, and the previous response id all belong to
 /// one conversation and must not be shared between two.
-pub type ConduitFactory = Arc<dyn Fn() -> Arc<crate::upstream::conduit::Conduit> + Send + Sync>;
+/// Builds the conduit for one conversation. Takes the session id because the
+/// conduit carries it on every turn as the prompt cache scope (§2.7).
+pub type ConduitFactory =
+    Arc<dyn Fn(String) -> Arc<crate::upstream::conduit::Conduit> + Send + Sync>;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -292,7 +295,8 @@ async fn messages(
     let events = match &state.conduits {
         Some(factory) => {
             let factory = Arc::clone(factory);
-            let conduit = session.conduit(move || factory()).await;
+            let session_id = session.cache_key.clone();
+            let conduit = session.conduit(move || factory(session_id)).await;
             match conduit
                 .send(
                     &translated,
@@ -306,7 +310,11 @@ async fn messages(
                 Err(error) => return error.into_response(),
             }
         }
-        None => match state.transport.stream(&translated).await {
+        None => match state
+            .transport
+            .stream(&translated, Some(&session.cache_key))
+            .await
+        {
             Ok(events) => events,
             // Nothing has been written yet, so this can still be a status.
             Err(error) => return error.into_response(),

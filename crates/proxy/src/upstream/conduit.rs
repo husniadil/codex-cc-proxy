@@ -37,6 +37,10 @@ pub struct Conduit {
     /// §4.1 — one connection, cached and reused. Opened lazily, and handed back
     /// after each turn that ended cleanly.
     connection: Arc<tokio::sync::Mutex<Option<crate::upstream::pool::PooledConnection>>>,
+    /// §2.7 — this conversation's cache scope, stable for its life and sent on
+    /// every turn over either transport. A fresh value per turn would look
+    /// correct and cache nothing.
+    session_id: String,
     /// Once a session falls back it stays fallen back for the rest of its life.
     ///
     /// Retrying the WebSocket every turn spends a failed handshake per turn to
@@ -46,10 +50,15 @@ pub struct Conduit {
 }
 
 impl Conduit {
-    pub fn new(http: Arc<HttpTransport>, websocket: Option<Arc<WebSocketTransport>>) -> Self {
+    pub fn new(
+        http: Arc<HttpTransport>,
+        websocket: Option<Arc<WebSocketTransport>>,
+        session_id: String,
+    ) -> Self {
         Self {
             websocket,
             http,
+            session_id,
             connection: Arc::new(tokio::sync::Mutex::new(None)),
             latched_to_http: AtomicBool::new(false),
         }
@@ -126,7 +135,7 @@ impl Conduit {
         }
 
         // HTTP is stateless: it always carries the whole conversation.
-        let events = self.http.stream(request).await?;
+        let events = self.http.stream(request, Some(&self.session_id)).await?;
         Ok((events, Sent::Full))
     }
 
@@ -148,7 +157,10 @@ impl Conduit {
 
         let mut connection = match pooled {
             Some(connection) => connection,
-            None => websocket.connect().await.map_err(failed)?,
+            None => websocket
+                .connect(Some(&self.session_id))
+                .await
+                .map_err(failed)?,
         };
 
         connection
@@ -195,7 +207,7 @@ impl Conduit {
             return;
         }
 
-        match websocket.connect().await {
+        match websocket.connect(Some(&self.session_id)).await {
             Ok(mut connection) => {
                 if connection.send(request, None, false).await.is_ok() {
                     // Re-checked under the lock: a turn may have started

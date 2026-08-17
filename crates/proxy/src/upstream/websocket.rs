@@ -136,12 +136,17 @@ impl WebSocketTransport {
     ///
     /// Separate from `open` because a pooled connection outlives the turn that
     /// created it (§4.1), so opening and sending are no longer the same act.
-    pub async fn connect(&self) -> Result<super::pool::PooledConnection, ProxyError> {
-        Ok(super::pool::PooledConnection::new(self.dial().await?))
+    pub async fn connect(
+        &self,
+        session_id: Option<&str>,
+    ) -> Result<super::pool::PooledConnection, ProxyError> {
+        Ok(super::pool::PooledConnection::new(
+            self.dial(session_id).await?,
+        ))
     }
 
     /// Open the socket, with the identity headers and the negotiated options.
-    async fn dial(&self) -> Result<yawc::TcpWebSocket, ProxyError> {
+    async fn dial(&self, session_id: Option<&str>) -> Result<yawc::TcpWebSocket, ProxyError> {
         let url: url::Url = self.endpoint.parse().map_err(|error| {
             ProxyError::invalid_request(format!("`{}` is not a usable url: {error}", self.endpoint))
         })?;
@@ -157,7 +162,7 @@ impl WebSocketTransport {
 
         yawc::WebSocket::connect(url)
             .with_options(self.options())
-            .with_request(self.request_builder().await?)
+            .with_request(self.request_builder(session_id).await?)
             .await
             .map_err(|error| {
                 // A connection that never opened is not a failed turn: the
@@ -177,7 +182,10 @@ impl WebSocketTransport {
     ///
     /// The token is fetched per connection rather than captured: one taken at
     /// construction goes stale the moment the session refreshes.
-    async fn request_builder(&self) -> Result<yawc::HttpRequestBuilder, ProxyError> {
+    async fn request_builder(
+        &self,
+        session_id: Option<&str>,
+    ) -> Result<yawc::HttpRequestBuilder, ProxyError> {
         let mut builder = yawc::HttpRequestBuilder::new()
             .header("openai-beta", BETA_HEADER)
             .header("originator", super::http::ORIGINATOR)
@@ -185,6 +193,19 @@ impl WebSocketTransport {
                 axum::http::header::USER_AGENT.as_str(),
                 super::http::USER_AGENT,
             );
+
+        // §2.8 — the cache scope, on the upgrade: the socket carries many turns
+        // of one conversation, so it belongs to the connection rather than to
+        // each frame.
+        //
+        // It buys nothing measurable here — the incremental path already chains
+        // turns with `previous_response_id`, and that caches on its own. It is
+        // sent for consistency with the HTTP path, where it is the whole
+        // difference, and because a session that falls back mid-life must not
+        // change cache scope when it does.
+        if let Some(session_id) = session_id {
+            builder = builder.header("session_id", session_id);
+        }
 
         if let Some(credentials) = &self.credentials {
             let token = credentials.access_token().await?;
@@ -209,8 +230,9 @@ impl WebSocketTransport {
         &self,
         request: &ResponsesRequest,
         previous_response_id: Option<String>,
+        session_id: Option<&str>,
     ) -> Result<Connection, ProxyError> {
-        let mut connection = super::pool::PooledConnection::new(self.dial().await?);
+        let mut connection = super::pool::PooledConnection::new(self.dial(session_id).await?);
         connection.send(request, previous_response_id, true).await?;
 
         // The first event is read here rather than left to the caller.

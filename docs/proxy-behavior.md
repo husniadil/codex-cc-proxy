@@ -223,8 +223,12 @@ backend's own default applies.
 `reasoning.summary` is always `auto`.
 
 `prompt_cache_key` derives from session identity (§3.1) and is stable for the
-life of a conversation. Cache hit rate depends on it directly, making it the
-largest single cost lever in the system.
+life of a conversation. **It is not what drives the cache.** Sent alone, against
+otherwise identical repeated requests, it produced no cached tokens in any
+trial — in both orders, with independent prompts per condition. It is kept
+because it is harmless and is what the field is for; nothing rests on it.
+
+What the cache actually rests on is measured in §2.8.
 
 Unsupported inbound parameters are dropped through an allowlist rather than
 forwarded. Anthropic `cache_control` blocks have no equivalent and are dropped;
@@ -249,10 +253,22 @@ like any other, and `originator` and `user-agent` were once absent from it while
 every other path sent them — the socket did not enforce them, so nothing failed
 and nothing said so.
 
-Session identity does **not** travel as a header here. It goes in the body, as
-`prompt_cache_key` (§2.1). The reference client additionally sends `session-id`
-and `thread-id` headers, which this proxy does not; whether they affect anything
-is unmeasured and recorded in `roadmap.md` §L rather than guessed at.
+**`session_id` carries the prompt cache scope**, and is stable for the life of a
+conversation — a UUID, because that is the shape measured to work; whether an
+arbitrary string is accepted there is unmeasured.
+
+What it is worth depends on the transport, which is the part that is easy to get
+wrong. Over WebSocket it changes nothing: the incremental path chains turns with
+`previous_response_id` (§4.3), and that already caches. Over HTTP every turn is
+a full send with no chain, and there the header is the whole difference —
+measured on one four-turn conversation, uncached input per turn fell from
+4,465–4,497 tokens to 625–657, with 3,840 reported cached from the second turn
+on.
+
+That makes it a fallback-path optimisation rather than a universal one, which is
+worth stating plainly: HTTP is a normal operating mode here (§4.2), not an error
+path, so a turn that costs seven times its input tokens is a real cost and not a
+hypothetical one.
 
 One originator, always, with no alternate to fall back to. A rejection at this
 layer surfaces as an error rather than triggering a retry under a different

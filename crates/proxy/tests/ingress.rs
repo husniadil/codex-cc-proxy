@@ -1341,12 +1341,13 @@ async fn ingress_sends_through_a_conduit_and_uploads_incrementally() {
     .await;
 
     let endpoint = upstream.url.clone();
-    let conduits: codex_cc_proxy::ingress::ConduitFactory = Arc::new(move || {
+    let conduits: codex_cc_proxy::ingress::ConduitFactory = Arc::new(move |session_id| {
         Arc::new(codex_cc_proxy::upstream::conduit::Conduit::new(
             Arc::new(HttpTransport::new(endpoint.clone())),
             // No WebSocket here: this asserts the conduit is *used*, and HTTP
             // is the transport a replay server can answer.
             None,
+            session_id,
         ))
     });
 
@@ -1457,7 +1458,7 @@ async fn a_second_turn_uploads_the_new_items_and_not_nothing() {
     let ws = replay::WsReplay::start(events).await;
     let socket = ws.url.clone();
 
-    let conduits: codex_cc_proxy::ingress::ConduitFactory = Arc::new(move || {
+    let conduits: codex_cc_proxy::ingress::ConduitFactory = Arc::new(move |session_id| {
         Arc::new(codex_cc_proxy::upstream::conduit::Conduit::new(
             // Unreachable on purpose: a fallback here would hide the failure
             // this test exists to catch.
@@ -1466,6 +1467,7 @@ async fn a_second_turn_uploads_the_new_items_and_not_nothing() {
                 codex_cc_proxy::upstream::websocket::WebSocketTransport::new(socket.clone())
                     .with_compression(false),
             )),
+            session_id,
         ))
     });
 
@@ -1592,7 +1594,7 @@ async fn upstream_requests_carry_the_access_token() {
         model: "gpt-5.6-terra".to_owned(),
         ..Default::default()
     };
-    let _ = codex_cc_proxy::upstream::Transport::stream(&transport, &request)
+    let _ = codex_cc_proxy::upstream::Transport::stream(&transport, &request, None)
         .await
         .expect("the request should reach the replay server");
 
@@ -1642,13 +1644,14 @@ async fn a_reasoning_turn_does_not_end_the_session() {
     let ws = replay::WsReplay::start(events).await;
     let socket = ws.url.clone();
 
-    let conduits: codex_cc_proxy::ingress::ConduitFactory = Arc::new(move || {
+    let conduits: codex_cc_proxy::ingress::ConduitFactory = Arc::new(move |session_id| {
         Arc::new(codex_cc_proxy::upstream::conduit::Conduit::new(
             Arc::new(HttpTransport::new("http://127.0.0.1:1/unused")),
             Some(Arc::new(
                 codex_cc_proxy::upstream::websocket::WebSocketTransport::new(socket.clone())
                     .with_compression(false),
             )),
+            session_id,
         ))
     });
 
@@ -1757,7 +1760,7 @@ async fn a_failed_turn_does_not_advance_the_baseline() {
     let ws = replay::WsReplay::start(events).await;
     let socket = ws.url.clone();
 
-    let conduits: codex_cc_proxy::ingress::ConduitFactory = Arc::new(move || {
+    let conduits: codex_cc_proxy::ingress::ConduitFactory = Arc::new(move |session_id| {
         Arc::new(codex_cc_proxy::upstream::conduit::Conduit::new(
             // Unreachable, so a failing socket fails the turn rather than
             // quietly succeeding over HTTP.
@@ -1766,6 +1769,7 @@ async fn a_failed_turn_does_not_advance_the_baseline() {
                 codex_cc_proxy::upstream::websocket::WebSocketTransport::new(socket.clone())
                     .with_compression(false),
             )),
+            session_id,
         ))
     });
 
@@ -2219,7 +2223,7 @@ async fn a_large_body_is_compressed_and_announced() {
         ..Default::default()
     };
 
-    let _ = codex_cc_proxy::upstream::Transport::stream(&transport, &request)
+    let _ = codex_cc_proxy::upstream::Transport::stream(&transport, &request, None)
         .await
         .expect("the replay server should accept it");
 
@@ -2252,7 +2256,7 @@ async fn a_small_body_is_not_compressed() {
         ..Default::default()
     };
 
-    let _ = codex_cc_proxy::upstream::Transport::stream(&transport, &request)
+    let _ = codex_cc_proxy::upstream::Transport::stream(&transport, &request, None)
         .await
         .unwrap();
 
@@ -2381,4 +2385,95 @@ fn an_active_conversation_survives_the_sweep() {
 
     assert_eq!(store.len(), 1);
     assert_eq!(store.resolve(&input).cache_key, session.cache_key);
+}
+
+/// §2.8 — every upstream request carries the conversation's `session_id`, and
+/// it is the same value for every turn of that conversation.
+///
+/// **This is the prompt cache on the HTTP path.** Measured live on one
+/// four-turn conversation with the WebSocket disabled: without the header,
+/// uncached input held at 4,465–4,497 tokens a turn and nothing was ever
+/// cached; with it, 625–657, and 3,840 reported cached from the second turn on.
+/// Over WebSocket it changes nothing, because the incremental path chains turns
+/// with `previous_response_id` and that caches on its own — which is why the
+/// first measurement of this, taken over the socket, showed no difference at
+/// all and nearly buried the finding.
+///
+/// Stability is the property under test rather than the header's mere presence:
+/// a fresh id per turn would look correct on any single request and cache
+/// nothing, which is exactly the failure this replaces.
+#[tokio::test]
+async fn every_turn_of_a_conversation_carries_one_session_id() {
+    let upstream = ReplayServer::start(Behavior::Events(vec![
+        json!({ "type": "response.created", "response": { "id": "resp_1" } }),
+        completed(),
+    ]))
+    .await;
+
+    let state = AppState {
+        effort_ceiling: None,
+        catalog: Arc::new(codex_cc_proxy::catalog::Catalog::fallback()),
+        transport: Arc::new(HttpTransport::new(upstream.url.clone())),
+        conduits: None,
+        models: Arc::new(vec![ModelMapping {
+            requested: "claude-sonnet-5".to_owned(),
+            upstream: "gpt-5.6-terra".to_owned(),
+        }]),
+        recorder: None,
+        capture: Arc::new(codex_cc_proxy::recorder::Switches::default()),
+        usage: Arc::new(codex_cc_proxy::usage::UsageStore::default()),
+        instructions: Arc::new(codex_cc_proxy::config::InstructionsConfig::default()),
+        sessions: Arc::new(codex_cc_proxy::session::SessionStore::new()),
+    };
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, router(state)).await;
+    });
+
+    let turn = |messages: serde_json::Value| async move {
+        let response = reqwest::Client::new()
+            .post(format!("http://{addr}/v1/messages"))
+            .json(&json!({
+                "model": "claude-sonnet-5",
+                "max_tokens": 64,
+                "messages": messages,
+            }))
+            .send()
+            .await
+            .unwrap();
+        let _ = response.text().await.unwrap();
+    };
+
+    // Two turns of one conversation: the second extends the first.
+    turn(json!([{ "role": "user", "content": "hi" }])).await;
+    turn(json!([
+        { "role": "user", "content": "hi" },
+        { "role": "assistant", "content": "hello" },
+        { "role": "user", "content": "again" },
+    ]))
+    .await;
+
+    // And a conversation that is not a continuation of it.
+    turn(json!([{ "role": "user", "content": "unrelated opening" }])).await;
+
+    let headers = upstream.headers();
+    assert_eq!(headers.len(), 3);
+
+    let ids: Vec<&str> = headers
+        .iter()
+        .map(|sent| {
+            sent.get("session_id")
+                .map(String::as_str)
+                .unwrap_or("<absent>")
+        })
+        .collect();
+
+    assert_ne!(ids[0], "<absent>", "the header must be sent at all");
+    assert_eq!(ids[0], ids[1], "one conversation, one session id");
+    assert_ne!(
+        ids[0], ids[2],
+        "a different conversation must not share the cache scope"
+    );
 }

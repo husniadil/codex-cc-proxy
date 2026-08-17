@@ -419,7 +419,7 @@ async fn run_with(args: RunArgs, capture: Capture) -> Result<()> {
     let conduit_tokens = Arc::clone(&tokens);
     let conduit_endpoint = config.upstream.endpoint.clone();
     let conduit_websocket = config.upstream.websocket.clone();
-    let conduits: codex_cc_proxy::ingress::ConduitFactory = Arc::new(move || {
+    let conduits: codex_cc_proxy::ingress::ConduitFactory = Arc::new(move |session_id| {
         let http = Arc::new(
             HttpTransport::new(&conduit_endpoint)
                 .with_credentials(Arc::clone(&conduit_tokens))
@@ -433,7 +433,7 @@ async fn run_with(args: RunArgs, capture: Capture) -> Result<()> {
             )
         });
         Arc::new(codex_cc_proxy::upstream::conduit::Conduit::new(
-            http, websocket,
+            http, websocket, session_id,
         ))
     });
 
