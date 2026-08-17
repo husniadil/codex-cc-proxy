@@ -32,7 +32,7 @@ implementation is wrong in a way that does not fail loudly.
 
 ## Status
 
-**v0.1.1.** Everything here is verified against a local replay server built
+**v0.1.2.** Everything here is verified against a local replay server built
 from the upstream protocol definitions, and the whole suite runs without
 credentials or quota. Every capability probe has since also been answered by a
 live backend — `doctor --live` runs the same probes against the real thing, and
