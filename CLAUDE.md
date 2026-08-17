@@ -134,9 +134,15 @@ exhaustively covered. A translation rule that needs I/O to test has been written
 in the wrong crate.
 
 Transports are interchangeable below `session`. WebSocket is primary and HTTP is
-its fallback, but neither is a degraded version of the other — the backend closes
-WebSocket connections under policy conditions often enough that HTTP is a normal
-operating mode, not an error path.
+its fallback, but neither is a degraded version of the other, and HTTP is a
+normal operating mode rather than an error path. The backend is documented to
+close sockets under policy conditions; **no such close has been seen on the
+account tested here**, and one account's experience is not evidence about every
+account's — which is why the fallback is covered as an ordinary path rather than
+an exceptional one.
+
+Compression applies to both: zstd on an HTTP body, `permessage-deflate` on the
+socket. It saves bytes and never tokens.
 
 ## Naming
 

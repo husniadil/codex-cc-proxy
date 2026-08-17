@@ -12,6 +12,16 @@ use serde_json::Value;
 use serde_json::json;
 use std::sync::Arc;
 
+/// The range the client accepts for `CLAUDE_CODE_AUTO_COMPACT_WINDOW`.
+///
+/// Read from the client, not chosen here: it answers anything else with
+/// "Expected 'auto' or 100k–1M tokens", and the settings key of the same
+/// meaning is declared to discard an out-of-range value silently. Both ends
+/// matter — a small model can fall under the floor, and a large window with a
+/// low `upstream.effective_window_percent` can too.
+const COMPACT_WINDOW_FLOOR: u64 = 100_000;
+const COMPACT_WINDOW_CEILING: u64 = 1_000_000;
+
 /// Everything the methods read.
 #[derive(Clone)]
 pub struct ControlState {
@@ -237,10 +247,28 @@ pub fn environment(state: &ControlState) -> Vec<(String, String)> {
         // model, enforces no limit at all — the session grows until the backend
         // refuses it. Early compaction wastes context; late compaction fails
         // the session, and this is the setting that decides which (§7.2).
-        variables.push((
-            "CLAUDE_CODE_AUTO_COMPACT_WINDOW".to_owned(),
-            window.to_string(),
-        ));
+        //
+        // Only within the range the client will accept. Its own parser answers
+        // anything else with "Expected 'auto' or 100k–1M tokens", and the
+        // equivalent settings key is declared to *discard* an out-of-range
+        // value rather than reject it. A figure outside the range is therefore
+        // not an early compaction or a late one — it is no setting at all, and
+        // nothing would say so. Reported instead, where a reader can see it.
+        if (COMPACT_WINDOW_FLOOR..=COMPACT_WINDOW_CEILING).contains(&window) {
+            variables.push((
+                "CLAUDE_CODE_AUTO_COMPACT_WINDOW".to_owned(),
+                window.to_string(),
+            ));
+        } else {
+            tracing::warn!(
+                window,
+                floor = COMPACT_WINDOW_FLOOR,
+                ceiling = COMPACT_WINDOW_CEILING,
+                "the effective window is outside the range the client accepts for \
+                 auto-compaction, so it is not set; the client will use its own default \
+                 and may compact later than this window allows"
+            );
+        }
     }
 
     // Inert for ordinary model ids, and set as a one-sided floor: should a

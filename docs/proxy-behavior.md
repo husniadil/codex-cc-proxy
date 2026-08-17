@@ -685,6 +685,21 @@ client stops applying its own 200,000 assumption and, not recognizing the model,
 then enforces no limit at all — so the session grows until the backend refuses
 it. The compact window is what turns a stated figure into an enforced one.
 
+**`CLAUDE_CODE_AUTO_COMPACT_WINDOW` is only set when the effective window falls
+between 100,000 and 1,000,000**, which is the range the client accepts. Outside
+it, the client answers "Expected 'auto' or 100k–1M tokens", and the settings key
+of the same meaning is declared to *discard* an out-of-range value rather than
+reject it — so a figure outside the range is not an early compaction or a late
+one, it is no setting at all, and nothing would say so. The proxy omits it and
+warns instead. Both ends are reachable: a small model can fall under the floor,
+and so can a large window with a low `upstream.effective_window_percent`.
+
+Compaction does fire against this figure. The client's own threshold is
+described as the effective window minus a summary buffer, lowered further by an
+override it reads separately, and the history-length check compares the token
+count against a function of that window. **Derived from the client's code, not
+observed** — no session here has been run long enough to watch it happen.
+
 The client warns that its 200,000 limit is not being enforced. That warning is
 correct and expected: exceeding 200,000 is the point, and the real window is
 larger. It is silenced only by compacting at 200,000, which would discard a

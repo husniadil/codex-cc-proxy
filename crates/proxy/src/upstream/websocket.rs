@@ -146,6 +146,15 @@ impl WebSocketTransport {
             ProxyError::invalid_request(format!("`{}` is not a usable url: {error}", self.endpoint))
         })?;
 
+        // What was asked for, since what was agreed cannot be read back: the
+        // library exposes no accessor for the negotiated extensions. This is
+        // the offer, not the outcome — a server that declines still connects,
+        // and nothing here can tell the two apart.
+        tracing::debug!(
+            compression = self.compression,
+            "opening a websocket; compression is offered, not guaranteed"
+        );
+
         yawc::WebSocket::connect(url)
             .with_options(self.options())
             .with_request(self.request_builder().await?)

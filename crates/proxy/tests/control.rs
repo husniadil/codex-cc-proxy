@@ -110,6 +110,46 @@ impl Harness {
         }
     }
 
+    /// A harness whose catalog and single mapped model are the caller's, for
+    /// tests about what a particular window produces.
+    async fn with_catalog(catalog: &str, model: &str) -> Self {
+        let harness = Self::start().await;
+        harness.respawn(catalog, model).await
+    }
+
+    async fn respawn(self, catalog: &str, model: &str) -> Self {
+        let tiers: Vec<ResolvedTier> = ["opus", "sonnet", "haiku", "fable"]
+            .into_iter()
+            .map(|tier| ResolvedTier {
+                tier,
+                model: model.to_owned(),
+            })
+            .collect();
+
+        let path = self._dir.path().join("control-2.sock");
+        let state = ControlState {
+            port: 8787,
+            tiers: Arc::new(tiers),
+            catalog: Arc::new(Catalog::parse(catalog, 95.0).unwrap()),
+            credentials: Arc::clone(&self.store) as Arc<dyn CredentialStore>,
+            capture: Arc::clone(&self.switches),
+            usage: Arc::clone(&self.usage),
+        };
+
+        let socket = path.clone();
+        tokio::spawn(async move {
+            let _ = control::serve(&socket, state).await;
+        });
+        for _ in 0..100 {
+            if path.exists() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+
+        Self { path, ..self }
+    }
+
     async fn call(&self, method: &str) -> Result<Value, codex_cc_proxy::error::ProxyError> {
         control::call(&self.path, method, None).await
     }
@@ -817,4 +857,74 @@ async fn the_grants_plan_is_used_until_the_backend_has_said_otherwise() {
 
     assert_eq!(status["auth"]["plan"], json!("free"));
     assert_eq!(status["auth"]["plan_source"], json!("grant"));
+}
+
+// ---------------------------------------------------------------------------
+// The compaction window has a range the client will accept, and a value outside
+// it is not an error the operator ever sees.
+// ---------------------------------------------------------------------------
+
+/// A window the client cannot parse is not emitted at all.
+///
+/// The client accepts `CLAUDE_CODE_AUTO_COMPACT_WINDOW` only between 100,000
+/// and 1,000,000 — its own parser says "Expected 'auto' or 100k–1M tokens", and
+/// the equivalent settings key is declared `.min(1e5).max(1e6).catch(void 0)`,
+/// which **silently discards** anything outside that. Emitting 81,600 therefore
+/// does not compact early; it does nothing, and nothing says so.
+///
+/// Omitting it is not a fix — the client falls back to a window larger than the
+/// model has — so this is reported loudly rather than papered over. What it must
+/// not do is emit a number that is quietly thrown away.
+#[tokio::test]
+async fn a_window_below_what_the_client_accepts_is_not_emitted() {
+    let harness = Harness::with_catalog(
+        r#"{"data":[{"id":"tiny","context_window":80000,
+                     "effective_context_window_percent":100.0}]}"#,
+        "tiny",
+    )
+    .await;
+
+    let variables = harness.call("env").await.unwrap();
+    let rendered = render::env_shell(&variables);
+
+    assert!(
+        !rendered.contains("CLAUDE_CODE_AUTO_COMPACT_WINDOW"),
+        "a window the client discards should not be emitted: {rendered}"
+    );
+}
+
+/// A window inside the range is emitted as before.
+#[tokio::test]
+async fn a_window_the_client_accepts_is_emitted() {
+    let harness = Harness::with_catalog(
+        r#"{"data":[{"id":"roomy","context_window":272000,
+                     "effective_context_window_percent":95.0}]}"#,
+        "roomy",
+    )
+    .await;
+
+    let rendered = render::env_shell(&harness.call("env").await.unwrap());
+
+    assert!(
+        rendered.contains("CLAUDE_CODE_AUTO_COMPACT_WINDOW=258400"),
+        "{rendered}"
+    );
+}
+
+/// Above the range is discarded for the same reason, in the other direction.
+#[tokio::test]
+async fn a_window_above_what_the_client_accepts_is_not_emitted() {
+    let harness = Harness::with_catalog(
+        r#"{"data":[{"id":"huge","context_window":2000000,
+                     "effective_context_window_percent":100.0}]}"#,
+        "huge",
+    )
+    .await;
+
+    let rendered = render::env_shell(&harness.call("env").await.unwrap());
+
+    assert!(
+        !rendered.contains("CLAUDE_CODE_AUTO_COMPACT_WINDOW"),
+        "{rendered}"
+    );
 }
