@@ -15,11 +15,14 @@ passes against the replay corpus, a long session leaves identical conversation
 state over both transports, and the estimator comparison is measured and
 decided.
 
-One part of §11's acceptance criterion is **not** met and should not be read as
-if it were: "a fresh checkout builds on all three platforms in CI" has never
-happened, because this repository has no remote and CI has therefore never run.
-The workflow exists and names all three platforms; nothing has executed it. Only
-macOS is verified, by building here.
+§11's acceptance criterion is now met on all three platforms: CI has run, and
+`check` plus the Linux, macOS, and Windows builds are green. The first run failed
+on its first command — the pinned toolchain carries no `rustfmt` or `clippy`,
+which had been latent locally too — and the three build jobs passed on that same
+first attempt.
+
+Windows mattered most: the WebSocket transport was swapped after that platform
+was last considered, and nothing had proved it since.
 
 What is intended beyond that release is in **After v0.1.0**, stated as
 intentions rather than commitments.
