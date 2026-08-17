@@ -223,8 +223,17 @@ re-sent, and `previous_response_id` is set only by the incremental path (§4.3).
 | `originator` | a single fixed first-party originator |
 | `user-agent` | matching that originator |
 | `openai-beta` | the Responses experimental opt-in |
-| `session_id` | the session identity (§3.1), truncated to 64 characters |
 | `accept` | `text/event-stream` on the HTTP transport |
+
+All of these go on the WebSocket upgrade too. The upgrade is an HTTP request
+like any other, and `originator` and `user-agent` were once absent from it while
+every other path sent them — the socket did not enforce them, so nothing failed
+and nothing said so.
+
+Session identity does **not** travel as a header here. It goes in the body, as
+`prompt_cache_key` (§2.1). The reference client additionally sends `session-id`
+and `thread-id` headers, which this proxy does not; whether they affect anything
+is unmeasured and recorded in `roadmap.md` §L rather than guessed at.
 
 One originator, always, with no alternate to fall back to. A rejection at this
 layer surfaces as an error rather than triggering a retry under a different
@@ -601,7 +610,13 @@ Before a session's first completed request the estimate is uncalibrated.
 
 ### 7.0 Catalog
 
-The catalog is fetched from the backend and cached in memory with a short TTL.
+The catalog is fetched from the backend **once, at startup**, and held for the
+life of the daemon. There is no TTL and no refetch: a model added, renamed, or
+withdrawn after the daemon started is not noticed until it restarts. That is
+also why a mapping validated at startup cannot go stale while running, and why
+the only mismatch worth reporting later is a mapped model the catalog withholds
+(§7.1).
+
 Each entry contributes an id, a visibility flag, and window metadata: a context
 window, an optional maximum context window, and an optional effective percentage.
 Hidden entries and non-conversational pseudo-models are excluded from what is
@@ -611,7 +626,10 @@ not.
 
 The effective window is the context window scaled by the effective percentage,
 which reserves headroom for instructions, tool overhead, and output. Where the
-percentage is absent, the upstream default applies. Where both a context window
+entry states no percentage, the configured `upstream.effective_window_percent`
+applies — a default, never an override: a percentage the catalog states for its
+own model wins. It is resolved when the catalog is parsed, so there is no
+compiled-in figure left to fall back to. Where both a context window
 and a maximum context window are present, the smaller-scoped `context_window` is
 authoritative — the maximum describes a ceiling the account may not have.
 

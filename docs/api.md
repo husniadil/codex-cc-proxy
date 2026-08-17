@@ -122,10 +122,17 @@ The same snapshot is also put on the response as `anthropic-ratelimit-unified-*`
 headers, which are the names this client's own code parses a quota from.
 **Measured: that is not enough to make it appear in the status line.** A stub
 endpoint setting those headers, with nothing else changed, left `rate_limits`
-absent from the status-line payload — the client appears to track a subscription
-quota only for its own account, and a proxy is not one. They are emitted because
-they are the accurate wire form of a figure the response really carries, not
-because anything is known to read them here.
+absent from the status-line payload.
+
+The reason is now known rather than inferred. The client does parse those header
+names, but the status-line payload is gated on a separate flag, which its own
+schema describes as false "when plan rate limits do not apply (API key, Bedrock,
+Vertex, or missing profile scope)". Pointing the client at a proxy means setting
+`ANTHROPIC_AUTH_TOKEN`, which is the API-key path by definition, so `rate_limits`
+is null there no matter what any header says. §2.1 is the only route, and the
+headers are emitted because they are the accurate wire form of a figure the
+response really carries — they do still feed the client's retry banner on a
+quota 429.
 
 ### 2.1 `statusline`
 
@@ -253,6 +260,9 @@ are never stored here.
 ```toml
 port = 8787
 
+# Optional. A ceiling on reasoning effort, whatever the client asks for.
+effort = "low"
+
 [tiers]
 opus   = "..."
 sonnet = "..."
@@ -293,7 +303,19 @@ risks a turn refused for length. A value outside `(0, 100]` is refused at
 startup rather than clamped.
 
 All four tiers are required. The daemon refuses to start without them, and
-validates each against the live catalog when one is reachable.
+validates each against the live catalog when one is reachable. That validation
+happens once, at startup: the catalog is not refetched, so a mapping cannot go
+stale while the daemon runs.
+
+`effort` caps reasoning effort on every request, whatever the client asks for —
+one of `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, `ultra`
+(`ultracode` is the client's name for `ultra` and is accepted as one). It is a
+ceiling, not a fixed value, and is capped again by what the model accepts. Omit
+it for no ceiling; omitting it does not mean zero effort, it means the backend's
+own default. An unrecognized value is refused at startup rather than ignored.
+
+It is a top-level key and must sit above the tables — see the note on
+misplacement below.
 
 `[instructions]` is what the proxy puts around the client's system prompt
 (`proxy-behavior.md` §2.1). `identity` leads with one line naming the model that
