@@ -4,6 +4,8 @@
 
 use crate::error::ProxyError;
 use serde::Deserialize;
+pub mod edit;
+
 use serde::Serialize;
 
 pub const DEFAULT_PORT: u16 = 8787;

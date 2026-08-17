@@ -412,6 +412,7 @@ async fn run_with(args: RunArgs, capture: Capture) -> Result<()> {
         login: Arc::new(codex_cc_proxy::auth::daemon_login::LoginFlow::default()),
         quota: Some(Arc::clone(&tokens)),
         usage_endpoint: config.upstream.usage.clone(),
+        config_path: Some(codex_cc_proxy::config::config_path()),
     };
     let socket_path = control::default_path();
     tokio::spawn(async move {

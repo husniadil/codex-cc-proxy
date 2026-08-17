@@ -273,11 +273,20 @@ A Unix domain socket, or a named pipe on Windows, carrying JSON-RPC:
 | `effort.set` | the effort ceiling, or `null` to remove it; in effect until the daemon stops | yes |
 | `doctor` | probe results | no — `doctor` runs in the CLI, which is where `--live` can be given credentials without a daemon already holding them |
 
-**`tiers.set` and `effort.set` do not write the configuration file.** The file is
-what the daemon reads at startup, so a change made over the socket lasts until it
-stops — and every answer says so rather than leaving it to be discovered. A
-change meant to outlive the process belongs in the file, where the comments
-explaining each key are.
+**`tiers.set` and `effort.set` write the configuration file only when asked** —
+`{"persist": true}`. A front-end changing a mapping to try something is not the
+same as an operator changing what this daemon is, and only the caller knows
+which it is doing. Without it the change lasts until the daemon stops, and every
+answer says which it was rather than leaving it to be discovered.
+
+A persisted change is a **text edit**, not a re-serialization. The file is a
+document whose comments explain why each key is what it is, and most of them
+exist because the obvious value is wrong in a way that does not fail loudly;
+rewriting it from the parsed configuration would discard all of that, and the
+loss would be invisible — the file would still parse, still work, and never again
+explain itself. One value on one line changes; everything else survives byte for
+byte. The file is read fresh at write time, so an edit the operator made since
+startup is not overwritten to persist an unrelated one.
 
 `tiers.set` is **partial**: naming one tier changes that tier. Treating the
 argument as the whole mapping would let a caller that knows about one tier

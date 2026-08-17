@@ -44,6 +44,9 @@ pub struct ControlState {
     /// no credentials to ask with.
     pub quota: Option<Arc<crate::auth::tokens::TokenSource>>,
     pub usage_endpoint: String,
+    /// Where a persisted change is written. `None` in tests, which must never
+    /// touch an operator's file.
+    pub config_path: Option<std::path::PathBuf>,
 }
 
 /// Dispatch one method.
@@ -392,14 +395,82 @@ fn set_tiers(state: &ControlState, params: Option<&Value>) -> Result<Value, Prox
 
     state.policy.set_tiers(tiers);
 
+    // Persisting is asked for, never assumed. A front-end changing a mapping to
+    // try something is not the same as an operator changing what this daemon is,
+    // and only the caller knows which it is doing.
+    let persist = params
+        .and_then(|params| params.get("persist"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+
+    let persisted = if persist {
+        write_config(state, |document| {
+            let mut document = document.to_owned();
+            for (name, model) in requested {
+                let model = model.as_str().unwrap_or_default();
+                document = crate::config::edit::set_tier(&document, name, model)?;
+            }
+            Ok(document)
+        })?
+    } else {
+        false
+    };
+
     Ok(json!({
         "tiers": tier_map(state),
         // Said out loud, every time. A caller that believed this persisted
         // would find the old mapping back after a restart and have no way to
         // know why.
-        "persisted": false,
-        "detail": "in effect until the daemon stops; the configuration file is unchanged",
+        "persisted": persisted,
+        "detail": if persisted {
+            "in effect now, and written to the configuration file"
+        } else {
+            "in effect until the daemon stops; the configuration file is unchanged"
+        },
     }))
+}
+
+/// Apply an edit to the configuration file's text.
+///
+/// The file is read fresh rather than rewritten from anything held in memory:
+/// the operator may have edited it since this daemon started, and overwriting
+/// those edits to persist an unrelated one is not a trade this makes.
+fn write_config(
+    state: &ControlState,
+    edit: impl FnOnce(&str) -> Result<String, ProxyError>,
+) -> Result<bool, ProxyError> {
+    let Some(path) = state.config_path.as_ref() else {
+        return Err(ProxyError::invalid_request(
+            "this daemon has no configuration file to write",
+        ));
+    };
+
+    // A missing file is a first run, not a failure — every key has a default.
+    // Starting from the shipped example rather than an empty document keeps the
+    // comments that explain what else can be set.
+    let document = match std::fs::read_to_string(path) {
+        Ok(document) => document,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            crate::config::EXAMPLE.to_owned()
+        }
+        Err(error) => {
+            return Err(ProxyError::invalid_request(format!(
+                "could not read {}: {error}",
+                path.display()
+            )));
+        }
+    };
+
+    let written = edit(&document)?;
+
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    std::fs::write(path, written).map_err(|error| {
+        ProxyError::invalid_request(format!("could not write {}: {error}", path.display()))
+    })?;
+
+    Ok(true)
 }
 
 /// `effort.set` — raise, lower, or remove the operator's ceiling on reasoning
@@ -437,10 +508,28 @@ fn set_effort(state: &ControlState, params: Option<&Value>) -> Result<Value, Pro
 
     state.policy.set_effort_ceiling(ceiling);
 
+    let persist = params
+        .and_then(|params| params.get("persist"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+
+    let persisted = if persist {
+        let effort = requested.as_str().map(str::to_owned);
+        write_config(state, |document| {
+            crate::config::edit::set_effort(document, effort.as_deref())
+        })?
+    } else {
+        false
+    };
+
     Ok(json!({
         "effort": requested.clone(),
-        "persisted": false,
-        "detail": "in effect until the daemon stops; the configuration file is unchanged",
+        "persisted": persisted,
+        "detail": if persisted {
+            "in effect now, and written to the configuration file"
+        } else {
+            "in effect until the daemon stops; the configuration file is unchanged"
+        },
     }))
 }
 

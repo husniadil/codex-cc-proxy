@@ -58,6 +58,9 @@ fn tiers() -> Vec<ResolvedTier> {
 
 struct Harness {
     path: std::path::PathBuf,
+    /// The configuration file a persisted change is written to — inside the
+    /// temp directory, never the operator's.
+    config: std::path::PathBuf,
     store: Arc<FileStore>,
     /// The same policy the ingress routes turns from. Asserting on this is the
     /// difference between testing that a method echoes a value back and testing
@@ -102,6 +105,10 @@ impl Harness {
             // no test may reach the network.
             quota: None,
             usage_endpoint: String::new(),
+            // Inside the temp directory, always. A test that could reach an
+            // operator's real configuration would be a test that edits the
+            // machine it runs on.
+            config_path: Some(dir.path().join("config.toml")),
         };
 
         let socket = path.clone();
@@ -119,6 +126,7 @@ impl Harness {
 
         Self {
             path,
+            config: dir.path().join("config.toml"),
             store,
             policy,
             switches,
@@ -160,6 +168,7 @@ impl Harness {
             // no test may reach the network.
             quota: None,
             usage_endpoint: String::new(),
+            config_path: Some(self.config.clone()),
         };
 
         let socket = path.clone();
@@ -464,6 +473,7 @@ async fn an_unknown_window_is_reported_as_null() {
         login: Arc::new(codex_cc_proxy::auth::daemon_login::LoginFlow::default()),
         quota: None,
         usage_endpoint: String::new(),
+        config_path: None,
     };
 
     let response = control::answer(
@@ -610,6 +620,7 @@ async fn a_malformed_request_is_reported_without_closing_the_socket() {
         login: Arc::new(codex_cc_proxy::auth::daemon_login::LoginFlow::default()),
         quota: None,
         usage_endpoint: String::new(),
+        config_path: None,
     };
 
     let response = control::answer(&state, "{ not json").await;
@@ -780,6 +791,7 @@ async fn status_says_when_the_catalog_was_unavailable() {
         login: Arc::new(codex_cc_proxy::auth::daemon_login::LoginFlow::default()),
         quota: None,
         usage_endpoint: String::new(),
+        config_path: None,
     };
 
     let response = control::answer(
@@ -809,6 +821,7 @@ async fn models_prints_unknown_rather_than_a_number() {
         login: Arc::new(codex_cc_proxy::auth::daemon_login::LoginFlow::default()),
         quota: None,
         usage_endpoint: String::new(),
+        config_path: None,
     };
 
     let response = control::answer(
@@ -878,6 +891,7 @@ async fn env_states_no_window_when_the_catalog_is_unavailable() {
         login: Arc::new(codex_cc_proxy::auth::daemon_login::LoginFlow::default()),
         quota: None,
         usage_endpoint: String::new(),
+        config_path: None,
     };
 
     let response = control::answer(
@@ -1203,4 +1217,77 @@ async fn login_arms_a_callback_joins_a_second_caller_and_releases_on_cancel() {
         "a fresh login is a fresh flow, not the cancelled one"
     );
     harness.call("login.cancel").await.unwrap();
+}
+
+/// A change asks to be persisted; it is never persisted by default.
+///
+/// A front-end changing a mapping to try something is not the same as an
+/// operator changing what this daemon is, and only the caller knows which it is
+/// doing. Asserted on the file, because "persisted: false" in the reply is what
+/// a method that silently wrote would also say.
+#[tokio::test]
+async fn a_change_is_not_written_to_the_configuration_unless_asked() {
+    let harness = Harness::start().await;
+
+    let result = harness
+        .call_with(
+            "tiers.set",
+            json!({ "tiers": { "sonnet": "gpt-5.4-mini" } }),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(result["persisted"], json!(false));
+    assert!(
+        !harness.config.exists(),
+        "nothing should have been written to the configuration"
+    );
+}
+
+/// And when it is asked for, the file says so afterwards.
+#[tokio::test]
+async fn a_persisted_change_survives_in_the_file() {
+    let harness = Harness::start().await;
+    std::fs::write(
+        &harness.config,
+        "# why this is what it is\n[tiers]\nsonnet = \"gpt-5.6-terra\"\n",
+    )
+    .unwrap();
+
+    let result = harness
+        .call_with(
+            "tiers.set",
+            json!({ "tiers": { "sonnet": "gpt-5.4-mini" }, "persist": true }),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(result["persisted"], json!(true));
+
+    let written = std::fs::read_to_string(&harness.config).unwrap();
+    assert!(written.contains(r#"sonnet = "gpt-5.4-mini""#), "{written}");
+    // The comment is the whole reason this is a text edit rather than a
+    // re-serialization. Losing it would be invisible: the file would still
+    // parse, still work, and never again explain itself.
+    assert!(written.contains("# why this is what it is"), "{written}");
+}
+
+/// A refused value is never written. The check that refuses it runs before
+/// anything reaches the file, so a daemon cannot be left with a configuration
+/// it will not start from.
+#[tokio::test]
+async fn a_refused_effort_never_reaches_the_file() {
+    let harness = Harness::start().await;
+    std::fs::write(&harness.config, "port = 8787\n").unwrap();
+
+    let error = harness
+        .call_with("effort.set", json!({ "effort": "cheap", "persist": true }))
+        .await
+        .unwrap_err();
+
+    assert!(error.contains("cheap"), "{error}");
+    assert_eq!(
+        std::fs::read_to_string(&harness.config).unwrap(),
+        "port = 8787\n"
+    );
 }
