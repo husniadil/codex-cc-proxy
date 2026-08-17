@@ -404,3 +404,71 @@ fn a_reasoning_item_without_encrypted_content_still_carries_the_field() {
     assert_eq!(rendered["summary"], json!([]));
     assert!(rendered.get("encrypted_content").is_some());
 }
+
+/// A tool call whose arguments differ only in key order is the same call.
+///
+/// Measured against a real client: the backend emitted
+/// `{"file_path":…,"content":…}` and the client replayed the same object as
+/// `{"content":…,"file_path":…}`. `arguments` is a string on the wire, so a
+/// string comparison called those two different calls and forked the
+/// conversation — every turn after the model wrote a file uploaded the whole
+/// history again.
+#[test]
+fn a_tool_call_is_the_same_call_however_its_arguments_are_ordered() {
+    let server = items(json!([{
+        "type": "function_call",
+        "call_id": "call_1",
+        "name": "Write",
+        "arguments": "{\"file_path\":\"/tmp/a\",\"content\":\"hi\"}",
+    }]));
+    let client = items(json!([{
+        "type": "function_call",
+        "call_id": "call_1",
+        "name": "Write",
+        "arguments": "{\"content\":\"hi\",\"file_path\":\"/tmp/a\"}",
+    }]));
+
+    assert!(
+        extends(&server, &client),
+        "the same call written in a different key order must still continue the conversation"
+    );
+}
+
+/// And a call whose arguments genuinely differ is genuinely different.
+///
+/// The normalization must not become "any two calls to the same tool match" —
+/// that would send a delta for a conversation the backend does not hold.
+#[test]
+fn arguments_that_differ_in_value_are_a_different_call() {
+    let one = items(json!([{
+        "type": "function_call",
+        "call_id": "call_1",
+        "name": "Write",
+        "arguments": "{\"file_path\":\"/tmp/a\",\"content\":\"hi\"}",
+    }]));
+    let two = items(json!([{
+        "type": "function_call",
+        "call_id": "call_1",
+        "name": "Write",
+        "arguments": "{\"file_path\":\"/tmp/a\",\"content\":\"bye\"}",
+    }]));
+
+    assert!(!extends(&one, &two));
+}
+
+/// Arguments that are not JSON at all are compared as they arrived.
+#[test]
+fn unparseable_arguments_fall_back_to_the_literal_text() {
+    let one = items(json!([{
+        "type": "function_call", "call_id": "c", "name": "T", "arguments": "not json",
+    }]));
+    let same = items(json!([{
+        "type": "function_call", "call_id": "c", "name": "T", "arguments": "not json",
+    }]));
+    let other = items(json!([{
+        "type": "function_call", "call_id": "c", "name": "T", "arguments": "also not json",
+    }]));
+
+    assert!(extends(&one, &same));
+    assert!(!extends(&one, &other));
+}

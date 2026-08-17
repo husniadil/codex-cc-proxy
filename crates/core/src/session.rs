@@ -47,6 +47,25 @@ fn strip_ids(item: &InputItem) -> serde_json::Value {
     let mut value = serde_json::to_value(item).unwrap_or(serde_json::Value::Null);
     if let Some(object) = value.as_object_mut() {
         object.remove("id");
+
+        // A tool call's arguments travel as a JSON *string*, and two encodings
+        // of the same object are not the same string. The backend emits the
+        // keys in the order the model produced them; the client replays the
+        // object it parsed, in whatever order its own serializer chose.
+        //
+        // Compared as text those are two different calls, and the conversation
+        // forks — measured live, every turn after the model wrote a file
+        // uploaded the entire history again. Compared as values they are one
+        // call, which is what they are.
+        //
+        // Arguments that will not parse are left exactly as they arrived. A
+        // string that is not JSON has no canonical form, and inventing one
+        // would make two genuinely different calls compare equal.
+        if let Some(arguments) = object.get("arguments").and_then(serde_json::Value::as_str)
+            && let Ok(parsed) = serde_json::from_str::<serde_json::Value>(arguments)
+        {
+            object.insert("arguments".to_owned(), parsed);
+        }
     }
     value
 }

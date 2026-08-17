@@ -228,6 +228,15 @@ This is the same predicate that governs incremental upload (§4.3), so session
 matching and delta computation share one definition rather than two that can
 disagree.
 
+Items are compared by content, not by encoding. A server-assigned `id` is
+absent when the client replays the same turn, so ids are excluded. A tool call's
+`arguments` travel as a JSON *string*, and the backend emits its keys in the
+order the model produced them while the client replays the object it parsed, in
+whatever order its own serializer chose — so arguments are compared as parsed
+values where they parse, and as literal text where they do not. Measured live:
+compared as text, every turn after the model wrote a file forked the
+conversation and uploaded the whole history again.
+
 Two conversations that genuinely share a prefix — the same system prompt and the
 same opening turn — are indistinguishable until they diverge, and may match the
 same session. This is harmless: the shared prefix is identical, so the baseline
