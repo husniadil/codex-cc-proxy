@@ -51,6 +51,12 @@ pub struct DoctorArgs {
     /// Where the fixture corpus lives.
     #[arg(long)]
     pub fixtures: Option<std::path::PathBuf>,
+    /// Answer the probes from the real backend instead of the recordings.
+    ///
+    /// This spends inference quota — one turn per probe — and needs
+    /// credentials. Without it nothing is contacted and nothing is billed.
+    #[arg(long)]
+    pub live: bool,
 }
 
 #[derive(Debug, clap::Args)]

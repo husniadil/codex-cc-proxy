@@ -84,8 +84,17 @@ to serve one. The authorization URL is printed as well as opened, so an
 environment with no browser still has a way through.
 
 `doctor` runs the capability probes and prints a matrix. Against the fixture
-corpus — the default — it contacts nothing and costs nothing; against a live
-backend it spends real inference quota.
+corpus — the default — it contacts nothing and costs nothing. `--live` answers
+the same probes from the real backend instead, one turn each, and spends real
+inference quota; it maps the corpus's model ids through the configured tiers,
+so what it reports is the mapping in the configuration file rather than a
+notional one.
+
+A live run applies every check except the ones that only mean something against
+a recording. The corpus can assert the exact URL a search returned because the
+corpus wrote it; a backend answers with whatever it answers, and failing a
+working capability on that basis teaches whoever reads the matrix to discount
+it. Those checks are marked in the probe table and skipped live.
 
 The matrix always states which it was. One built from replayed fixtures that
 reads like one built from a live backend is exactly the plausible-looking
@@ -247,10 +256,11 @@ pending work.
   which carry a URL but no title. That is worse than a real citation and better
   than an empty result, which the client reads as "nothing found".
 
-- **Nothing about the live backend is confirmed.** Every capability claim in this
-  project is derived from the upstream protocol definitions and verified against
-  replayed fixtures. `doctor` says so on the face of its output, and
-  `roadmap.md` §L lists what only a subscription can settle.
+- **What a matrix proves depends on what answered it.** A replayed run
+  establishes that the proxy does its half; only `--live` establishes that the
+  backend does its own. `doctor` states which on the face of its output, and
+  `roadmap.md` §L records what has been settled against a live backend and what
+  has not.
 
 ---
 

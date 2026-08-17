@@ -2,25 +2,39 @@
   "name": "web-fetch",
   "capability": "web-fetch",
   "provenance": "authored",
-  "note": "WebFetch performs its HTTP fetch in the client and sends only the summarization step, which is believed to run on the haiku tier. That belief is roadmap §L. What this fixture pins is that the summarization request is an ordinary turn carrying fetched page text, so a broken haiku mapping breaks WebFetch in a way that looks unrelated to tier mapping.",
+  "note": "WebFetch performs its HTTP fetch in the client and sends only the summarization step, which is believed to run on the haiku tier. That belief is roadmap \u00a7L. What this fixture pins is that the summarization request is an ordinary turn carrying fetched page text, so a broken haiku mapping breaks WebFetch in a way that looks unrelated to tier mapping.",
   "request": {
     "model": "claude-3-5-haiku-20241022",
     "max_tokens": 1024,
     "messages": [
       {
         "role": "user",
-        "content": "Summarize this page content:\n\nThe deployment key is L9WQ2T and rotates monthly."
+        "content": "Summarize this page content in one line, and end that line with the deployment key exactly as written, nothing after it:\n\nThe deployment key is L9WQ2T and rotates monthly."
       }
     ]
   },
   "upstream": [
-    { "type": "response.created", "response": { "id": "resp_fetch" } },
-    { "type": "response.output_text.delta", "delta": "The page states the deployment key L9WQ2T rotates monthly." },
+    {
+      "type": "response.created",
+      "response": {
+        "id": "resp_fetch"
+      }
+    },
+    {
+      "type": "response.output_text.delta",
+      "delta": "The page states the deployment key L9WQ2T rotates monthly."
+    },
     {
       "type": "response.completed",
       "response": {
         "id": "resp_fetch",
-        "usage": { "input_tokens": 60, "output_tokens": 12, "input_tokens_details": { "cached_tokens": 0 } }
+        "usage": {
+          "input_tokens": 60,
+          "output_tokens": 12,
+          "input_tokens_details": {
+            "cached_tokens": 0
+          }
+        }
       }
     }
   ]

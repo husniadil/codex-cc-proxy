@@ -53,8 +53,15 @@ pub struct Probe {
     pub surface: Surface,
     /// The fixture this replays.
     pub fixture: &'static str,
-    /// What it means for this to have worked.
+    /// What it means for this to have worked, wherever it ran.
     pub checks: Vec<Check>,
+    /// Checks that only mean something against a fixture.
+    ///
+    /// A corpus can assert the exact URL a search returned because the corpus
+    /// wrote it. A live backend returns whatever it returns, and applying that
+    /// check to it would fail a working capability — which teaches whoever
+    /// reads the matrix to discount failures, the one habit it must not build.
+    pub replay_only: Vec<Check>,
     /// Why this probe exists, in terms of what breaks silently without it.
     pub rationale: &'static str,
 }
@@ -67,14 +74,17 @@ pub fn all() -> Vec<Probe> {
             surface: Surface::Messages,
             capability: Capability::ReadImage,
             fixture: "read-image",
+            replay_only: Vec::new(),
             rationale: "Without the bytes the model describes the file from its \
                         name, in hedged wording that reads as success.",
             checks: vec![
                 // The image must travel inside the output of the call that
-                // produced it, base64 intact.
+                // produced it, base64 intact. The marker is a slice from deep
+                // inside the encoded PNG: the code itself is rendered as
+                // pixels, so nothing spells it in the bytes.
                 Check::RequestContains {
                     pointer: "/input/2/output/1/image_url".to_owned(),
-                    marker: "UDdLNFhS".to_owned(),
+                    marker: "+FenH7x+dQXRB/+z55/wkvkp/zDUr24A".to_owned(),
                 },
                 Check::ClientReceives {
                     marker: "P7K4XR".to_owned(),
@@ -86,6 +96,7 @@ pub fn all() -> Vec<Probe> {
             surface: Surface::Messages,
             capability: Capability::ReadDocument,
             fixture: "read-document",
+            replay_only: Vec::new(),
             rationale: "The same failure as an image, for the file type with no \
                         upstream precedent at all.",
             checks: vec![
@@ -116,18 +127,20 @@ pub fn all() -> Vec<Probe> {
                 Check::BlockEmitted {
                     block_type: "web_search_tool_result".to_owned(),
                 },
-                // The client extracts url and title from those blocks and
-                // nothing else.
-                Check::ClientReceives {
-                    marker: "https://example.invalid/sse-spec".to_owned(),
-                },
             ],
+            // The client extracts url and title from those blocks and nothing
+            // else — but the URL is one the corpus invented, so it can only be
+            // asserted against the corpus.
+            replay_only: vec![Check::ClientReceives {
+                marker: "https://example.invalid/sse-spec".to_owned(),
+            }],
         },
         Probe {
             name: "web-fetch",
             surface: Surface::Messages,
             capability: Capability::WebFetch,
             fixture: "web-fetch",
+            replay_only: Vec::new(),
             rationale: "WebFetch summarizes on the haiku tier, so an unmapped \
                         haiku breaks it in a way that looks unrelated.",
             checks: vec![
@@ -144,6 +157,7 @@ pub fn all() -> Vec<Probe> {
             surface: Surface::Messages,
             capability: Capability::ToolSearch,
             fixture: "tool-search",
+            replay_only: Vec::new(),
             rationale: "A discovered tool that is still withheld stays \
                         permanently uncallable.",
             checks: vec![
@@ -166,6 +180,7 @@ pub fn all() -> Vec<Probe> {
             surface: Surface::Messages,
             capability: Capability::ToolCalling,
             fixture: "tool-calling",
+            replay_only: Vec::new(),
             rationale: "A call whose arguments never arrive runs the tool on \
                         nothing.",
             checks: vec![
@@ -185,6 +200,7 @@ pub fn all() -> Vec<Probe> {
             surface: Surface::Messages,
             capability: Capability::ContextMeter,
             fixture: "context-meter",
+            replay_only: Vec::new(),
             rationale: "A zero in message_start collapses the meter at the start \
                         of every turn.",
             checks: vec![
@@ -210,6 +226,7 @@ pub fn all() -> Vec<Probe> {
             surface: Surface::CountTokens,
             capability: Capability::CountTokens,
             fixture: "count-tokens",
+            replay_only: Vec::new(),
             rationale: "An absent or zero estimate leaves the client sizing a \
                         request it cannot size, before anything has been sent.",
             checks: vec![Check::PositiveInFrame {
@@ -240,15 +257,46 @@ pub struct Outcome {
     pub status: Status,
 }
 
-/// Evaluate one probe's checks against what was actually sent and received.
+/// Evaluate one probe against what was actually sent and received.
+///
+/// Every check, including the ones that only mean something against a corpus.
 pub fn evaluate(probe: &Probe, upstream_request: &Value, client_frames: &[Value]) -> Status {
+    check_all(
+        probe.checks.iter().chain(probe.replay_only.iter()),
+        upstream_request,
+        client_frames,
+    )
+}
+
+/// The same, minus the checks a live backend cannot be held to.
+///
+/// A live run proves more than a replayed one and asserts less, and those are
+/// the same fact: what the corpus knows in advance is exactly what the backend
+/// is free to answer differently.
+pub fn evaluate_live(probe: &Probe, upstream_request: &Value, client_frames: &[Value]) -> Status {
+    check_all(probe.checks.iter(), upstream_request, client_frames)
+}
+
+fn check_all<'a>(
+    checks: impl Iterator<Item = &'a Check>,
+    upstream_request: &Value,
+    client_frames: &[Value],
+) -> Status {
+    // Two views of what the client got, because markers arrive in two forms.
+    //
+    // A model spells its reply a token at a time, so a code lands split across
+    // several deltas and is contiguous only once the text is reassembled. A URL
+    // inside a search result is a whole field of a frame and appears in neither
+    // half of a delta. Scanning only the raw frames failed every attachment
+    // probe against a backend that had read the attachment and said so.
     let rendered = client_frames
         .iter()
         .map(ToString::to_string)
         .collect::<Vec<_>>()
         .join("");
+    let spoken = spoken_text(client_frames);
 
-    for check in &probe.checks {
+    for check in checks {
         match check {
             Check::RequestContains { pointer, marker } => {
                 let found = upstream_request
@@ -269,7 +317,7 @@ pub fn evaluate(probe: &Probe, upstream_request: &Value, client_frames: &[Value]
                 }
             }
             Check::ClientReceives { marker } => {
-                if !rendered.contains(marker) {
+                if !rendered.contains(marker) && !spoken.contains(marker) {
                     return Status::Failed(format!("`{marker}` never reached the client"));
                 }
             }
@@ -314,6 +362,18 @@ pub fn evaluate(probe: &Probe, upstream_request: &Value, client_frames: &[Value]
     }
 
     Status::Passed
+}
+
+/// The reply as the user would read it: every text delta, in order, joined.
+///
+/// Deliberately only the deltas. Reassembling every string in every frame would
+/// let a marker echoed back in the request satisfy a check about what the model
+/// said, which is the opposite of what these probes are for.
+fn spoken_text(frames: &[Value]) -> String {
+    frames
+        .iter()
+        .filter_map(|frame| frame.pointer("/delta/text").and_then(Value::as_str))
+        .collect()
 }
 
 /// Render the capability matrix.

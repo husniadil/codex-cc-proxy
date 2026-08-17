@@ -2,16 +2,26 @@
   "name": "read-document",
   "capability": "read-document",
   "provenance": "authored",
-  "note": "Hand-authored: the upstream client has no document representation at all, so no shape could be derived from it. The input_file part is the public API's, and whether this backend accepts it is roadmap §L. This fixture pins the translation, not the acceptance.",
+  "note": "Hand-authored: the upstream client has no document representation at all, so no shape could be captured. The PDF is a real one carrying the code as text \u2014 a stand-in payload passes on replay while proving nothing about whether the backend can read the attachment.",
   "request": {
     "model": "claude-sonnet-4",
     "max_tokens": 1024,
     "messages": [
-      { "role": "user", "content": "Read the invoice." },
+      {
+        "role": "user",
+        "content": "Read the invoice and reply with only the code it contains, verbatim."
+      },
       {
         "role": "assistant",
         "content": [
-          { "type": "tool_use", "id": "toolu_read_2", "name": "Read", "input": { "file_path": "/tmp/invoice.pdf" } }
+          {
+            "type": "tool_use",
+            "id": "toolu_read_2",
+            "name": "Read",
+            "input": {
+              "file_path": "/tmp/invoice.pdf"
+            }
+          }
         ]
       },
       {
@@ -21,8 +31,18 @@
             "type": "tool_result",
             "tool_use_id": "toolu_read_2",
             "content": [
-              { "type": "text", "text": "Read invoice.pdf" },
-              { "type": "document", "source": { "type": "base64", "media_type": "application/pdf", "data": "VjJNOVFa" } }
+              {
+                "type": "text",
+                "text": "Read invoice.pdf"
+              },
+              {
+                "type": "document",
+                "source": {
+                  "type": "base64",
+                  "media_type": "application/pdf",
+                  "data": "JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjIgMCBvYmoKPDwgL1R5cGUgL1BhZ2VzIC9LaWRzIFszIDAgUl0gL0NvdW50IDEgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiAvTWVkaWFCb3ggWzAgMCA0MjAgNjAwXSAvUmVzb3VyY2VzIDw8IC9Gb250IDw8IC9GMSA1IDAgUiA+PiA+PiAvQ29udGVudHMgNCAwIFIgPj4KZW5kb2JqCjQgMCBvYmoKPDwgL0xlbmd0aCAzNyA+PgpzdHJlYW0KQlQgL0YxIDM2IFRmIDYwIDUwMCBUZCAoVjJNOVFaKSBUaiBFVAplbmRzdHJlYW0KZW5kb2JqCjUgMCBvYmoKPDwgL1R5cGUgL0ZvbnQgL1N1YnR5cGUgL1R5cGUxIC9CYXNlRm9udCAvSGVsdmV0aWNhID4+CmVuZG9iagp4cmVmCjAgNgowMDAwMDAwMDAwIDY1NTM1IGYgCjAwMDAwMDAwMDkgMDAwMDAgbiAKMDAwMDAwMDA1OCAwMDAwMCBuIAowMDAwMDAwMTE1IDAwMDAwIG4gCjAwMDAwMDAyNDEgMDAwMDAgbiAKMDAwMDAwMDMyOCAwMDAwMCBuIAp0cmFpbGVyCjw8IC9TaXplIDYgL1Jvb3QgMSAwIFIgPj4Kc3RhcnR4cmVmCjM5OAolJUVPRgo="
+                }
+              }
             ]
           }
         ]
@@ -30,13 +50,27 @@
     ]
   },
   "upstream": [
-    { "type": "response.created", "response": { "id": "resp_read_doc" } },
-    { "type": "response.output_text.delta", "delta": "The invoice reference is V2M9QZ." },
+    {
+      "type": "response.created",
+      "response": {
+        "id": "resp_read_doc"
+      }
+    },
+    {
+      "type": "response.output_text.delta",
+      "delta": "The invoice reference is V2M9QZ."
+    },
     {
       "type": "response.completed",
       "response": {
         "id": "resp_read_doc",
-        "usage": { "input_tokens": 2100, "output_tokens": 10, "input_tokens_details": { "cached_tokens": 0 } }
+        "usage": {
+          "input_tokens": 2100,
+          "output_tokens": 10,
+          "input_tokens_details": {
+            "cached_tokens": 0
+          }
+        }
       }
     }
   ]

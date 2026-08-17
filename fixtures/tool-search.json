@@ -7,11 +7,21 @@
     "model": "claude-sonnet-4",
     "max_tokens": 1024,
     "messages": [
-      { "role": "user", "content": "Find a tool for sending messages." },
+      {
+        "role": "user",
+        "content": "Find a tool for sending messages."
+      },
       {
         "role": "assistant",
         "content": [
-          { "type": "tool_use", "id": "toolu_search_1", "name": "ToolSearch", "input": { "query": "send message" } }
+          {
+            "type": "tool_use",
+            "id": "toolu_search_1",
+            "name": "ToolSearch",
+            "input": {
+              "query": "send message"
+            }
+          }
         ]
       },
       {
@@ -21,31 +31,94 @@
             "type": "tool_result",
             "tool_use_id": "toolu_search_1",
             "content": [
-              { "type": "tool_reference", "name": "SendMessage" },
-              { "type": "tool_reference", "name": "ListChannels" }
+              {
+                "type": "tool_reference",
+                "name": "SendMessage"
+              },
+              {
+                "type": "tool_reference",
+                "name": "ListChannels"
+              }
             ]
           }
         ]
+      },
+      {
+        "role": "user",
+        "content": "Use SendMessage to send the text `ready`. Call the tool; do not describe it."
       }
     ],
     "tools": [
-      { "name": "ToolSearch", "description": "Search for tools", "input_schema": { "type": "object", "properties": { "query": { "type": "string" } } } },
-      { "name": "SendMessage", "description": "Send a message", "input_schema": { "type": "object", "properties": { "text": { "type": "string" } } }, "defer_loading": true },
-      { "name": "ListChannels", "description": "List channels", "input_schema": { "type": "object" }, "defer_loading": true },
-      { "name": "ArchiveChannel", "description": "Archive a channel", "input_schema": { "type": "object" }, "defer_loading": true }
+      {
+        "name": "ToolSearch",
+        "description": "Search for tools",
+        "input_schema": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      {
+        "name": "SendMessage",
+        "description": "Send a message",
+        "input_schema": {
+          "type": "object",
+          "properties": {
+            "text": {
+              "type": "string"
+            }
+          }
+        },
+        "defer_loading": true
+      },
+      {
+        "name": "ListChannels",
+        "description": "List channels",
+        "input_schema": {
+          "type": "object"
+        },
+        "defer_loading": true
+      },
+      {
+        "name": "ArchiveChannel",
+        "description": "Archive a channel",
+        "input_schema": {
+          "type": "object"
+        },
+        "defer_loading": true
+      }
     ]
   },
   "upstream": [
-    { "type": "response.created", "response": { "id": "resp_tool_search" } },
+    {
+      "type": "response.created",
+      "response": {
+        "id": "resp_tool_search"
+      }
+    },
     {
       "type": "response.output_item.done",
-      "item": { "type": "function_call", "call_id": "call_send_1", "name": "SendMessage", "arguments": "{\"text\":\"hello\"}" }
+      "item": {
+        "type": "function_call",
+        "call_id": "call_send_1",
+        "name": "SendMessage",
+        "arguments": "{\"text\":\"hello\"}"
+      }
     },
     {
       "type": "response.completed",
       "response": {
         "id": "resp_tool_search",
-        "usage": { "input_tokens": 700, "output_tokens": 15, "input_tokens_details": { "cached_tokens": 300 } }
+        "usage": {
+          "input_tokens": 700,
+          "output_tokens": 15,
+          "input_tokens_details": {
+            "cached_tokens": 300
+          }
+        }
       }
     }
   ]

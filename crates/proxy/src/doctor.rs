@@ -24,15 +24,21 @@ use std::sync::Mutex;
 /// What the probes ran against, in words the matrix prints verbatim.
 pub const AGAINST_REPLAY: &str = "replayed fixtures (the backend was not contacted)";
 
-/// A transport that answers from a recorded stream and records what it was
-/// asked.
-struct ReplayTransport {
-    events: Vec<Value>,
+/// The live counterpart. It spends quota, and the matrix says so.
+pub const AGAINST_LIVE: &str = "a live backend (the backend answered, and was billed)";
+
+/// A transport that forwards to the real one and remembers the request.
+///
+/// The probes assert on what the backend was sent as well as on what came
+/// back, and there is no other place to observe it: by the time the response
+/// exists the request is gone.
+struct WatchingTransport {
+    inner: Arc<dyn Transport>,
     seen: Mutex<Option<ResponsesRequest>>,
 }
 
 #[async_trait::async_trait]
-impl Transport for ReplayTransport {
+impl Transport for WatchingTransport {
     async fn stream(
         &self,
         request: &ResponsesRequest,
@@ -40,6 +46,22 @@ impl Transport for ReplayTransport {
         if let Ok(mut seen) = self.seen.lock() {
             *seen = Some(request.clone());
         }
+        self.inner.stream(request).await
+    }
+}
+
+/// A transport that answers from a recorded stream and records what it was
+/// asked.
+struct ReplayTransport {
+    events: Vec<Value>,
+}
+
+#[async_trait::async_trait]
+impl Transport for ReplayTransport {
+    async fn stream(
+        &self,
+        _request: &ResponsesRequest,
+    ) -> Result<crate::upstream::EventStream, ProxyError> {
         let payloads: Vec<Result<String, ProxyError>> = self
             .events
             .iter()
@@ -49,8 +71,42 @@ impl Transport for ReplayTransport {
     }
 }
 
+/// What the probes are answered by.
+enum Backend {
+    /// The fixture's own recorded stream. Contacts nothing, costs nothing.
+    Replay,
+    /// The real transport, and the real tier mapping. Spends quota.
+    Live {
+        transport: Arc<dyn Transport>,
+        models: Arc<Vec<ModelMapping>>,
+    },
+}
+
 /// Run the probe suite against the fixture corpus.
 pub async fn run(fixtures: &Path, only: Option<&str>) -> Result<Vec<Outcome>, ProxyError> {
+    run_against(fixtures, only, Backend::Replay).await
+}
+
+/// Run the probe suite against a real backend.
+///
+/// Each probe's request is the corpus's — the same unguessable markers — but it
+/// is answered by the backend rather than by a recording, so what passes here
+/// is the backend doing its half as well as the proxy doing its own. It spends
+/// inference quota, one turn per probe.
+pub async fn run_live(
+    fixtures: &Path,
+    only: Option<&str>,
+    transport: Arc<dyn Transport>,
+    models: Arc<Vec<ModelMapping>>,
+) -> Result<Vec<Outcome>, ProxyError> {
+    run_against(fixtures, only, Backend::Live { transport, models }).await
+}
+
+async fn run_against(
+    fixtures: &Path,
+    only: Option<&str>,
+    backend: Backend,
+) -> Result<Vec<Outcome>, ProxyError> {
     let mut outcomes = Vec::new();
 
     for probe in probe::all() {
@@ -82,7 +138,12 @@ pub async fn run(fixtures: &Path, only: Option<&str>) -> Result<Vec<Outcome>, Pr
             }
         };
 
-        if probe.surface == crate::probe::Surface::Messages && fixture.upstream.is_empty() {
+        // Only a replayed run needs the recording. Live, the backend supplies
+        // the stream and the fixture is only there for its request.
+        if matches!(backend, Backend::Replay)
+            && probe.surface == crate::probe::Surface::Messages
+            && fixture.upstream.is_empty()
+        {
             outcomes.push(Outcome {
                 name: probe.name.to_owned(),
                 capability: probe.capability,
@@ -94,7 +155,7 @@ pub async fn run(fixtures: &Path, only: Option<&str>) -> Result<Vec<Outcome>, Pr
             continue;
         }
 
-        outcomes.push(run_one(&probe, &fixture).await);
+        outcomes.push(run_one(&probe, &fixture, &backend).await);
     }
 
     if outcomes.is_empty() {
@@ -112,21 +173,37 @@ pub async fn run(fixtures: &Path, only: Option<&str>) -> Result<Vec<Outcome>, Pr
     Ok(outcomes)
 }
 
-async fn run_one(probe: &probe::Probe, fixture: &Fixture) -> Outcome {
-    let transport = Arc::new(ReplayTransport {
-        events: fixture.upstream.clone(),
-        seen: Mutex::new(None),
-    });
+async fn run_one(probe: &probe::Probe, fixture: &Fixture, backend: &Backend) -> Outcome {
+    // Both arms watch the request, because half the checks are about what the
+    // backend was sent rather than about what it said.
+    let (transport, models): (Arc<WatchingTransport>, Arc<Vec<ModelMapping>>) = match backend {
+        Backend::Replay => (
+            Arc::new(WatchingTransport {
+                inner: Arc::new(ReplayTransport {
+                    events: fixture.upstream.clone(),
+                }),
+                seen: Mutex::new(None),
+            }),
+            Arc::new(vec![ModelMapping {
+                requested: "claude-sonnet-4".to_owned(),
+                upstream: "gpt-5-codex".to_owned(),
+            }]),
+        ),
+        Backend::Live { transport, models } => (
+            Arc::new(WatchingTransport {
+                inner: Arc::clone(transport),
+                seen: Mutex::new(None),
+            }),
+            Arc::clone(models),
+        ),
+    };
 
     let state = AppState {
         effort_ceiling: None,
         catalog: Arc::new(crate::catalog::Catalog::fallback()),
         transport: Arc::clone(&transport) as Arc<dyn Transport>,
         conduits: None,
-        models: Arc::new(vec![ModelMapping {
-            requested: "claude-sonnet-4".to_owned(),
-            upstream: "gpt-5-codex".to_owned(),
-        }]),
+        models,
         recorder: None,
         record_ingress: false,
         sessions: Arc::new(crate::session::SessionStore::new()),
@@ -192,10 +269,15 @@ async fn run_one(probe: &probe::Probe, fixture: &Fixture) -> Outcome {
         .and_then(|request| serde_json::to_value(request).ok())
         .unwrap_or(Value::Null);
 
+    let status = match backend {
+        Backend::Replay => probe::evaluate(probe, &sent, &frames),
+        Backend::Live { .. } => probe::evaluate_live(probe, &sent, &frames),
+    };
+
     Outcome {
         name: probe.name.to_owned(),
         capability: probe.capability,
-        status: probe::evaluate(probe, &sent, &frames),
+        status,
     }
 }
 

@@ -26,6 +26,16 @@ expression: replay(&fixture)
       "type": "function_call_output",
       "call_id": "toolu_search_1",
       "output": "{\"available_tools\":[\"SendMessage\",\"ListChannels\"]}"
+    },
+    {
+      "type": "message",
+      "role": "user",
+      "content": [
+        {
+          "type": "input_text",
+          "text": "Use SendMessage to send the text `ready`. Call the tool; do not describe it."
+        }
+      ]
     }
   ],
   "tools": [

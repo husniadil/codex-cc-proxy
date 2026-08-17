@@ -7,6 +7,8 @@
 
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::indexing_slicing)]
 
+mod replay;
+
 use codex_cc_proxy::probe;
 use codex_cc_proxy::probe::Outcome;
 use codex_cc_proxy::probe::Status;
@@ -126,8 +128,58 @@ async fn a_probe_fails_when_the_marker_never_arrives() {
     let status = probe::evaluate(&read_image, &stripped, &[]);
 
     match status {
-        Status::Failed(reason) => assert!(reason.contains("UDdLNFhS"), "{reason}"),
+        Status::Failed(reason) => assert!(reason.contains("FenH7x"), "{reason}"),
         other => panic!("a dropped attachment should fail the probe, got {other:?}"),
+    }
+}
+
+/// A marker the model spelled across several deltas still counts as received.
+///
+/// This is not hypothetical: a recorded stream emits a reply as one delta,
+/// while a live one emits it a token at a time. Scanning the frames as raw JSON
+/// finds the marker in the first case and never in the second — so every
+/// attachment probe failed against a backend that had in fact read the
+/// attachment and said so.
+#[test]
+fn a_marker_split_across_deltas_still_counts() {
+    let probe = probe::all()
+        .into_iter()
+        .find(|probe| probe.name == "web-fetch")
+        .unwrap();
+
+    let frames: Vec<serde_json::Value> = ["The key is L", "9WQ", "2T."]
+        .iter()
+        .map(|piece| {
+            serde_json::json!({
+                "type": "content_block_delta",
+                "delta": { "type": "text_delta", "text": piece },
+            })
+        })
+        .collect();
+
+    let request = serde_json::json!({ "input": "L9WQ2T" });
+
+    assert_eq!(probe::evaluate(&probe, &request, &frames), Status::Passed);
+}
+
+/// And a marker that never arrives still fails, however the deltas fall.
+#[test]
+fn reassembly_does_not_invent_a_marker() {
+    let probe = probe::all()
+        .into_iter()
+        .find(|probe| probe.name == "web-fetch")
+        .unwrap();
+
+    let frames = vec![serde_json::json!({
+        "type": "content_block_delta",
+        "delta": { "type": "text_delta", "text": "I could not read the page." },
+    })];
+
+    let request = serde_json::json!({ "input": "L9WQ2T" });
+
+    match probe::evaluate(&probe, &request, &frames) {
+        Status::Failed(reason) => assert!(reason.contains("L9WQ2T"), "{reason}"),
+        other => panic!("a missing marker must fail, got {other:?}"),
     }
 }
 
@@ -179,6 +231,76 @@ async fn the_matrix_states_its_evidence() {
         "{rendered}"
     );
     assert!(rendered.contains("read-image"), "{rendered}");
+}
+
+/// A live run reaches a real transport and says so.
+///
+/// The transport here answers from a loopback server rather than the backend —
+/// no test in this suite reaches the network — but it is the shipping transport
+/// carrying a real request, which is what distinguishes this path from the
+/// replay one. What it proves is the wiring: that `--live` sends the probe's
+/// own request through the stack that ships and evaluates what comes back.
+#[tokio::test]
+async fn a_live_run_uses_the_transport_and_labels_itself() {
+    let fixture: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(corpus().join("tool-calling.json")).unwrap())
+            .unwrap();
+    let events: Vec<serde_json::Value> =
+        serde_json::from_value(fixture["upstream"].clone()).unwrap();
+
+    let server = replay::ReplayServer::start(replay::Behavior::Events(events)).await;
+    let transport = std::sync::Arc::new(codex_cc_proxy::upstream::http::HttpTransport::new(
+        server.url.clone(),
+    ));
+
+    let outcomes = codex_cc_proxy::doctor::run_live(
+        &corpus(),
+        Some("tool-calling"),
+        transport,
+        std::sync::Arc::new(vec![codex_cc_proxy::ingress::ModelMapping {
+            requested: "claude-sonnet-4".to_owned(),
+            upstream: "gpt-5-codex".to_owned(),
+        }]),
+    )
+    .await
+    .expect("the probe should be known");
+
+    assert_eq!(outcomes[0].status, Status::Passed);
+
+    // The request the backend saw is the probe's own, not a fixture replayed
+    // back at itself.
+    let seen = server.requests();
+    assert_eq!(seen.len(), 1, "the live run should have sent one request");
+    assert_eq!(seen[0]["model"], serde_json::json!("gpt-5-codex"));
+
+    let rendered = probe::matrix(&outcomes, codex_cc_proxy::doctor::AGAINST_LIVE);
+    assert!(rendered.contains("the backend answered"), "{rendered}");
+}
+
+/// A check that only means something against a fixture does not run live.
+///
+/// The web-search probe asserts a URL invented for the corpus. A live search
+/// returns whatever it returns, so applying that check live would fail a
+/// working capability — and quietly train whoever reads the matrix to ignore
+/// it.
+#[test]
+fn fixture_bound_checks_are_marked_as_such() {
+    let search = probe::all()
+        .into_iter()
+        .find(|probe| probe.name == "web-search")
+        .expect("the web-search probe");
+
+    assert!(
+        search
+            .replay_only
+            .iter()
+            .any(|check| format!("{check:?}").contains("example.invalid")),
+        "the invented URL must be a replay-only check"
+    );
+    assert!(
+        !format!("{:?}", search.checks).contains("example.invalid"),
+        "and must not be one of the checks a live run applies"
+    );
 }
 
 /// Every capability in §1 has a probe. One without is a capability whose silent

@@ -45,18 +45,94 @@ async fn main() -> Result<()> {
     }
 }
 
+/// The transport a live probe run answers through: HTTP, with the stored
+/// credentials.
+///
+/// HTTP rather than the conduit. A probe is one turn with no continuation, so
+/// nothing here exercises the incremental path, and the WebSocket transport's
+/// value is entirely in that path. The simpler transport is also the one whose
+/// failures are legible when a probe does fail.
+fn live_transport() -> Result<Arc<dyn codex_cc_proxy::upstream::Transport>> {
+    let credentials: Arc<dyn codex_cc_proxy::auth::store::CredentialStore> = Arc::new(
+        codex_cc_proxy::auth::store::FileStore::new(credential_path()),
+    );
+    let tokens = Arc::new(codex_cc_proxy::auth::tokens::TokenSource::new(
+        credentials,
+        codex_cc_proxy::auth::flow::token_endpoint(),
+        codex_cc_proxy::auth::flow::CLIENT_ID,
+        Arc::new(codex_cc_proxy::auth::tokens::SystemClock),
+    ));
+
+    Ok(Arc::new(
+        HttpTransport::new(UPSTREAM_ENDPOINT).with_credentials(tokens),
+    ))
+}
+
+/// The mapping a live probe run uses: the operator's own.
+///
+/// The corpus asks for tier ids, and mapping them through the configuration is
+/// the point — `web-fetch` asks on the haiku id specifically, so a live run
+/// answers whether the tier the client's secondary conversations land on is
+/// mapped to something that works.
+fn live_models() -> Result<Arc<Vec<ModelMapping>>> {
+    let tiers = Config::load()?.tiers.resolve()?;
+    let by_tier = |name: &str| {
+        tiers
+            .iter()
+            .find(|tier| tier.tier == name)
+            .map(|tier| tier.model.clone())
+    };
+
+    let mut models: Vec<ModelMapping> = tiers
+        .iter()
+        .map(|tier| ModelMapping {
+            requested: tier.tier.to_owned(),
+            upstream: tier.model.clone(),
+        })
+        .collect();
+
+    // The corpus names concrete model ids rather than tier words, because that
+    // is what the client sends.
+    for (requested, tier) in [
+        ("claude-sonnet-4", "sonnet"),
+        ("claude-3-5-haiku-20241022", "haiku"),
+    ] {
+        if let Some(upstream) = by_tier(tier) {
+            models.push(ModelMapping {
+                requested: requested.to_owned(),
+                upstream,
+            });
+        }
+    }
+
+    Ok(Arc::new(models))
+}
+
 /// Probe the capabilities, and say what the answer rests on.
 async fn doctor(args: cli::DoctorArgs) -> Result<()> {
     let fixtures = args
         .fixtures
         .unwrap_or_else(|| std::path::PathBuf::from("fixtures"));
 
-    let outcomes = codex_cc_proxy::doctor::run(&fixtures, args.probe.as_deref()).await?;
+    let (outcomes, against) = if args.live {
+        (
+            codex_cc_proxy::doctor::run_live(
+                &fixtures,
+                args.probe.as_deref(),
+                live_transport()?,
+                live_models()?,
+            )
+            .await?,
+            codex_cc_proxy::doctor::AGAINST_LIVE,
+        )
+    } else {
+        (
+            codex_cc_proxy::doctor::run(&fixtures, args.probe.as_deref()).await?,
+            codex_cc_proxy::doctor::AGAINST_REPLAY,
+        )
+    };
 
-    println!(
-        "{}",
-        codex_cc_proxy::probe::matrix(&outcomes, codex_cc_proxy::doctor::AGAINST_REPLAY)
-    );
+    println!("{}", codex_cc_proxy::probe::matrix(&outcomes, against));
 
     let failed = outcomes
         .iter()
