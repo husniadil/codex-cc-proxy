@@ -321,7 +321,7 @@ async fn run_with(args: RunArgs, capture: Capture) -> Result<()> {
 
     // Refused before binding: a daemon that starts with an incomplete mapping
     // breaks WebFetch in a way that looks unrelated to tier mapping (§7.1).
-    let tiers = config.tiers.resolve()?;
+    let mut tiers = config.tiers.resolve()?;
 
     // Also refused before binding, so a mistyped ceiling is caught at startup
     // rather than silently spending at full rate.
@@ -367,6 +367,18 @@ async fn run_with(args: RunArgs, capture: Capture) -> Result<()> {
             codex_cc_proxy::catalog::Catalog::fallback()
         }
     });
+
+    // A shipped default naming a model this account cannot see is replaced
+    // rather than refused: `gpt-5.6-sol` is plan-gated, so the default mapping
+    // would otherwise fail to start for most accounts. A model the operator
+    // stated is left alone and validated below.
+    let substituted = catalog.substitute_unavailable_defaults(&mut tiers);
+    if !substituted.is_empty() {
+        tracing::info!(
+            tiers = substituted.join(", "),
+            "some default tier mappings were substituted for models this account has"
+        );
+    }
 
     // An unknown model id is refused here, and the error names what the catalog
     // does have — which is the fastest way to find the id you actually meant.

@@ -51,6 +51,18 @@ pub struct TranslateOptions {
     /// turn changes `instructions`, and a delta requires every non-input field
     /// to be unchanged (§4.3).
     pub instructions_lead: Option<String>,
+    /// §2.1 — the working budget, between the client's prompt and the
+    /// operator's own text.
+    ///
+    /// After the prompt because it exists to overrule the parts of it that ask
+    /// for broad reading before acting, and an instruction placed before the
+    /// one it modifies reads as a suggestion rather than a correction. Before
+    /// the trailer because the trailer is what an operator wrote deliberately,
+    /// and a shipped default has no business outranking that.
+    ///
+    /// Same stability requirement as the lead: constant for a conversation, or
+    /// every delta and every cache hit is lost.
+    pub instructions_budget: Option<String>,
     /// §2.1 — operator text placed after the client's system prompt.
     ///
     /// Last, and that is the point: an instruction meant to take precedence
@@ -174,6 +186,7 @@ fn build_instructions(request: &MessagesRequest, options: &TranslateOptions) -> 
     let parts: Vec<&str> = [
         options.instructions_lead.as_deref(),
         system.as_deref(),
+        options.instructions_budget.as_deref(),
         options.instructions_trailer.as_deref(),
     ]
     .into_iter()

@@ -1089,3 +1089,67 @@ fn an_unknown_set_of_supported_efforts_changes_nothing() {
 
     assert_eq!(out["reasoning"]["effort"], json!("minimal"));
 }
+
+// ---------------------------------------------------------------------------
+// §2.1 — the working budget.
+// ---------------------------------------------------------------------------
+
+/// The budget sits after the client's prompt and before the operator's text.
+///
+/// After the prompt, because it exists to overrule the parts of that prompt
+/// that tell the model to read broadly before acting — an instruction placed
+/// before the one it modifies reads as a suggestion the later text overrides.
+///
+/// Before the operator's trailer, because the trailer is what an operator wrote
+/// on purpose and a shipped default should not outrank it.
+#[test]
+fn the_working_budget_sits_between_the_prompt_and_the_operator_text() {
+    let request: codex_cc_proxy_core::anthropic::MessagesRequest = serde_json::from_value(json!({
+        "model": "gpt-5.5",
+        "max_tokens": 1024,
+        "system": "You are Claude Code.",
+        "messages": [{ "role": "user", "content": "hello" }],
+    }))
+    .unwrap();
+
+    let out = serde_json::to_value(translate_request(
+        &request,
+        &TranslateOptions {
+            instructions_lead: Some("You are gpt-5.".to_owned()),
+            instructions_budget: Some("Read the smallest slice.".to_owned()),
+            instructions_trailer: Some("Answer briefly.".to_owned()),
+            ..TranslateOptions::default()
+        },
+    ))
+    .unwrap();
+
+    assert_eq!(
+        out["instructions"],
+        json!(
+            "You are gpt-5.\n\nYou are Claude Code.\n\nRead the smallest slice.\n\nAnswer briefly."
+        )
+    );
+}
+
+/// Switched off, it leaves nothing behind — not a heading, not a blank run.
+#[test]
+fn no_working_budget_leaves_no_trace() {
+    let request: codex_cc_proxy_core::anthropic::MessagesRequest = serde_json::from_value(json!({
+        "model": "gpt-5.5",
+        "max_tokens": 1024,
+        "system": "You are Claude Code.",
+        "messages": [{ "role": "user", "content": "hello" }],
+    }))
+    .unwrap();
+
+    let out = serde_json::to_value(translate_request(
+        &request,
+        &TranslateOptions {
+            instructions_budget: None,
+            ..TranslateOptions::default()
+        },
+    ))
+    .unwrap();
+
+    assert_eq!(out["instructions"], json!("You are Claude Code."));
+}

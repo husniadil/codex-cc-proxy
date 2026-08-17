@@ -1,6 +1,11 @@
 //! `docs/proxy-behavior.md` §7.0 — the model catalog.
 
+use crate::config::ResolvedTier;
 use crate::error::ProxyError;
+
+/// Which model to fall back to when a shipped default is unavailable, in order
+/// of preference. The workhorse first: it is the one most accounts have.
+const DEFAULT_PREFERENCE: [&str; 3] = ["gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.5"];
 use serde::Deserialize;
 use std::collections::BTreeMap;
 
@@ -240,6 +245,52 @@ impl Catalog {
             .filter(|id| self.models.get(*id).is_some_and(|model| !model.visible))
             .cloned()
             .collect()
+    }
+
+    /// Replace defaulted models this account cannot see.
+    ///
+    /// A shipped default is a guess about an account this proxy has never seen.
+    /// `gpt-5.6-sol` is plan-gated and absent from a free account's catalog, so
+    /// a default naming it would refuse to start for most people — and a
+    /// default that cannot start is worse than no default. The same happens
+    /// whenever a model is renamed or retired out from under a released binary.
+    ///
+    /// A model the operator stated is never touched. They may know something
+    /// this catalog does not, and quietly serving a different model than the
+    /// one asked for is worse than refusing; `validate` is what speaks to that.
+    ///
+    /// Returns the tiers that were changed, so the caller can say so.
+    pub fn substitute_unavailable_defaults(&self, tiers: &mut [ResolvedTier]) -> Vec<String> {
+        if !self.authoritative {
+            return Vec::new();
+        }
+
+        // Prefer another default that this account does have, so the
+        // substitution stays close to the intended shape; otherwise anything
+        // the catalog offers is better than a model that is not there.
+        let Some(replacement) = DEFAULT_PREFERENCE
+            .iter()
+            .find(|id| self.models.get(**id).is_some_and(|model| model.visible))
+            .map(|id| (*id).to_owned())
+            .or_else(|| self.selectable().first().map(|model| model.id.clone()))
+        else {
+            return Vec::new();
+        };
+
+        let mut swapped = Vec::new();
+        for tier in tiers.iter_mut() {
+            if tier.defaulted && !self.models.contains_key(&tier.model) {
+                tracing::warn!(
+                    tier = tier.tier,
+                    wanted = %tier.model,
+                    using = %replacement,
+                    "this account's catalog has no such model; the default was substituted"
+                );
+                tier.model = replacement.clone();
+                swapped.push(tier.tier.to_owned());
+            }
+        }
+        swapped
     }
 
     /// Check a tier mapping against the catalog.

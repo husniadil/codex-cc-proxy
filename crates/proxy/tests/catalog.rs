@@ -449,3 +449,73 @@ fn an_empty_catalog_explains_itself_rather_than_listing_nothing() {
         error.message
     );
 }
+
+// ---------------------------------------------------------------------------
+// Defaults are a guess about the account; a stated model is a decision. The
+// catalog is allowed to overrule the first and never the second.
+// ---------------------------------------------------------------------------
+
+use codex_cc_proxy::config::ResolvedTier;
+
+fn tier(name: &'static str, model: &str, defaulted: bool) -> ResolvedTier {
+    ResolvedTier {
+        tier: name,
+        model: model.to_owned(),
+        defaulted,
+    }
+}
+
+/// A defaulted model the account cannot see is replaced, not refused.
+///
+/// `gpt-5.6-sol` is plan-gated and absent from a free account's catalog, so a
+/// shipped default naming it would refuse to start for most people — which is
+/// the opposite of what a default is for. The same applies whenever a model is
+/// renamed or retired out from under a released binary.
+#[test]
+fn a_defaulted_model_the_catalog_lacks_is_substituted() {
+    let catalog = Catalog::parse(SAMPLE, SHIPPING).unwrap();
+    let mut tiers = vec![
+        tier("opus", "gpt-5.6-terra", true),
+        tier("fable", "gpt-5.6-absent", true),
+    ];
+
+    let swapped = catalog.substitute_unavailable_defaults(&mut tiers);
+
+    assert_eq!(swapped, vec!["fable".to_owned()]);
+    assert_eq!(
+        tiers[0].model, "gpt-5.6-terra",
+        "an available default stands"
+    );
+    assert_eq!(
+        tiers[1].model, "gpt-5.6-terra",
+        "and the absent one takes a model this account actually has"
+    );
+}
+
+/// A model the operator stated is never substituted. They may know something
+/// the catalog does not, and silently serving a different model than the one
+/// asked for is worse than refusing — `validate` is what speaks to it.
+#[test]
+fn a_stated_model_is_never_substituted() {
+    let catalog = Catalog::parse(SAMPLE, SHIPPING).unwrap();
+    let mut tiers = vec![tier("opus", "gpt-5.6-absent", false)];
+
+    let swapped = catalog.substitute_unavailable_defaults(&mut tiers);
+
+    assert!(swapped.is_empty());
+    assert_eq!(tiers[0].model, "gpt-5.6-absent");
+}
+
+/// An unreachable catalog substitutes nothing. Fetch failure is not evidence
+/// that a model went away, and swapping on it would change the mapping every
+/// time the network blinked.
+#[test]
+fn an_unavailable_catalog_substitutes_nothing() {
+    let mut tiers = vec![tier("fable", "gpt-5.6-absent", true)];
+    assert!(
+        Catalog::fallback()
+            .substitute_unavailable_defaults(&mut tiers)
+            .is_empty()
+    );
+    assert_eq!(tiers[0].model, "gpt-5.6-absent");
+}

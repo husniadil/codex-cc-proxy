@@ -47,21 +47,34 @@ async fn the_daemon_binds_loopback() {
     assert!(listener.local_addr().unwrap().ip().is_loopback());
 }
 
-/// §7.1 — an incomplete mapping refuses startup, naming what is missing.
+/// §7.1 — an omitted tier takes its default rather than refusing to start.
+///
+/// This reverses an earlier rule that required all four explicitly. The reason
+/// for that rule was that a defaulted mapping hides which model serves the
+/// cheap background traffic; `status` prints the mapping in use either way,
+/// which answers it without making the first run fail on a file nobody had
+/// written yet.
 #[test]
-fn an_incomplete_tier_mapping_refuses_to_start() {
+fn an_omitted_tier_takes_its_default() {
     let tiers = Tiers {
-        opus: Some("gpt-5.6-terra".to_owned()),
-        sonnet: Some("gpt-5.6-terra".to_owned()),
+        opus: Some("gpt-5.5".to_owned()),
+        sonnet: Some("gpt-5.5".to_owned()),
         haiku: None,
         fable: None,
     };
 
-    let error = tiers
-        .resolve()
-        .expect_err("an incomplete mapping should fail");
-    assert!(error.message.contains("haiku"), "{}", error.message);
-    assert!(error.message.contains("fable"), "{}", error.message);
+    let resolved = tiers.resolve().expect("the omitted tiers default");
+    let model = |tier: &str| {
+        resolved
+            .iter()
+            .find(|entry| entry.tier == tier)
+            .map(|entry| entry.model.as_str())
+            .unwrap()
+    };
+
+    assert_eq!(model("opus"), "gpt-5.5");
+    assert_eq!(model("haiku"), "gpt-5.6-luna");
+    assert_eq!(model("fable"), "gpt-5.6-sol");
 }
 
 /// A tier mapped to an empty string is not mapped. Treating it as present sends
@@ -267,18 +280,35 @@ fn the_configuration_is_read_from_disk() {
     assert!(config.tiers.resolve().is_ok());
 }
 
-/// A missing configuration is a first run, and the message says what to write
-/// and where. An error that only says "missing" leaves the reader to guess.
+/// A missing configuration is a first run, and a first run works.
+///
+/// Every key has a default, so there is nothing the operator must state before
+/// the daemon can serve a request. Refusing to start would be demanding a file
+/// whose entire content the daemon already knows.
 #[test]
-fn a_missing_configuration_says_what_to_write() {
+fn a_missing_configuration_falls_back_to_the_defaults() {
     let dir = tempfile::tempdir().unwrap();
 
     unsafe { std::env::set_var("CODEX_CC_PROXY_HOME", dir.path().join("nothing-here")) };
-    let error = Config::load().expect_err("a missing configuration should fail");
+    let config = Config::load().expect("a missing configuration is a first run, not a failure");
     unsafe { std::env::remove_var("CODEX_CC_PROXY_HOME") };
 
-    assert!(error.message.contains("[tiers]"), "{}", error.message);
-    assert!(error.message.contains("haiku"), "{}", error.message);
+    assert_eq!(config.port, 8787);
+    assert!(config.tiers.resolve().is_ok());
+    assert!(config.instructions.working_budget);
+}
+
+/// An unreadable configuration is still an error. Falling back there would
+/// start a daemon that ignores what the operator actually wrote.
+#[test]
+fn an_unparseable_configuration_is_still_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("config.toml"), "port = \"not a number\"").unwrap();
+
+    unsafe { std::env::set_var("CODEX_CC_PROXY_HOME", dir.path()) };
+    let error = Config::load().expect_err("a malformed configuration should fail");
+    unsafe { std::env::remove_var("CODEX_CC_PROXY_HOME") };
+
     assert!(error.message.contains("config.toml"), "{}", error.message);
 }
 
@@ -342,4 +372,112 @@ fn a_recognized_effort_parses() {
 fn no_effort_key_means_no_ceiling() {
     let config: Config = toml::from_str(codex_cc_proxy::config::EXAMPLE).unwrap();
     assert_eq!(config.effort_ceiling().unwrap(), None);
+}
+
+// ---------------------------------------------------------------------------
+// Opinionated defaults. A configuration that states nothing should still be a
+// working configuration, and the shipped answers are the ones the README gives.
+// ---------------------------------------------------------------------------
+
+/// All four tiers have defaults, and they are the mapping the README states.
+///
+/// Requiring them explicitly made an unmapped haiku impossible — and also made
+/// the first run fail on a file the operator had not written yet. A default
+/// mapping is visible in `status` and overridable in one line, which answers
+/// the original concern without the cost.
+#[test]
+fn every_tier_has_the_default_the_readme_states() {
+    let resolved = Tiers::default()
+        .resolve()
+        .expect("the defaults should resolve on their own");
+
+    let model = |tier: &str| {
+        resolved
+            .iter()
+            .find(|entry| entry.tier == tier)
+            .map(|entry| entry.model.as_str())
+            .expect("every tier is mapped")
+    };
+
+    assert_eq!(model("opus"), "gpt-5.6-terra");
+    assert_eq!(model("sonnet"), "gpt-5.6-luna");
+    assert_eq!(model("haiku"), "gpt-5.6-luna");
+    assert_eq!(model("fable"), "gpt-5.6-sol");
+}
+
+/// A configuration stating nothing at all is a working configuration.
+#[test]
+fn an_empty_configuration_resolves() {
+    let config: Config = toml::from_str("").expect("an empty configuration should parse");
+    assert!(config.tiers.resolve().is_ok());
+    assert!(config.validate().is_ok());
+}
+
+/// One stated tier overrides its default and leaves the rest alone.
+#[test]
+fn a_stated_tier_overrides_only_itself() {
+    let config: Config = toml::from_str(
+        r#"
+        [tiers]
+        opus = "gpt-5.5"
+        "#,
+    )
+    .unwrap();
+
+    let resolved = config.tiers.resolve().unwrap();
+    let model = |tier: &str| {
+        resolved
+            .iter()
+            .find(|entry| entry.tier == tier)
+            .map(|entry| entry.model.as_str())
+            .unwrap()
+    };
+
+    assert_eq!(model("opus"), "gpt-5.5");
+    assert_eq!(
+        model("haiku"),
+        "gpt-5.6-luna",
+        "the rest keep their defaults"
+    );
+}
+
+/// A tier written as blank is still refused. Defaulting a *missing* value is
+/// helpful; silently replacing something the operator wrote is not — a blank is
+/// a mistake, and an id sent empty fails on the first request instead of here.
+#[test]
+fn a_blank_tier_is_still_refused_rather_than_defaulted() {
+    let config: Config = toml::from_str(
+        r#"
+        [tiers]
+        sonnet = "   "
+        "#,
+    )
+    .unwrap();
+
+    let error = config
+        .tiers
+        .resolve()
+        .expect_err("a blank tier should still fail");
+    assert!(error.message.contains("sonnet"), "{}", error.message);
+}
+
+/// The working budget ships on, because without it the model reads broadly and
+/// spends the window fast. It is switchable, and off leaves nothing behind.
+#[test]
+fn the_working_budget_ships_on_and_can_be_switched_off() {
+    let on = Config::default();
+    let budget = on
+        .instructions
+        .budget()
+        .expect("the budget should be on by default");
+    assert!(budget.contains("smallest"), "{budget}");
+
+    let off: Config = toml::from_str(
+        r#"
+        [instructions]
+        working_budget = false
+        "#,
+    )
+    .unwrap();
+    assert_eq!(off.instructions.budget(), None);
 }

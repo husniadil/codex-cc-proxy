@@ -274,8 +274,9 @@ websocket   = true
 compression = true
 
 [instructions]
-identity = true
-append   = "..."
+identity       = true
+working_budget = true
+append         = "..."
 
 [upstream]
 client_version           = "2.0.0"
@@ -302,10 +303,17 @@ decides when compaction fires: lower compacts sooner and wastes window, higher
 risks a turn refused for length. A value outside `(0, 100]` is refused at
 startup rather than clamped.
 
-All four tiers are required. The daemon refuses to start without them, and
-validates each against the live catalog when one is reachable. That validation
-happens once, at startup: the catalog is not refetched, so a mapping cannot go
-stale while the daemon runs.
+**Every key has a default, and the file itself is optional.** A missing
+configuration is a first run, not a failure: the daemon logs where the file would
+go and starts on the defaults. A file that is present but unparseable is still an
+error — falling back there would run a daemon that ignores what the operator
+wrote.
+
+The four tiers default to the mapping above. An omitted tier takes its default; a
+tier written blank is refused, because an omission accepts the shipped answer
+while a blank is a mistake. Each mapped model is validated against the live
+catalog when one is reachable. That validation happens once, at startup: the
+catalog is not refetched, so a mapping cannot go stale while the daemon runs.
 
 `effort` caps reasoning effort on every request, whatever the client asks for —
 one of `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, `ultra`
@@ -324,7 +332,15 @@ product is being given a false premise on every turn, which is not a neutral
 default to pick on an operator's behalf. `append` is operator text placed after
 the system prompt, where an instruction has to be to take precedence over it.
 
-Both must be constant for a conversation. Text that changes between turns
+`working_budget` is a short block asking the model to read the smallest slice
+that answers the question rather than whole files, and to act once a read is
+enough. **On by default**, deliberately: the conversation is replayed upstream on
+every turn and echoed back three times, so broad reading spends the window fast.
+It sits after the client's prompt, which it exists to overrule on this point, and
+before `append`, which an operator wrote on purpose and which therefore outranks
+it.
+
+All three must be constant for a conversation. Text that changes between turns
 changes `instructions`, and that costs every delta and every cache hit.
 
 The file is read once, at startup: **v0.1 does not watch it**, and a change

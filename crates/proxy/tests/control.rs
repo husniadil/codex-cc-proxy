@@ -34,18 +34,22 @@ fn id_token(claims: Value) -> String {
 fn tiers() -> Vec<ResolvedTier> {
     vec![
         ResolvedTier {
+            defaulted: false,
             tier: "opus",
             model: "gpt-5.6-terra".to_owned(),
         },
         ResolvedTier {
+            defaulted: false,
             tier: "sonnet",
             model: "gpt-5.6-terra".to_owned(),
         },
         ResolvedTier {
+            defaulted: false,
             tier: "haiku",
             model: "gpt-5.4-mini".to_owned(),
         },
         ResolvedTier {
+            defaulted: false,
             tier: "fable",
             model: "gpt-5.4-mini".to_owned(),
         },
@@ -121,6 +125,7 @@ impl Harness {
         let tiers: Vec<ResolvedTier> = ["opus", "sonnet", "haiku", "fable"]
             .into_iter()
             .map(|tier| ResolvedTier {
+                defaulted: false,
                 tier,
                 model: model.to_owned(),
             })

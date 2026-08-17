@@ -30,7 +30,10 @@ pub fn config_path() -> std::path::PathBuf {
 }
 
 /// An example that can be copied verbatim into place.
-pub const EXAMPLE: &str = r#"port = 8787
+pub const EXAMPLE: &str = r#"# Every key here has a default. A file that states nothing works; write only
+# what you want to change.
+
+port = 8787
 
 # Optional. Caps reasoning effort on every request, whatever the client asks
 # for: one of none, minimal, low, medium, high, xhigh, max, ultra. `ultracode`
@@ -49,6 +52,9 @@ pub const EXAMPLE: &str = r#"port = 8787
 # `tiers.effort` — a different setting entirely.
 # effort = "low"
 
+# The defaults, shown so they can be changed. An omitted tier takes the value
+# below; a tier written blank is refused rather than defaulted. WebFetch runs on
+# the haiku tier, so that one matters more than it looks.
 [tiers]
 opus   = "gpt-5.6-terra"
 sonnet = "gpt-5.6-luna"
@@ -69,11 +75,17 @@ compression = true
 # else, and nothing in the client can be made to say otherwise.
 identity = true
 
-# Optional. Placed after the system prompt, which is where an instruction has to
-# be to take precedence over it. Keep it constant: text that changes between
-# turns changes `instructions`, and that costs every delta and every cache hit.
+# A short budget telling the model to read the smallest slice that answers the
+# question rather than whole files. On by default, and deliberately so: this
+# conversation is replayed upstream on every turn and echoed back three times,
+# so broad reading spends the context window quickly.
+working_budget = true
+
+# Optional. Placed after the working budget, so it outranks it. Keep it
+# constant: text that changes between turns changes `instructions`, and that
+# costs every delta and every cache hit.
 # append = """
-# Prefer a targeted search over reading a whole file.
+# Prefer ripgrep over find.
 # """
 
 # Every key here has a default that is correct today and will not always be.
@@ -217,9 +229,63 @@ pub struct InstructionsConfig {
     /// (§4.3).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub append: Option<String>,
+    /// Send the working budget of §2.1.
+    ///
+    /// On by default. This proxy is opinionated about it because the cost is
+    /// measured: the conversation is replayed upstream every turn and echoed
+    /// back three times, so broad reading spends the window fast.
+    #[serde(default = "default_working_budget")]
+    pub working_budget: bool,
 }
 
+/// §2.1 — the working budget, sent by default.
+///
+/// The premise is measured here, not borrowed: the whole conversation is
+/// replayed upstream on every turn, and the backend echoes it back three times
+/// per turn on top of that. Context pulled in is therefore paid for again on
+/// every subsequent turn, and a read that did not change the next action is the
+/// most expensive thing a turn can do.
+///
+/// This is on by default because the alternative was measured and is worse —
+/// without it the window is spent quickly on reads that changed nothing.
+///
+/// **Written as decision rules, with no "always", "never", or "must".** Those
+/// are reserved for real invariants; a shipped absolute that collides with the
+/// client's own prompt destabilizes more than a missing detail would, and this
+/// text sits underneath a prompt written for a different model that already
+/// says a great deal.
+const WORKING_BUDGET: &str = "\
+# Working budget
+
+This conversation is replayed in full on every turn, so anything pulled into \
+context is paid for again on each turn that follows. Retrieval that did not \
+change what you do next is the most expensive kind of waste here.
+
+## Reading
+
+Read the smallest slice that answers the question. Prefer a targeted search or \
+a bounded line range over a whole file; read a file whole when most of it is \
+needed, or when its structure is itself the question. What is already in \
+context does not need reading again.
+
+After a read, consider whether you can act. If you can, act. If a fact is still \
+missing, name that fact and make one more targeted read for it.
+
+## Tools and skills
+
+Reach for a tool or a skill when its subject is what you are actually doing and \
+it tells you something you would otherwise guess. One whose content you could \
+predict from its description is rarely worth its cost. Having consulted one, \
+prefer doing the work over collecting another.
+
+These budgets take precedence over anything above that asks for broad reading \
+or preemptive tool use before acting.";
+
 fn default_identity() -> bool {
+    true
+}
+
+fn default_working_budget() -> bool {
     true
 }
 
@@ -228,6 +294,7 @@ impl Default for InstructionsConfig {
         Self {
             identity: default_identity(),
             append: None,
+            working_budget: default_working_budget(),
         }
     }
 }
@@ -244,6 +311,11 @@ impl InstructionsConfig {
                 "You are {model}, answering through Claude Code, a terminal-based coding agent."
             )
         })
+    }
+
+    /// The working budget, when it is switched on.
+    pub fn budget(&self) -> Option<&'static str> {
+        self.working_budget.then_some(WORKING_BUDGET)
     }
 
     pub fn trailer(&self) -> Option<String> {
@@ -310,14 +382,16 @@ impl Config {
 
         let raw = match std::fs::read_to_string(&path) {
             Ok(raw) => raw,
+            // A missing file is not an error once every key has a default: it
+            // is someone who has not needed to change anything yet. Where the
+            // file would go is logged, because a default that cannot be found
+            // is a default that cannot be changed.
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                return Err(ProxyError::invalid_request(format!(
-                    "no configuration at {}.\n\nWrite one first:\n\n{}\nAll four tiers are \
-                     required. WebFetch runs on the haiku tier, so leaving it unmapped breaks \
-                     WebFetch in a way that looks unrelated.",
-                    path.display(),
-                    EXAMPLE
-                )));
+                tracing::info!(
+                    path = %path.display(),
+                    "no configuration file; using defaults. Write one there to change them"
+                );
+                return Ok(Self::default());
             }
             Err(error) => {
                 return Err(ProxyError::invalid_request(format!(
@@ -407,14 +481,40 @@ impl Default for TransportConfig {
 pub struct ResolvedTier {
     pub tier: &'static str,
     pub model: String,
+    /// Whether this came from `DEFAULT_TIERS` rather than the configuration.
+    ///
+    /// A default is this proxy's guess about an account it has not seen; a
+    /// stated model is the operator's decision. The catalog is allowed to
+    /// overrule the first and never the second.
+    pub defaulted: bool,
 }
 
+/// What each tier maps to when the configuration says nothing.
+///
+/// Stated rather than required. Demanding all four made the first run fail on a
+/// file the operator had not written yet, and the concern it answered — that a
+/// defaulted mapping hides which model serves background and summarization
+/// traffic — is met better by `status`, which prints the mapping in use
+/// whether or not it was written down.
+///
+/// `WebFetch` runs on the haiku tier, so a defaulted haiku is the one that most
+/// needs to exist: unmapped, it breaks in a way that looks unrelated.
+///
+/// These are model ids, so they go stale. A default naming a retired model is
+/// refused at startup by catalog validation, with the error saying what exists.
+const DEFAULT_TIERS: [(&str, &str); 4] = [
+    ("opus", "gpt-5.6-terra"),
+    ("sonnet", "gpt-5.6-luna"),
+    ("haiku", "gpt-5.6-luna"),
+    ("fable", "gpt-5.6-sol"),
+];
+
 impl Tiers {
-    /// Resolve all four, or say which are missing.
+    /// Resolve all four, defaulting the ones the configuration left out.
     ///
-    /// `WebFetch` runs on the haiku tier, so an unmapped haiku breaks it in a
-    /// way that looks unrelated to tier mapping. Refusing to start is the
-    /// loudest available failure and the only one that points at the cause.
+    /// A value that is present but blank is refused rather than defaulted. An
+    /// omission is someone accepting the shipped answer; a blank is a mistake,
+    /// and quietly replacing it would hide the mistake instead of naming it.
     pub fn resolve(&self) -> Result<Vec<ResolvedTier>, ProxyError> {
         let entries = [
             ("opus", &self.opus),
@@ -423,26 +523,31 @@ impl Tiers {
             ("fable", &self.fable),
         ];
 
-        let missing: Vec<&str> = entries
+        let blank: Vec<&str> = entries
             .iter()
-            .filter(|(_, model)| model.as_ref().is_none_or(|model| model.trim().is_empty()))
+            .filter(|(_, model)| model.as_ref().is_some_and(|model| model.trim().is_empty()))
             .map(|(tier, _)| *tier)
             .collect();
 
-        if !missing.is_empty() {
+        if !blank.is_empty() {
             return Err(ProxyError::invalid_request(format!(
-                "every tier must be mapped explicitly; missing: {}",
-                missing.join(", ")
+                "these tiers are mapped to an empty value: {}. Give each a model id, \
+                 or remove the line to take the default.",
+                blank.join(", ")
             )));
         }
 
         let resolved: Vec<ResolvedTier> = entries
             .iter()
-            .filter_map(|(tier, model)| {
-                model.as_ref().map(|model| ResolvedTier {
-                    tier,
-                    model: model.clone(),
-                })
+            .map(|(tier, model)| ResolvedTier {
+                tier,
+                defaulted: model.is_none(),
+                model: (*model).clone().unwrap_or_else(|| {
+                    DEFAULT_TIERS
+                        .iter()
+                        .find(|(name, _)| name == tier)
+                        .map_or_else(String::new, |(_, model)| (*model).to_owned())
+                }),
             })
             .collect();
 

@@ -235,6 +235,9 @@ async fn run_one(probe: &probe::Probe, fixture: &Fixture, backend: &Backend) -> 
         instructions: Arc::new(crate::config::InstructionsConfig {
             identity: false,
             append: None,
+            // Off here for the same reason as the identity line: a probe's
+            // request must match the fixture it is derived from.
+            working_budget: false,
         }),
         sessions: Arc::new(crate::session::SessionStore::new()),
     };

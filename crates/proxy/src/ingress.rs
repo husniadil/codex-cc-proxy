@@ -202,6 +202,7 @@ async fn messages(
     let options = TranslateOptions {
         supported_efforts,
         instructions_lead: state.instructions.lead(&answering),
+        instructions_budget: state.instructions.budget().map(str::to_owned),
         instructions_trailer: state.instructions.trailer(),
         model: upstream_model,
         discovered_tools: session.discovered(),

@@ -68,7 +68,26 @@ this is a lead and not part of the trailer.
 The trailer is last for the mirrored reason: an instruction meant to take
 precedence over the prompt above it has to come after it.
 
-Both are per conversation, never per turn. A lead carrying a timestamp or a
+Between the two sits the **working budget**, and it is sent by default. The
+premise is measured here rather than assumed: the conversation is replayed
+upstream on every turn (§4.3) and the backend echoes it back three times per turn
+(§4.4), so context pulled in is paid for repeatedly. Without a budget the model
+reads broadly and spends the window fast. It asks for the smallest slice that
+answers the question — a targeted search or a bounded line range over a whole
+file — and for acting once a read is sufficient.
+
+Its position is deliberate. After the client's prompt, because it exists to
+overrule the parts of that prompt asking for broad reading before acting, and an
+instruction placed before the one it modifies reads as a suggestion. Before the
+operator's trailer, because a shipped default has no business outranking text an
+operator wrote on purpose.
+
+It is written as decision rules, with no *always*, *never*, or *must*. Those are
+reserved for real invariants: a shipped absolute that collides with the client's
+own prompt destabilizes more than a missing detail, and this text sits underneath
+a prompt written for a different model that already says a great deal.
+
+All three are per conversation, never per turn. A lead carrying a timestamp or a
 token count would change `instructions` on every turn and cost the whole
 incremental path — the same failure this section already describes, arriving
 through the door built to prevent it.
@@ -643,14 +662,18 @@ catalog is skipped when the catalog is unavailable, never failed.
 
 ### 7.1 Tier mapping
 
-All four tiers — `opus`, `sonnet`, `haiku`, `fable` — must be mapped explicitly,
-each validated against the live catalog. The daemon refuses to start on an
-incomplete or invalid mapping.
+All four tiers — `opus`, `sonnet`, `haiku`, `fable` — are mapped, by the
+operator or by the shipped defaults, and each is validated against the live
+catalog. The daemon refuses to start on an invalid mapping; an incomplete one is
+completed rather than refused.
 
 The client routes different work to different tiers, and background and
-summarization traffic runs on the cheapest one. A defaulted mapping hides which
-model handles that traffic and what it costs, so the mapping is stated rather
-than inferred.
+summarization traffic runs on the cheapest one. An earlier rule required all four
+to be stated, on the grounds that a defaulted mapping hides which model handles
+that traffic and what it costs. `status` prints the mapping in use whether or not
+it was written down, which meets that concern without making a first run fail on
+a file nobody had written yet. A tier written blank is still refused: an omission
+accepts the default, a blank is a mistake.
 
 If the catalog cannot be fetched, validation is skipped rather than failed. An
 unreachable catalog is not evidence that a model went away.

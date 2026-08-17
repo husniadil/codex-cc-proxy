@@ -106,7 +106,10 @@ there, naming the ones that are — `codex-cc-proxy models` lists them too. Mode
 ids are renamed and retired over time, so treat the ones above as an example
 rather than a current list.
 
-All four tiers are required and the daemon refuses to start without them.
+All four tiers have defaults — the mapping above — so a fresh install works
+before anything is written down. Change any one of them in a single line; a tier
+written blank is refused rather than defaulted, because a blank is a mistake
+rather than a preference.
 `WebFetch` runs on the haiku tier, so an unmapped haiku breaks it in a way that
 looks like something else entirely — refusing to start is the only failure that
 points at the cause. Credentials never go in this file.

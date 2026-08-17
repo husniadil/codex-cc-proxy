@@ -80,6 +80,7 @@ impl Harness {
             instructions: Arc::new(codex_cc_proxy::config::InstructionsConfig {
                 identity: false,
                 append: None,
+                working_budget: false,
             }),
             sessions: Arc::new(codex_cc_proxy::session::SessionStore::new()),
         };
@@ -824,6 +825,9 @@ async fn the_configured_instructions_reach_the_backend() {
         instructions: Arc::new(codex_cc_proxy::config::InstructionsConfig {
             identity: true,
             append: Some("  Answer briefly.  ".to_owned()),
+            // This test asserts the exact instructions string, so the budget is
+            // off — its own placement is covered in the core translation tests.
+            working_budget: false,
         }),
         sessions: Arc::new(codex_cc_proxy::session::SessionStore::new()),
     };
@@ -862,6 +866,70 @@ async fn the_configured_instructions_reach_the_backend() {
     // Trailing, and trimmed: surrounding whitespace in a config file is
     // formatting, not instruction.
     assert!(instructions.ends_with("Answer briefly."), "{instructions}");
+}
+
+/// The working budget reaches the wire on a default configuration.
+///
+/// Every other test here switches it off so it can assert an exact string, so
+/// without this one nothing would notice if the default never left the daemon.
+/// That has happened three times in this project — a conduit that was never
+/// built, a capture flag nothing read, a catalog that went to the wrong place —
+/// and each time the unit tests were right and nothing tested the assembly.
+#[tokio::test]
+async fn the_working_budget_reaches_upstream_on_a_default_configuration() {
+    let upstream = ReplayServer::start(Behavior::Events(vec![
+        json!({ "type": "response.created", "response": { "id": "resp_1" } }),
+        completed(),
+    ]))
+    .await;
+    let state = AppState {
+        effort_ceiling: None,
+        catalog: Arc::new(codex_cc_proxy::catalog::Catalog::fallback()),
+        transport: Arc::new(HttpTransport::new(upstream.url.clone())),
+        conduits: None,
+        models: Arc::new(vec![ModelMapping {
+            requested: "claude-sonnet-5".to_owned(),
+            upstream: "gpt-5.6-terra".to_owned(),
+        }]),
+        recorder: None,
+        capture: Arc::new(codex_cc_proxy::recorder::Switches::default()),
+        usage: Arc::new(codex_cc_proxy::usage::UsageStore::default()),
+        // The shipped default, not a hand-built one.
+        instructions: Arc::new(codex_cc_proxy::config::InstructionsConfig::default()),
+        sessions: Arc::new(codex_cc_proxy::session::SessionStore::new()),
+    };
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, router(state)).await;
+    });
+
+    let response = reqwest::Client::new()
+        .post(format!("http://{addr}/v1/messages"))
+        .json(&json!({
+            "model": "claude-sonnet-5",
+            "max_tokens": 64,
+            "system": "You are Claude Code.",
+            "messages": [{ "role": "user", "content": "hi" }],
+        }))
+        .send()
+        .await
+        .unwrap();
+    let _ = response.text().await.unwrap();
+
+    let sent = upstream.requests();
+    let instructions = sent[0]["instructions"].as_str().unwrap();
+
+    assert!(instructions.contains("# Working budget"), "{instructions}");
+    assert!(
+        instructions.contains("smallest slice"),
+        "the reading rule is the point of it: {instructions}"
+    );
+    // After the client's prompt, which it exists to overrule on this point.
+    let prompt = instructions.find("You are Claude Code.").unwrap();
+    let budget = instructions.find("# Working budget").unwrap();
+    assert!(prompt < budget, "{instructions}");
 }
 
 /// Capture can be turned on while the daemon is running.
@@ -1297,6 +1365,7 @@ async fn ingress_sends_through_a_conduit_and_uploads_incrementally() {
         instructions: Arc::new(codex_cc_proxy::config::InstructionsConfig {
             identity: false,
             append: None,
+            working_budget: false,
         }),
         sessions: Arc::new(codex_cc_proxy::session::SessionStore::new()),
     };
@@ -1415,6 +1484,7 @@ async fn a_second_turn_uploads_the_new_items_and_not_nothing() {
         instructions: Arc::new(codex_cc_proxy::config::InstructionsConfig {
             identity: false,
             append: None,
+            working_budget: false,
         }),
         sessions: Arc::new(codex_cc_proxy::session::SessionStore::new()),
     };
@@ -1597,6 +1667,7 @@ async fn a_reasoning_turn_does_not_end_the_session() {
         instructions: Arc::new(codex_cc_proxy::config::InstructionsConfig {
             identity: false,
             append: None,
+            working_budget: false,
         }),
         sessions: Arc::new(codex_cc_proxy::session::SessionStore::new()),
     };
@@ -1713,6 +1784,7 @@ async fn a_failed_turn_does_not_advance_the_baseline() {
         instructions: Arc::new(codex_cc_proxy::config::InstructionsConfig {
             identity: false,
             append: None,
+            working_budget: false,
         }),
         sessions: Arc::new(codex_cc_proxy::session::SessionStore::new()),
     };
@@ -1818,6 +1890,7 @@ async fn a_request_larger_than_the_window_is_refused() {
         instructions: Arc::new(codex_cc_proxy::config::InstructionsConfig {
             identity: false,
             append: None,
+            working_budget: false,
         }),
         sessions: Arc::new(codex_cc_proxy::session::SessionStore::new()),
     };
@@ -1886,6 +1959,7 @@ async fn an_unknown_window_does_not_refuse_anything() {
         instructions: Arc::new(codex_cc_proxy::config::InstructionsConfig {
             identity: false,
             append: None,
+            working_budget: false,
         }),
         sessions: Arc::new(codex_cc_proxy::session::SessionStore::new()),
     };
@@ -1954,6 +2028,7 @@ async fn effort_is_capped_by_what_the_model_supports() {
         instructions: Arc::new(codex_cc_proxy::config::InstructionsConfig {
             identity: false,
             append: None,
+            working_budget: false,
         }),
         sessions: Arc::new(codex_cc_proxy::session::SessionStore::new()),
     };
@@ -2013,6 +2088,7 @@ async fn an_unlisted_model_does_not_cap_effort() {
         instructions: Arc::new(codex_cc_proxy::config::InstructionsConfig {
             identity: false,
             append: None,
+            working_budget: false,
         }),
         sessions: Arc::new(codex_cc_proxy::session::SessionStore::new()),
     };
