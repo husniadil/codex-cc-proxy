@@ -103,10 +103,14 @@ fn effort_for(request: &MessagesRequest, options: &TranslateOptions) -> Option<E
     }
 }
 
-/// §2.1 — the system prompt, followed by the text of any message whose role is
-/// neither user nor assistant. Such a message cannot be an input item: the
-/// backend rejects system and developer roles there, and one is enough to fail
-/// the whole request.
+/// §2.1 — the system prompt, and nothing else.
+///
+/// A message whose role is neither user nor assistant is *not* folded in here.
+/// It cannot be an input item under its own role — the backend rejects system
+/// and developer roles there — so it is carried as a `user` item instead.
+/// Folding it here looked equivalent and was not: the client attaches per-turn
+/// content that way, so `instructions` changed every turn, and a delta requires
+/// every non-input field to be unchanged.
 fn build_instructions(request: &MessagesRequest) -> Option<String> {
     let text = request.system.as_ref().map(SystemPrompt::to_text)?;
     (!text.is_empty()).then_some(text)

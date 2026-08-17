@@ -75,10 +75,12 @@ impl Transport for ReplayTransport {
 enum Backend {
     /// The fixture's own recorded stream. Contacts nothing, costs nothing.
     Replay,
-    /// The real transport, and the real tier mapping. Spends quota.
+    /// The real transport, the real tier mapping, and the operator's own
+    /// effort ceiling. Spends quota.
     Live {
         transport: Arc<dyn Transport>,
         models: Arc<Vec<ModelMapping>>,
+        effort_ceiling: Option<codex_cc_proxy_core::responses::Effort>,
     },
 }
 
@@ -93,13 +95,27 @@ pub async fn run(fixtures: &Path, only: Option<&str>) -> Result<Vec<Outcome>, Pr
 /// is answered by the backend rather than by a recording, so what passes here
 /// is the backend doing its half as well as the proxy doing its own. It spends
 /// inference quota, one turn per probe.
+///
+/// The effort ceiling is the operator's, and is applied here for the same
+/// reason it is applied to a turn: this is the one command that bills by
+/// design, so it is the last place a configured cap should be quietly ignored.
 pub async fn run_live(
     fixtures: &Path,
     only: Option<&str>,
     transport: Arc<dyn Transport>,
     models: Arc<Vec<ModelMapping>>,
+    effort_ceiling: Option<codex_cc_proxy_core::responses::Effort>,
 ) -> Result<Vec<Outcome>, ProxyError> {
-    run_against(fixtures, only, Backend::Live { transport, models }).await
+    run_against(
+        fixtures,
+        only,
+        Backend::Live {
+            transport,
+            models,
+            effort_ceiling,
+        },
+    )
+    .await
 }
 
 async fn run_against(
@@ -176,7 +192,7 @@ async fn run_against(
 async fn run_one(probe: &probe::Probe, fixture: &Fixture, backend: &Backend) -> Outcome {
     // Both arms watch the request, because half the checks are about what the
     // backend was sent rather than about what it said.
-    let (transport, models): (Arc<WatchingTransport>, Arc<Vec<ModelMapping>>) = match backend {
+    let (transport, models, effort_ceiling) = match backend {
         Backend::Replay => (
             Arc::new(WatchingTransport {
                 inner: Arc::new(ReplayTransport {
@@ -188,18 +204,24 @@ async fn run_one(probe: &probe::Probe, fixture: &Fixture, backend: &Backend) -> 
                 requested: "claude-sonnet-4".to_owned(),
                 upstream: "gpt-5-codex".to_owned(),
             }]),
+            None,
         ),
-        Backend::Live { transport, models } => (
+        Backend::Live {
+            transport,
+            models,
+            effort_ceiling,
+        } => (
             Arc::new(WatchingTransport {
                 inner: Arc::clone(transport),
                 seen: Mutex::new(None),
             }),
             Arc::clone(models),
+            *effort_ceiling,
         ),
     };
 
     let state = AppState {
-        effort_ceiling: None,
+        effort_ceiling,
         catalog: Arc::new(crate::catalog::Catalog::fallback()),
         transport: Arc::clone(&transport) as Arc<dyn Transport>,
         conduits: None,

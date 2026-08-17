@@ -21,7 +21,7 @@ pub struct ControlState {
     pub credentials: Arc<dyn CredentialStore>,
     /// The same switches the ingress path reads, so starting a capture here
     /// changes what the next turn does.
-    pub recording: Arc<crate::recorder::Switches>,
+    pub capture: Arc<crate::recorder::Switches>,
 }
 
 /// Dispatch one method.
@@ -58,11 +58,11 @@ pub fn dispatch(
                     )));
                 }
             };
-            state.recording.start(mode);
+            state.capture.start(mode);
             Ok(json!({ "recording": true, "mode": requested }))
         }
         "record.stop" => {
-            state.recording.stop();
+            state.capture.stop();
             Ok(json!({ "recording": false }))
         }
         "login" | "doctor" | "tiers.set" => Err(ProxyError::invalid_request(format!(
@@ -91,7 +91,7 @@ fn status(state: &ControlState) -> Value {
         // that cannot tell would report an unvalidated mapping as a validated
         // one.
         "catalog_authoritative": state.catalog.authoritative,
-        "recording": state.recording.any(),
+        "recording": state.capture.any(),
     })
 }
 

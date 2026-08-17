@@ -192,6 +192,10 @@ fn every_marker_is_absent_from_the_rest_of_the_corpus() {
         ("read-image", "P7K4XR"),
         ("read-document", "V2M9QZ"),
         ("web-fetch", "L9WQ2T"),
+        // The bytes of the image itself, which is what proves the attachment
+        // travelled — the code is rendered as pixels and appears nowhere in
+        // the encoding.
+        ("read-image", "+FenH7x+dQXRB/+z55/wkvkp/zDUr24A"),
     ];
 
     let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -261,6 +265,7 @@ async fn a_live_run_uses_the_transport_and_labels_itself() {
             requested: "claude-sonnet-4".to_owned(),
             upstream: "gpt-5-codex".to_owned(),
         }]),
+        None,
     )
     .await
     .expect("the probe should be known");
@@ -275,6 +280,41 @@ async fn a_live_run_uses_the_transport_and_labels_itself() {
 
     let rendered = probe::matrix(&outcomes, codex_cc_proxy::doctor::AGAINST_LIVE);
     assert!(rendered.contains("the backend answered"), "{rendered}");
+}
+
+/// A live run spends at the effort the operator configured.
+///
+/// `--live` is the one command that bills by design, so it is the last place an
+/// effort ceiling should be quietly ignored. Someone who capped effort to
+/// control what a session costs did not exempt the probes from it.
+#[tokio::test]
+async fn a_live_run_honours_the_configured_effort_ceiling() {
+    let fixture: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(corpus().join("tool-calling.json")).unwrap())
+            .unwrap();
+    let events: Vec<serde_json::Value> =
+        serde_json::from_value(fixture["upstream"].clone()).unwrap();
+
+    let server = replay::ReplayServer::start(replay::Behavior::Events(events)).await;
+    let transport = std::sync::Arc::new(codex_cc_proxy::upstream::http::HttpTransport::new(
+        server.url.clone(),
+    ));
+
+    codex_cc_proxy::doctor::run_live(
+        &corpus(),
+        Some("tool-calling"),
+        transport,
+        std::sync::Arc::new(vec![codex_cc_proxy::ingress::ModelMapping {
+            requested: "claude-sonnet-4".to_owned(),
+            upstream: "gpt-5-codex".to_owned(),
+        }]),
+        Some(codex_cc_proxy_core::responses::Effort::Low),
+    )
+    .await
+    .expect("the probe should be known");
+
+    let seen = server.requests();
+    assert_eq!(seen[0]["reasoning"]["effort"], serde_json::json!("low"));
 }
 
 /// A check that only means something against a fixture does not run live.

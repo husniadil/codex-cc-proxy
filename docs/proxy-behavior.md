@@ -77,10 +77,12 @@ shape and the only candidate that could carry a document.
 
 **Claude Code does not use it.** Measured: asked to read a PDF, the client
 rasterises it and sends `image` blocks, so a PDF reaches the model through the
-image path — which is the shape the upstream client does exercise. The document
-path exists for a client that sends `document` blocks, and whether this backend
-accepts `input_file` remains untested because nothing has yet sent one. It fails
-loudly if not: a rejected part is a request error, not a silently dropped file.
+image path — which is the shape the upstream client does exercise.
+
+The document path exists for a client that sends `document` blocks, and the
+backend does accept it — measured by posting one directly, which returned a
+code that existed nowhere but inside the PDF. It would fail loudly if not: a
+rejected part is a request error, not a silently dropped file.
 
 Assistant content is `output_text` only. An attachment appearing in an assistant
 message is dropped rather than converted.

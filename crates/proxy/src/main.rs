@@ -121,6 +121,7 @@ async fn doctor(args: cli::DoctorArgs) -> Result<()> {
                 args.probe.as_deref(),
                 live_transport()?,
                 live_models()?,
+                Config::load()?.effort_ceiling()?,
             )
             .await?,
             codex_cc_proxy::doctor::AGAINST_LIVE,
@@ -320,7 +321,7 @@ async fn run_with(args: RunArgs, capture: Capture) -> Result<()> {
         tiers: Arc::new(tiers.clone()),
         catalog: Arc::clone(&catalog),
         credentials: Arc::clone(&credentials),
-        recording: Arc::clone(&switches),
+        capture: Arc::clone(&switches),
     };
     let socket_path = control::default_path();
     tokio::spawn(async move {

@@ -20,9 +20,10 @@ against a local replay server, so the suite is fully green without credentials
 and without quota. That is a design constraint, not a convenience: a test that
 needs a live backend is a test that stops running the moment quota runs out.
 
-`just doctor` and `just record upstream` are the only things here that spend
-quota, and neither is part of the gate. `just record ingress` captures what the
-client sends and costs nothing.
+`just doctor --live` and `just record upstream` are the only things here that
+spend quota, and neither is part of the gate. Plain `just doctor` answers the
+same probes from the fixture corpus and contacts nothing; `just record ingress`
+captures what the client sends and costs nothing.
 
 ## The specification comes first
 
