@@ -253,10 +253,16 @@ pending work.
   or retired while the live fetch is unavailable. Its entries carry no context
   window, so the window guard does not fire for a model the fallback named.
 
-- **`input_file` has never been exercised.** Claude Code rasterises PDFs into
-  image blocks, so documents reach the model through the image path. The
-  `document` translation exists for a client that sends one; whether this
-  backend accepts `input_file` is still unknown.
+- **Claude Code never reaches the `input_file` path.** It rasterises PDFs into
+  image blocks, so documents from that client reach the model as images. The
+  `document` translation is for a client that sends one, and the backend does
+  accept it — measured by posting a `document` block directly, which returned a
+  code that existed only inside the PDF.
+
+- **Compression is unavailable over WebSocket.** The endpoint offers
+  `permessage-deflate`, negotiated during the upgrade, and no published Rust
+  WebSocket library implements the extension. HTTP bodies are zstd-compressed;
+  WebSocket frames are plain text JSON. It costs bytes, not tokens.
 
 - **A web search that produced no citations reports the pages the model opened**,
   which carry a URL but no title. That is worse than a real citation and better

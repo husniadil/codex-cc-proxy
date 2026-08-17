@@ -32,16 +32,18 @@ implementation is wrong in a way that does not fail loudly.
 
 ## Status
 
-**v0.1.0, and honest about what that means.** Everything here is verified
-against a local replay server built from the upstream protocol definitions. No
-part of it has been confirmed against a live backend, because the subscription
-it was written on is out of quota.
+**v0.1.0.** Everything here is verified against a local replay server built
+from the upstream protocol definitions, and the whole suite runs without
+credentials or quota. Every capability probe has since also been answered by a
+live backend — `doctor --live` runs the same probes against the real thing, and
+all of them pass.
 
-That is a real distinction and the project keeps it visible: `doctor` states
-what its capability matrix was run against, and
-[`docs/roadmap.md`](docs/roadmap.md) §L lists every question only a working
-subscription can answer. Treat a green matrix as evidence the proxy does its
-half.
+The distinction between those two stays visible, because it is a real one: a
+replayed matrix establishes that the proxy does its half, and only a live one
+establishes that the backend does its own. `doctor` states which it was on the
+face of its output, and [`docs/roadmap.md`](docs/roadmap.md) §L records every
+question that needed a live backend, what it turned out to be, and what it
+falsified on the way.
 
 ---
 

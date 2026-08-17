@@ -20,8 +20,8 @@ First release.
   search tool and its structured results, deferred tool discovery, reasoning,
   and the context meter.
 - **Both transports.** WebSocket with one connection reused per session,
-  prewarm, incremental upload, and zstd compression; HTTP with SSE as an equal
-  fallback that a session latches to rather than retrying.
+  prewarm, and incremental upload; HTTP with SSE as an equal fallback that a
+  session latches to rather than retrying, carrying a zstd-compressed body.
 - **OAuth with PKCE**, a `CredentialStore` behind a trait with a `0600` file
   implementation, single-flight refresh, and terminal handling of a refused
   grant.
@@ -34,7 +34,11 @@ First release.
 
 ### Known limitations
 
-Listed in [`docs/api.md`](docs/api.md) §5. The most important: nothing here has
-been confirmed against a live backend. Every claim is derived from the upstream
-protocol definitions and verified against replayed fixtures.
-`docs/roadmap.md` §L lists what only a subscription can settle.
+Listed in [`docs/api.md`](docs/api.md) §5. The suite never touches the network,
+so every claim it makes is about the proxy's own half. The backend's half was
+settled separately, against a live subscription: `docs/roadmap.md` §L records
+each question and its answer, including the four rules the answers falsified.
+
+Compression over WebSocket is the one thing still unavailable — the extension
+the endpoint offers is `permessage-deflate`, which no published Rust WebSocket
+library implements.
