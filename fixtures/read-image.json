@@ -4,7 +4,7 @@
   "provenance": "authored",
   "note": "The tool-result shape is restated from the upstream protocol's function-call output payload. The image is a real PNG whose pixels spell the code: a stand-in payload passes on replay while proving nothing about whether the backend can read an attachment at all.",
   "request": {
-    "model": "claude-sonnet-4",
+    "model": "claude-sonnet-5",
     "max_tokens": 1024,
     "system": "You are Claude Code.",
     "messages": [

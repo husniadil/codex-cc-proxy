@@ -4,7 +4,7 @@
   "provenance": "authored",
   "note": "WebFetch performs its HTTP fetch in the client and sends only the summarization step, which is believed to run on the haiku tier. That belief is roadmap \u00a7L. What this fixture pins is that the summarization request is an ordinary turn carrying fetched page text, so a broken haiku mapping breaks WebFetch in a way that looks unrelated to tier mapping.",
   "request": {
-    "model": "claude-3-5-haiku-20241022",
+    "model": "claude-haiku-4-5-20251001",
     "max_tokens": 1024,
     "messages": [
       {

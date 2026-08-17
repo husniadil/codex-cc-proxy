@@ -262,8 +262,8 @@ async fn a_live_run_uses_the_transport_and_labels_itself() {
         Some("tool-calling"),
         transport,
         std::sync::Arc::new(vec![codex_cc_proxy::ingress::ModelMapping {
-            requested: "claude-sonnet-4".to_owned(),
-            upstream: "gpt-5-codex".to_owned(),
+            requested: "claude-sonnet-5".to_owned(),
+            upstream: "gpt-5.6-terra".to_owned(),
         }]),
         None,
     )
@@ -276,7 +276,7 @@ async fn a_live_run_uses_the_transport_and_labels_itself() {
     // back at itself.
     let seen = server.requests();
     assert_eq!(seen.len(), 1, "the live run should have sent one request");
-    assert_eq!(seen[0]["model"], serde_json::json!("gpt-5-codex"));
+    assert_eq!(seen[0]["model"], serde_json::json!("gpt-5.6-terra"));
 
     let rendered = probe::matrix(&outcomes, codex_cc_proxy::doctor::AGAINST_LIVE);
     assert!(rendered.contains("the backend answered"), "{rendered}");
@@ -305,8 +305,8 @@ async fn a_live_run_honours_the_configured_effort_ceiling() {
         Some("tool-calling"),
         transport,
         std::sync::Arc::new(vec![codex_cc_proxy::ingress::ModelMapping {
-            requested: "claude-sonnet-4".to_owned(),
-            upstream: "gpt-5-codex".to_owned(),
+            requested: "claude-sonnet-5".to_owned(),
+            upstream: "gpt-5.6-terra".to_owned(),
         }]),
         Some(codex_cc_proxy_core::responses::Effort::Low),
     )

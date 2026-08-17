@@ -9,10 +9,10 @@ use pretty_assertions::assert_eq;
 
 fn complete_tiers() -> Tiers {
     Tiers {
-        opus: Some("gpt-5-codex".to_owned()),
-        sonnet: Some("gpt-5-codex".to_owned()),
-        haiku: Some("gpt-5-codex-mini".to_owned()),
-        fable: Some("gpt-5-codex-mini".to_owned()),
+        opus: Some("gpt-5.6-terra".to_owned()),
+        sonnet: Some("gpt-5.6-terra".to_owned()),
+        haiku: Some("gpt-5.4-mini".to_owned()),
+        fable: Some("gpt-5.4-mini".to_owned()),
     }
 }
 
@@ -51,8 +51,8 @@ async fn the_daemon_binds_loopback() {
 #[test]
 fn an_incomplete_tier_mapping_refuses_to_start() {
     let tiers = Tiers {
-        opus: Some("gpt-5-codex".to_owned()),
-        sonnet: Some("gpt-5-codex".to_owned()),
+        opus: Some("gpt-5.6-terra".to_owned()),
+        sonnet: Some("gpt-5.6-terra".to_owned()),
         haiku: None,
         fable: None,
     };
@@ -70,10 +70,10 @@ fn an_incomplete_tier_mapping_refuses_to_start() {
 #[test]
 fn a_blank_tier_counts_as_missing() {
     let tiers = Tiers {
-        opus: Some("gpt-5-codex".to_owned()),
+        opus: Some("gpt-5.6-terra".to_owned()),
         sonnet: Some("   ".to_owned()),
-        haiku: Some("gpt-5-codex-mini".to_owned()),
-        fable: Some("gpt-5-codex-mini".to_owned()),
+        haiku: Some("gpt-5.4-mini".to_owned()),
+        fable: Some("gpt-5.4-mini".to_owned()),
     };
 
     let error = tiers.resolve().expect_err("a blank tier should fail");
@@ -94,7 +94,7 @@ fn a_complete_mapping_resolves_all_four() {
 #[test]
 fn a_model_id_carrying_a_1m_marker_is_rejected() {
     let tiers = Tiers {
-        opus: Some("gpt-5-codex[1m]".to_owned()),
+        opus: Some("gpt-5.6-terra[1m]".to_owned()),
         ..complete_tiers()
     };
 
@@ -111,10 +111,10 @@ fn configuration_parses_with_documented_defaults() {
     let config: Config = toml::from_str(
         r#"
         [tiers]
-        opus   = "gpt-5-codex"
-        sonnet = "gpt-5-codex"
-        haiku  = "gpt-5-codex-mini"
-        fable  = "gpt-5-codex-mini"
+        opus   = "gpt-5.6-terra"
+        sonnet = "gpt-5.6-terra"
+        haiku  = "gpt-5.4-mini"
+        fable  = "gpt-5.4-mini"
         "#,
     )
     .expect("the documented shape should parse");

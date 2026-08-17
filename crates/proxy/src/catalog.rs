@@ -45,6 +45,17 @@ impl Model {
             .max()
     }
 
+    /// Every effort this model accepts, as the translation understands them.
+    ///
+    /// Levels this proxy has no name for are dropped rather than guessed at:
+    /// an effort it cannot represent is one it could not have sent anyway.
+    pub fn supported_efforts(&self) -> Vec<codex_cc_proxy_core::responses::Effort> {
+        self.efforts
+            .iter()
+            .filter_map(|effort| codex_cc_proxy_core::responses::Effort::parse(effort))
+            .collect()
+    }
+
     /// The window the guard actually enforces.
     pub fn effective_window(&self) -> Option<u64> {
         let window = self.context_window?;
@@ -112,8 +123,13 @@ impl Catalog {
     /// Ids only. A fallback entry states no window, so the guard does not fire
     /// for it — the daemon starts and reports honestly rather than blocking on
     /// an unreachable catalog or inventing figures it does not have.
+    ///
+    /// The list needs updating when models are renamed or retired, and goes
+    /// stale silently: nothing here can tell that an id has stopped existing.
+    /// That is why it is only ever a fallback, and why the catalog it stands in
+    /// for is marked non-authoritative when it is used.
     pub fn fallback() -> Self {
-        let models = ["gpt-5-codex", "gpt-5-codex-mini", "gpt-5", "gpt-5-mini"]
+        let models = ["gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5", "gpt-5.4-mini"]
             .into_iter()
             .map(|id| {
                 (

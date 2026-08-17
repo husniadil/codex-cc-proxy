@@ -4,7 +4,7 @@
   "provenance": "authored",
   "note": "Hand-authored: the upstream client has no document representation at all, so no shape could be captured. The PDF is a real one carrying the code as text \u2014 a stand-in payload passes on replay while proving nothing about whether the backend can read the attachment.",
   "request": {
-    "model": "claude-sonnet-4",
+    "model": "claude-sonnet-5",
     "max_tokens": 1024,
     "messages": [
       {

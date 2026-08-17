@@ -96,8 +96,8 @@ fn live_models() -> Result<Arc<Vec<ModelMapping>>> {
     // The corpus names concrete model ids rather than tier words, because that
     // is what the client sends.
     for (requested, tier) in [
-        ("claude-sonnet-4", "sonnet"),
-        ("claude-3-5-haiku-20241022", "haiku"),
+        ("claude-sonnet-5", "sonnet"),
+        ("claude-haiku-4-5-20251001", "haiku"),
     ] {
         if let Some(upstream) = by_tier(tier) {
             models.push(ModelMapping {
@@ -418,9 +418,19 @@ async fn run_with(args: RunArgs, capture: Capture) -> Result<()> {
         ))
     });
 
+    // The fetched catalog, not a fresh fallback. Everything that depends on
+    // knowing a model — the window guard (§7.2) and both effort caps (§2.7) —
+    // reads it from here, and a fallback entry states neither, so handing one
+    // over leaves all three silently doing nothing.
+    tracing::info!(
+        models = catalog.ids().len(),
+        authoritative = catalog.authoritative,
+        "model catalog in use"
+    );
+
     let state = AppState {
         effort_ceiling,
-        catalog: Arc::new(codex_cc_proxy::catalog::Catalog::fallback()),
+        catalog: Arc::clone(&catalog),
         // Only reached if the factory is absent, which it is not here.
         transport: Arc::new(
             HttpTransport::new(UPSTREAM_ENDPOINT).with_credentials(Arc::clone(&tokens)),

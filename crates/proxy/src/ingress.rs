@@ -165,6 +165,18 @@ async fn messages(
     // behind it stops at `xhigh` while another goes to `max`. Forwarding an
     // effort the model does not support fails the turn for a reason the client
     // could not have anticipated or fixed.
+    let catalog_entry = state
+        .models
+        .iter()
+        .find(|mapping| mapping.requested == request.model)
+        .map(|mapping| mapping.upstream.as_str())
+        .or(Some(request.model.as_str()))
+        .and_then(|model| state.catalog.get(model));
+
+    let supported_efforts = catalog_entry
+        .map(crate::catalog::Model::supported_efforts)
+        .unwrap_or_default();
+
     let model_ceiling = state
         .models
         .iter()
@@ -188,6 +200,7 @@ async fn messages(
         .unwrap_or_else(|| request.model.clone());
 
     let options = TranslateOptions {
+        supported_efforts,
         instructions_lead: state.instructions.lead(&answering),
         instructions_trailer: state.instructions.trailer(),
         model: upstream_model,

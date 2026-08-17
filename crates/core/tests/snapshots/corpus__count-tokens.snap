@@ -4,7 +4,7 @@ expression: replay(&fixture)
 ---
 --- request ---
 {
-  "model": "claude-sonnet-4",
+  "model": "claude-sonnet-5",
   "instructions": "You are Claude Code.",
   "input": [
     {

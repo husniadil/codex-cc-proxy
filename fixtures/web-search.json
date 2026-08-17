@@ -4,7 +4,7 @@
   "provenance": "derived",
   "note": "The request is the secondary conversation Claude Code opens for WebSearch, declaring the server-side tool with a versioned type and no input_schema. The web_search_call item and its action shape are restated from the upstream protocol. The url_citation annotation is NOT derived from it — the upstream client discards annotations and never sees a cited URL — so that part is the public API's shape and is roadmap §L.",
   "request": {
-    "model": "claude-sonnet-4",
+    "model": "claude-sonnet-5",
     "max_tokens": 2048,
     "system": "You are an assistant with access to web search.",
     "messages": [{ "role": "user", "content": "Search for the SSE specification." }],

@@ -27,7 +27,7 @@ fn request(turns: usize, words_per_turn: usize) -> MessagesRequest {
         .collect();
 
     serde_json::from_value(json!({
-        "model": "claude-sonnet-4",
+        "model": "claude-sonnet-5",
         "system": "You are Claude Code. ".repeat(40),
         "messages": messages,
         "tools": [{

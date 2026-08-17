@@ -4,7 +4,7 @@
   "provenance": "derived",
   "note": "The function_call and function_call_output shapes are restated from the upstream protocol, including that arguments is a serialized string rather than an object. Two calls in one turn, because the client issues them in parallel and each must arrive as its own block.",
   "request": {
-    "model": "claude-sonnet-4",
+    "model": "claude-sonnet-5",
     "max_tokens": 1024,
     "messages": [
       { "role": "user", "content": "Read both files." },

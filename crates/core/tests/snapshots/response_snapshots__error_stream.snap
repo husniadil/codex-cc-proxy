@@ -2,5 +2,5 @@
 source: crates/core/tests/response_snapshots.rs
 expression: "frames(&[created(),\njson!({\n    \"type\": \"response.failed\", \"response\":\n    {\n        \"id\": \"resp_1\", \"error\":\n        {\n            \"code\": \"server_is_overloaded\", \"message\":\n            \"The server is overloaded.\",\n        },\n    },\n}),])"
 ---
-{"type":"message_start","message":{"id":"msg_snapshot","type":"message","role":"assistant","model":"claude-sonnet-4","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":100,"output_tokens":0,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}}
+{"type":"message_start","message":{"id":"msg_snapshot","type":"message","role":"assistant","model":"claude-sonnet-5","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":100,"output_tokens":0,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}}
 {"type":"error","error":{"type":"overloaded_error","message":"The server is overloaded."}}

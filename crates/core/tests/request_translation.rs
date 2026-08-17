@@ -27,7 +27,7 @@ fn translate(request: Value) -> Value {
 #[test]
 fn system_prompt_becomes_instructions() {
     let out = translate(json!({
-        "model": "gpt-5",
+        "model": "gpt-5.5",
         "max_tokens": 1024,
         "system": "You are Claude Code.",
         "messages": [{ "role": "user", "content": "hello" }],
@@ -50,7 +50,7 @@ fn system_prompt_becomes_instructions() {
 #[test]
 fn system_blocks_join_into_one_instructions_string() {
     let out = translate(json!({
-        "model": "gpt-5",
+        "model": "gpt-5.5",
         "system": [
             { "type": "text", "text": "You are Claude Code." },
             { "type": "text", "text": "Be concise.", "cache_control": { "type": "ephemeral" } },
@@ -73,7 +73,7 @@ fn system_blocks_join_into_one_instructions_string() {
 #[test]
 fn a_non_conversational_role_becomes_a_user_item() {
     let out = translate(json!({
-        "model": "gpt-5",
+        "model": "gpt-5.5",
         "system": "Base prompt.",
         "messages": [
             { "role": "developer", "content": "Prefer tabs." },
@@ -103,7 +103,7 @@ fn a_non_conversational_role_becomes_a_user_item() {
 #[test]
 fn instructions_do_not_change_between_turns() {
     let first = translate(json!({
-        "model": "gpt-5",
+        "model": "gpt-5.5",
         "system": "Base prompt.",
         "messages": [
             { "role": "system", "content": "billing-header: build-1" },
@@ -112,7 +112,7 @@ fn instructions_do_not_change_between_turns() {
     }));
 
     let second = translate(json!({
-        "model": "gpt-5",
+        "model": "gpt-5.5",
         "system": "Base prompt.",
         "messages": [
             { "role": "system", "content": "billing-header: build-1" },
@@ -135,7 +135,7 @@ fn instructions_do_not_change_between_turns() {
 #[test]
 fn user_text_blocks_become_input_text_parts() {
     let out = translate(json!({
-        "model": "gpt-5",
+        "model": "gpt-5.5",
         "messages": [{
             "role": "user",
             "content": [
@@ -164,7 +164,7 @@ fn user_text_blocks_become_input_text_parts() {
 #[test]
 fn assistant_text_becomes_output_text() {
     let out = translate(json!({
-        "model": "gpt-5",
+        "model": "gpt-5.5",
         "messages": [
             { "role": "user", "content": "hello" },
             { "role": "assistant", "content": [{ "type": "text", "text": "hi" }] },
@@ -186,7 +186,7 @@ fn assistant_text_becomes_output_text() {
 #[test]
 fn thinking_blocks_are_dropped() {
     let out = translate(json!({
-        "model": "gpt-5",
+        "model": "gpt-5.5",
         "messages": [
             { "role": "user", "content": "hello" },
             {
@@ -211,7 +211,7 @@ fn thinking_blocks_are_dropped() {
 #[test]
 fn a_message_emptied_by_translation_is_dropped() {
     let out = translate(json!({
-        "model": "gpt-5",
+        "model": "gpt-5.5",
         "messages": [
             { "role": "user", "content": "hello" },
             {
@@ -228,7 +228,7 @@ fn a_message_emptied_by_translation_is_dropped() {
 #[test]
 fn every_request_sets_the_fixed_fields() {
     let out = translate(json!({
-        "model": "gpt-5",
+        "model": "gpt-5.5",
         "messages": [{ "role": "user", "content": "hello" }],
     }));
 
@@ -252,7 +252,7 @@ fn every_request_sets_the_fixed_fields() {
 #[case(json!({}), None)]
 fn effort_derives_from_output_config(#[case] config: Value, #[case] expected: Option<&str>) {
     let out = translate(json!({
-        "model": "gpt-5",
+        "model": "gpt-5.5",
         "messages": [{ "role": "user", "content": "hello" }],
         "output_config": config,
     }));
@@ -265,7 +265,7 @@ fn effort_derives_from_output_config(#[case] config: Value, #[case] expected: Op
 #[test]
 fn the_prompt_cache_key_comes_from_the_session() {
     let request: MessagesRequest = serde_json::from_value(json!({
-        "model": "gpt-5",
+        "model": "gpt-5.5",
         "messages": [{ "role": "user", "content": "hello" }],
     }))
     .unwrap();
@@ -285,7 +285,7 @@ fn the_prompt_cache_key_comes_from_the_session() {
 #[test]
 fn unsupported_parameters_are_dropped() {
     let out = translate(json!({
-        "model": "gpt-5",
+        "model": "gpt-5.5",
         "messages": [{ "role": "user", "content": "hello" }],
         "temperature": 0.7,
         "top_k": 5,
@@ -302,7 +302,7 @@ fn unsupported_parameters_are_dropped() {
 #[test]
 fn function_tools_flatten() {
     let out = translate(json!({
-        "model": "gpt-5",
+        "model": "gpt-5.5",
         "messages": [{ "role": "user", "content": "hello" }],
         "tools": [{
             "name": "Read",
@@ -338,7 +338,7 @@ fn function_tools_flatten() {
 #[test]
 fn tools_never_claim_strict_mode() {
     let out = translate(json!({
-        "model": "gpt-5",
+        "model": "gpt-5.5",
         "messages": [{ "role": "user", "content": "hello" }],
         "tools": [{
             "name": "Grep",
@@ -359,7 +359,7 @@ fn tools_never_claim_strict_mode() {
 #[test]
 fn a_schema_without_properties_gains_an_empty_one() {
     let out = translate(json!({
-        "model": "gpt-5",
+        "model": "gpt-5.5",
         "messages": [{ "role": "user", "content": "hello" }],
         "tools": [{ "name": "Now", "input_schema": { "type": "object" } }],
     }));
@@ -375,7 +375,7 @@ fn a_schema_without_properties_gains_an_empty_one() {
 #[case("web_search_20260209")]
 fn web_search_maps_to_the_native_tool(#[case] tool_type: &str) {
     let out = translate(json!({
-        "model": "gpt-5",
+        "model": "gpt-5.5",
         "messages": [{ "role": "user", "content": "hello" }],
         "tools": [{ "type": tool_type, "name": "web_search" }],
     }));
@@ -402,7 +402,7 @@ fn web_search_maps_to_the_native_tool(#[case] tool_type: &str) {
 #[case(json!({ "type": "tool", "name": "Read" }), json!({ "type": "function", "name": "Read" }))]
 fn tool_choice_maps(#[case] input: Value, #[case] expected: Value) {
     let out = translate(json!({
-        "model": "gpt-5",
+        "model": "gpt-5.5",
         "messages": [{ "role": "user", "content": "hello" }],
         "tools": [{ "name": "Read", "input_schema": { "type": "object" } }],
         "tool_choice": input,
@@ -416,7 +416,7 @@ fn tool_choice_maps(#[case] input: Value, #[case] expected: Value) {
 #[test]
 fn tool_use_becomes_a_function_call() {
     let out = translate(json!({
-        "model": "gpt-5",
+        "model": "gpt-5.5",
         "messages": [
             { "role": "user", "content": "read it" },
             {
@@ -447,7 +447,7 @@ fn tool_use_becomes_a_function_call() {
 #[test]
 fn an_assistant_turn_with_prose_and_a_call_produces_two_items() {
     let out = translate(json!({
-        "model": "gpt-5",
+        "model": "gpt-5.5",
         "messages": [
             { "role": "user", "content": "read it" },
             {
@@ -469,7 +469,7 @@ fn an_assistant_turn_with_prose_and_a_call_produces_two_items() {
 #[test]
 fn tool_result_becomes_a_function_call_output() {
     let out = translate(json!({
-        "model": "gpt-5",
+        "model": "gpt-5.5",
         "messages": [{
             "role": "user",
             "content": [{
@@ -494,7 +494,7 @@ fn tool_result_becomes_a_function_call_output() {
 #[test]
 fn a_string_tool_result_carries_through() {
     let out = translate(json!({
-        "model": "gpt-5",
+        "model": "gpt-5.5",
         "messages": [{
             "role": "user",
             "content": [{
@@ -512,7 +512,7 @@ fn a_string_tool_result_carries_through() {
 #[test]
 fn a_base64_image_becomes_a_data_url() {
     let out = translate(json!({
-        "model": "gpt-5",
+        "model": "gpt-5.5",
         "messages": [{
             "role": "user",
             "content": [{
@@ -534,7 +534,7 @@ fn a_base64_image_becomes_a_data_url() {
 #[test]
 fn a_document_in_a_user_message_becomes_an_input_file_part() {
     let out = translate(json!({
-        "model": "gpt-5",
+        "model": "gpt-5.5",
         "messages": [{
             "role": "user",
             "content": [
@@ -566,7 +566,7 @@ fn a_document_in_a_user_message_becomes_an_input_file_part() {
 #[test]
 fn an_image_url_passes_through() {
     let out = translate(json!({
-        "model": "gpt-5",
+        "model": "gpt-5.5",
         "messages": [{
             "role": "user",
             "content": [{
@@ -589,7 +589,7 @@ fn an_image_url_passes_through() {
 #[test]
 fn an_image_in_a_tool_result_travels_inside_the_output() {
     let out = translate(json!({
-        "model": "gpt-5",
+        "model": "gpt-5.5",
         "messages": [{
             "role": "user",
             "content": [{
@@ -628,7 +628,7 @@ fn an_image_in_a_tool_result_travels_inside_the_output() {
 #[test]
 fn a_lone_text_output_collapses_to_a_string() {
     let out = translate(json!({
-        "model": "gpt-5",
+        "model": "gpt-5.5",
         "messages": [{
             "role": "user",
             "content": [{
@@ -649,7 +649,7 @@ fn a_lone_text_output_collapses_to_a_string() {
 #[test]
 fn a_document_in_a_tool_result_follows_as_its_own_message() {
     let out = translate(json!({
-        "model": "gpt-5",
+        "model": "gpt-5.5",
         "messages": [{
             "role": "user",
             "content": [{
@@ -691,7 +691,7 @@ fn a_document_in_a_tool_result_follows_as_its_own_message() {
 #[test]
 fn an_attachment_in_an_assistant_message_is_dropped() {
     let out = translate(json!({
-        "model": "gpt-5",
+        "model": "gpt-5.5",
         "messages": [
             { "role": "user", "content": "hi" },
             {
@@ -724,7 +724,7 @@ fn an_attachment_in_an_assistant_message_is_dropped() {
 #[test]
 fn a_tool_search_result_reports_the_discovered_names() {
     let out = translate(json!({
-        "model": "gpt-5",
+        "model": "gpt-5.5",
         "messages": [{
             "role": "user",
             "content": [{
@@ -750,7 +750,7 @@ fn a_tool_search_result_reports_the_discovered_names() {
 #[test]
 fn discovered_names_are_recoverable_from_a_request() {
     let request: MessagesRequest = serde_json::from_value(json!({
-        "model": "gpt-5",
+        "model": "gpt-5.5",
         "messages": [
             { "role": "user", "content": "find a tool" },
             {
@@ -782,7 +782,7 @@ fn discovered_names_are_recoverable_from_a_request() {
 #[test]
 fn a_conversation_without_a_search_discovers_nothing() {
     let request: MessagesRequest = serde_json::from_value(json!({
-        "model": "gpt-5",
+        "model": "gpt-5.5",
         "messages": [{ "role": "user", "content": "hello" }],
     }))
     .unwrap();
@@ -795,7 +795,7 @@ fn a_conversation_without_a_search_discovers_nothing() {
 #[test]
 fn deferred_tools_are_withheld() {
     let out = translate(json!({
-        "model": "gpt-5",
+        "model": "gpt-5.5",
         "messages": [{ "role": "user", "content": "hello" }],
         "tools": [
             { "name": "Read", "input_schema": { "type": "object" } },
@@ -814,7 +814,7 @@ fn deferred_tools_are_withheld() {
 #[test]
 fn a_discovered_tool_is_forwarded_despite_still_being_marked_deferred() {
     let request: MessagesRequest = serde_json::from_value(json!({
-        "model": "gpt-5",
+        "model": "gpt-5.5",
         "messages": [{ "role": "user", "content": "hello" }],
         "tools": [
             { "name": "Slack", "input_schema": { "type": "object" }, "defer_loading": true },
@@ -839,7 +839,7 @@ fn a_discovered_tool_is_forwarded_despite_still_being_marked_deferred() {
 #[test]
 fn an_effort_ceiling_applies_when_the_request_asks_for_nothing() {
     let request: MessagesRequest = serde_json::from_value(json!({
-        "model": "gpt-5",
+        "model": "gpt-5.5",
         "messages": [{ "role": "user", "content": "hello" }],
     }))
     .unwrap();
@@ -863,7 +863,7 @@ fn an_effort_ceiling_applies_when_the_request_asks_for_nothing() {
 #[case("max", "low")]
 fn a_ceiling_caps_without_raising(#[case] requested: &str, #[case] expected: &str) {
     let request: MessagesRequest = serde_json::from_value(json!({
-        "model": "gpt-5",
+        "model": "gpt-5.5",
         "messages": [{ "role": "user", "content": "hello" }],
         "output_config": { "effort": requested },
     }))
@@ -918,7 +918,7 @@ fn efforts_are_ordered_from_least_to_most() {
 #[test]
 fn the_operator_may_lead_and_follow_the_system_prompt() {
     let request: codex_cc_proxy_core::anthropic::MessagesRequest = serde_json::from_value(json!({
-        "model": "gpt-5",
+        "model": "gpt-5.5",
         "max_tokens": 1024,
         "system": "You are Claude Code.",
         "messages": [{ "role": "user", "content": "hello" }],
@@ -946,7 +946,7 @@ fn the_operator_may_lead_and_follow_the_system_prompt() {
 #[test]
 fn operator_text_stands_alone_without_a_system_prompt() {
     let request: codex_cc_proxy_core::anthropic::MessagesRequest = serde_json::from_value(json!({
-        "model": "gpt-5",
+        "model": "gpt-5.5",
         "max_tokens": 1024,
         "messages": [{ "role": "user", "content": "hello" }],
     }))
@@ -983,14 +983,14 @@ fn injected_instructions_are_identical_on_a_later_turn() {
     };
 
     let first: codex_cc_proxy_core::anthropic::MessagesRequest = serde_json::from_value(json!({
-        "model": "gpt-5",
+        "model": "gpt-5.5",
         "max_tokens": 1024,
         "system": "Base prompt.",
         "messages": [{ "role": "user", "content": "one" }],
     }))
     .unwrap();
     let later: codex_cc_proxy_core::anthropic::MessagesRequest = serde_json::from_value(json!({
-        "model": "gpt-5",
+        "model": "gpt-5.5",
         "max_tokens": 1024,
         "system": "Base prompt.",
         "messages": [
@@ -1005,4 +1005,87 @@ fn injected_instructions_are_identical_on_a_later_turn() {
         translate_request(&first, &options).instructions,
         translate_request(&later, &options).instructions
     );
+}
+
+/// §2.7 — the effort sent is one the model actually accepts.
+///
+/// The catalog states which levels a model supports, and they differ: one stops
+/// at `xhigh`, another goes to `max`, and one advertises `ultra`. A ceiling
+/// alone only bounds the top — it cannot keep a request for `minimal` off a
+/// model that supports nothing below `low`, and that request fails for a reason
+/// the client could not have anticipated.
+#[test]
+fn the_effort_sent_is_one_the_model_supports() {
+    use codex_cc_proxy_core::responses::Effort;
+
+    let ask = |effort: &str, supported: &[Effort]| -> Option<String> {
+        let request: codex_cc_proxy_core::anthropic::MessagesRequest =
+            serde_json::from_value(json!({
+                "model": "gpt-5",
+                "max_tokens": 16,
+                "output_config": { "effort": effort },
+                "messages": [{ "role": "user", "content": "hi" }],
+            }))
+            .unwrap();
+
+        let out = serde_json::to_value(translate_request(
+            &request,
+            &TranslateOptions {
+                supported_efforts: supported.to_vec(),
+                ..TranslateOptions::default()
+            },
+        ))
+        .unwrap();
+        out["reasoning"]["effort"].as_str().map(str::to_owned)
+    };
+
+    let modest = [Effort::Low, Effort::Medium, Effort::High, Effort::XHigh];
+    let full = [
+        Effort::Low,
+        Effort::Medium,
+        Effort::High,
+        Effort::XHigh,
+        Effort::Max,
+        Effort::Ultra,
+    ];
+
+    // Above what the model offers: the most it will take.
+    assert_eq!(ask("max", &modest).as_deref(), Some("xhigh"));
+    // Below what it offers: the least it will take, rather than a value it
+    // would refuse outright.
+    assert_eq!(ask("minimal", &modest).as_deref(), Some("low"));
+    assert_eq!(ask("none", &modest).as_deref(), Some("low"));
+    // Supported exactly: unchanged.
+    assert_eq!(ask("high", &modest).as_deref(), Some("high"));
+    // A model that goes further is allowed to, and one that does not is held
+    // to what it offers — `ultra` exists only on some models, and only on a
+    // plan that has them.
+    assert_eq!(ask("max", &full).as_deref(), Some("max"));
+    assert_eq!(ask("ultra", &full).as_deref(), Some("ultra"));
+    assert_eq!(ask("ultra", &modest).as_deref(), Some("xhigh"));
+
+    // `ultracode` is the client's name for the same top level, so it maps to
+    // it — and is held to the same model gate as any other level.
+    assert_eq!(ask("ultracode", &full).as_deref(), Some("ultra"));
+    assert_eq!(ask("ultracode", &modest).as_deref(), Some("xhigh"));
+}
+
+/// Saying nothing about what a model supports leaves the request alone.
+///
+/// An unreachable catalog is not evidence that a level went away, and snapping
+/// against a list nobody supplied would rewrite an effort on no basis at all.
+#[test]
+fn an_unknown_set_of_supported_efforts_changes_nothing() {
+    let request: codex_cc_proxy_core::anthropic::MessagesRequest = serde_json::from_value(json!({
+        "model": "gpt-5",
+        "max_tokens": 16,
+        "output_config": { "effort": "minimal" },
+        "messages": [{ "role": "user", "content": "hi" }],
+    }))
+    .unwrap();
+
+    let out =
+        serde_json::to_value(translate_request(&request, &TranslateOptions::default())).unwrap();
+
+    assert_eq!(out["reasoning"]["effort"], json!("minimal"));
 }

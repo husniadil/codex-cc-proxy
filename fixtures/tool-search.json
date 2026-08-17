@@ -4,7 +4,7 @@
   "provenance": "derived",
   "note": "Deferred tool declarations and the tool_reference blocks that announce discovery are the client's own shapes, observable without credentials. The upstream side is restated from the protocol's function-call output. Note the second turn still marks the discovered tool defer_loading: the client never clears that flag, which is why the session records discovery separately.",
   "request": {
-    "model": "claude-sonnet-4",
+    "model": "claude-sonnet-5",
     "max_tokens": 1024,
     "messages": [
       {

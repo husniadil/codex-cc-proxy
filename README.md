@@ -76,10 +76,10 @@ port = 8787
 effort = "low"
 
 [tiers]
-opus   = "gpt-5-codex"
-sonnet = "gpt-5-codex"
-haiku  = "gpt-5-codex-mini"
-fable  = "gpt-5-codex-mini"
+opus   = "gpt-5.6-terra"
+sonnet = "gpt-5.6-luna"
+haiku  = "gpt-5.6-luna"
+fable  = "gpt-5.6-sol"
 
 [instructions]
 # Lead the system prompt with one line naming the model that is answering.
@@ -99,6 +99,12 @@ by saying so, and the client cannot be made to say otherwise —
 never precede it. `[instructions]` is where the proxy states what the model
 actually is, and where an operator can append text that outranks the prompt
 above it. See [`docs/api.md`](docs/api.md) §4.
+
+The models named must be ones your account actually has. The daemon validates
+the mapping against the live catalog at startup and refuses an id that is not
+there, naming the ones that are — `codex-cc-proxy models` lists them too. Model
+ids are renamed and retired over time, so treat the ones above as an example
+rather than a current list.
 
 All four tiers are required and the daemon refuses to start without them.
 `WebFetch` runs on the haiku tier, so an unmapped haiku breaks it in a way that

@@ -4,7 +4,7 @@
   "provenance": "authored",
   "note": "Hand-authored: count_tokens is a pre-flight call with no upstream counterpart at all, since the Responses API has no token-counting endpoint. There is no stream, which is the point — the fixture pins the request the estimator must size.",
   "request": {
-    "model": "claude-sonnet-4",
+    "model": "claude-sonnet-5",
     "system": "You are Claude Code.",
     "messages": [
       { "role": "user", "content": "How many tokens is this conversation?" },

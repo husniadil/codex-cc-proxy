@@ -2,7 +2,7 @@
 source: crates/core/tests/response_snapshots.rs
 expression: "frames(&[created(),\njson!({\n    \"type\": \"response.output_item.added\", \"item\":\n    { \"type\": \"function_call\", \"call_id\": \"call_1\", \"name\": \"Read\" },\n}),\njson!({\n    \"type\": \"response.function_call_arguments.delta\", \"item_id\": \"call_1\",\n    \"delta\": \"{\\\"path\\\":\\\"/tmp/a\\\"}\",\n}),\njson!({\n    \"type\": \"response.output_item.done\", \"item\":\n    {\n        \"type\": \"function_call\", \"call_id\": \"call_1\", \"name\": \"Read\",\n        \"arguments\": \"{\\\"path\\\":\\\"/tmp/a\\\"}\",\n    },\n}), completed(),])"
 ---
-{"type":"message_start","message":{"id":"msg_snapshot","type":"message","role":"assistant","model":"claude-sonnet-4","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":100,"output_tokens":0,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}}
+{"type":"message_start","message":{"id":"msg_snapshot","type":"message","role":"assistant","model":"claude-sonnet-5","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":100,"output_tokens":0,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}}
 {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"call_1","name":"Read","input":{}}}
 {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"path\":\"/tmp/a\"}"}}
 {"type":"content_block_stop","index":0}

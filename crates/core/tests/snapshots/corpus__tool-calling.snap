@@ -4,7 +4,7 @@ expression: replay(&fixture)
 ---
 --- request ---
 {
-  "model": "claude-sonnet-4",
+  "model": "claude-sonnet-5",
   "input": [
     {
       "type": "message",
@@ -82,7 +82,7 @@ expression: replay(&fixture)
 }
 
 --- frames ---
-{"type":"message_start","message":{"id":"msg_tool-calling","type":"message","role":"assistant","model":"claude-sonnet-4","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":100,"output_tokens":0,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}}
+{"type":"message_start","message":{"id":"msg_tool-calling","type":"message","role":"assistant","model":"claude-sonnet-5","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":100,"output_tokens":0,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}}
 {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}
 {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"Both files are read."}}
 {"type":"content_block_stop","index":0}

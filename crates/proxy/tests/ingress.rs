@@ -71,8 +71,8 @@ impl Harness {
             transport: Arc::new(HttpTransport::new(upstream.url.clone())),
             conduits: None,
             models: Arc::new(vec![ModelMapping {
-                requested: "claude-sonnet-4".to_owned(),
-                upstream: "gpt-5-codex".to_owned(),
+                requested: "claude-sonnet-5".to_owned(),
+                upstream: "gpt-5.6-terra".to_owned(),
             }]),
             recorder: recorder.clone(),
             capture: Arc::clone(&switches),
@@ -147,7 +147,7 @@ async fn a_streaming_request_returns_a_valid_frame_sequence() {
         .post(
             "/v1/messages",
             json!({
-                "model": "claude-sonnet-4",
+                "model": "claude-sonnet-5",
                 "max_tokens": 512,
                 "messages": [{ "role": "user", "content": "hi" }],
             }),
@@ -197,7 +197,7 @@ async fn the_request_is_translated_and_the_tier_is_mapped() {
         .post(
             "/v1/messages",
             json!({
-                "model": "claude-sonnet-4",
+                "model": "claude-sonnet-5",
                 "max_tokens": 512,
                 "system": "Be brief.",
                 "messages": [{ "role": "user", "content": "hi" }],
@@ -207,10 +207,10 @@ async fn the_request_is_translated_and_the_tier_is_mapped() {
 
     let body = response.text().await.unwrap();
     let start = &payloads(&body)[0];
-    assert_eq!(start["message"]["model"], json!("claude-sonnet-4"));
+    assert_eq!(start["message"]["model"], json!("claude-sonnet-5"));
 
     let sent = harness.upstream.requests();
-    assert_eq!(sent[0]["model"], json!("gpt-5-codex"));
+    assert_eq!(sent[0]["model"], json!("gpt-5.6-terra"));
     assert_eq!(sent[0]["instructions"], json!("Be brief."));
     assert_eq!(sent[0]["stream"], json!(true));
 }
@@ -237,7 +237,7 @@ async fn a_tool_call_survives_the_round_trip() {
         .post(
             "/v1/messages",
             json!({
-                "model": "claude-sonnet-4",
+                "model": "claude-sonnet-5",
                 "max_tokens": 512,
                 "messages": [{ "role": "user", "content": "read it" }],
                 "tools": [{
@@ -291,7 +291,7 @@ async fn an_event_split_across_data_lines_survives_the_transport() {
         .post(
             "/v1/messages",
             json!({
-                "model": "claude-sonnet-4",
+                "model": "claude-sonnet-5",
                 "max_tokens": 512,
                 "messages": [{ "role": "user", "content": "hi" }],
             }),
@@ -321,7 +321,7 @@ async fn a_rate_limited_upstream_surfaces_as_retryable() {
         .post(
             "/v1/messages",
             json!({
-                "model": "claude-sonnet-4",
+                "model": "claude-sonnet-5",
                 "max_tokens": 512,
                 "messages": [{ "role": "user", "content": "hi" }],
             }),
@@ -357,7 +357,7 @@ async fn a_server_error_surfaces_as_overloaded() {
         .post(
             "/v1/messages",
             json!({
-                "model": "claude-sonnet-4",
+                "model": "claude-sonnet-5",
                 "max_tokens": 512,
                 "messages": [{ "role": "user", "content": "hi" }],
             }),
@@ -384,7 +384,7 @@ async fn an_upstream_credential_failure_surfaces_as_authentication() {
         .post(
             "/v1/messages",
             json!({
-                "model": "claude-sonnet-4",
+                "model": "claude-sonnet-5",
                 "max_tokens": 512,
                 "messages": [{ "role": "user", "content": "hi" }],
             }),
@@ -411,7 +411,7 @@ async fn a_challenge_response_keeps_its_excerpt() {
         .post(
             "/v1/messages",
             json!({
-                "model": "claude-sonnet-4",
+                "model": "claude-sonnet-5",
                 "max_tokens": 512,
                 "messages": [{ "role": "user", "content": "hi" }],
             }),
@@ -468,7 +468,7 @@ async fn count_tokens_returns_an_estimate() {
         .post(
             "/v1/messages/count_tokens",
             json!({
-                "model": "claude-sonnet-4",
+                "model": "claude-sonnet-5",
                 "messages": [{ "role": "user", "content": "a fairly ordinary sentence" }],
             }),
         )
@@ -492,7 +492,7 @@ async fn an_attachment_does_not_dominate_the_estimate() {
         .post(
             "/v1/messages/count_tokens",
             json!({
-                "model": "claude-sonnet-4",
+                "model": "claude-sonnet-5",
                 "messages": [{
                     "role": "user",
                     "content": [{
@@ -529,7 +529,7 @@ async fn models_lists_the_mapping_in_the_anthropic_shape() {
 
     assert_eq!(response.status(), 200);
     let body: Value = response.json().await.unwrap();
-    assert_eq!(body["data"][0]["id"], json!("gpt-5-codex"));
+    assert_eq!(body["data"][0]["id"], json!("gpt-5.6-terra"));
     assert_eq!(body["data"][0]["type"], json!("model"));
 }
 
@@ -551,7 +551,7 @@ async fn cancelling_the_client_stream_aborts_the_upstream_request() {
         .post(
             "/v1/messages",
             json!({
-                "model": "claude-sonnet-4",
+                "model": "claude-sonnet-5",
                 "max_tokens": 512,
                 "messages": [{ "role": "user", "content": "hi" }],
             }),
@@ -588,7 +588,7 @@ async fn a_stream_read_to_completion_does_reach_the_end_upstream() {
         .post(
             "/v1/messages",
             json!({
-                "model": "claude-sonnet-4",
+                "model": "claude-sonnet-5",
                 "max_tokens": 512,
                 "messages": [{ "role": "user", "content": "hi" }],
             }),
@@ -626,7 +626,7 @@ async fn an_empty_stream_is_recorded() {
         .post(
             "/v1/messages",
             json!({
-                "model": "claude-sonnet-4",
+                "model": "claude-sonnet-5",
                 "max_tokens": 512,
                 "messages": [{ "role": "user", "content": "hi" }],
             }),
@@ -657,7 +657,7 @@ async fn an_empty_stream_is_recorded() {
     // The raw upstream events are kept, since they are the evidence of what
     // produced nothing.
     assert_eq!(body["upstream"].as_array().map(Vec::len), Some(2));
-    assert_eq!(body["request"]["model"], json!("claude-sonnet-4"));
+    assert_eq!(body["request"]["model"], json!("claude-sonnet-5"));
 }
 
 /// A stream that produced content is not recorded. Recording every exchange
@@ -681,7 +681,7 @@ async fn a_stream_that_produced_content_is_not_recorded() {
         .post(
             "/v1/messages",
             json!({
-                "model": "claude-sonnet-4",
+                "model": "claude-sonnet-5",
                 "max_tokens": 512,
                 "messages": [{ "role": "user", "content": "hi" }],
             }),
@@ -726,7 +726,7 @@ async fn upstream_capture_records_a_turn_that_produced_content() {
         .post(
             "/v1/messages",
             json!({
-                "model": "claude-sonnet-4",
+                "model": "claude-sonnet-5",
                 "max_tokens": 512,
                 "messages": [{ "role": "user", "content": "hi" }],
             }),
@@ -749,7 +749,7 @@ async fn upstream_capture_records_a_turn_that_produced_content() {
     // The client's own request, untranslated — that is what a fixture replays,
     // and a capture of the translated one could not be replayed through the
     // translation it had already been through.
-    assert_eq!(capture["request"]["model"], json!("claude-sonnet-4"));
+    assert_eq!(capture["request"]["model"], json!("claude-sonnet-5"));
     // And the upstream stream verbatim, which is the half that cannot be
     // invented.
     assert_eq!(capture["upstream"][0]["type"], json!("response.created"));
@@ -784,7 +784,7 @@ async fn a_refusal_behind_a_preamble_is_still_a_status() {
         .post(
             "/v1/messages",
             json!({
-                "model": "claude-sonnet-4",
+                "model": "claude-sonnet-5",
                 "max_tokens": 64,
                 "messages": [{ "role": "user", "content": "hello" }],
             }),
@@ -815,8 +815,8 @@ async fn the_configured_instructions_reach_the_backend() {
         transport: Arc::new(HttpTransport::new(upstream.url.clone())),
         conduits: None,
         models: Arc::new(vec![ModelMapping {
-            requested: "claude-sonnet-4".to_owned(),
-            upstream: "gpt-5-codex".to_owned(),
+            requested: "claude-sonnet-5".to_owned(),
+            upstream: "gpt-5.6-terra".to_owned(),
         }]),
         recorder: None,
         capture: Arc::new(codex_cc_proxy::recorder::Switches::default()),
@@ -837,7 +837,7 @@ async fn the_configured_instructions_reach_the_backend() {
     let response = reqwest::Client::new()
         .post(format!("http://{addr}/v1/messages"))
         .json(&json!({
-            "model": "claude-sonnet-4",
+            "model": "claude-sonnet-5",
             "max_tokens": 64,
             "system": "You are Claude Code.",
             "messages": [{ "role": "user", "content": "hi" }],
@@ -852,7 +852,7 @@ async fn the_configured_instructions_reach_the_backend() {
 
     // The model that answers, not the tier that was asked for.
     assert!(
-        instructions.starts_with("You are gpt-5-codex,"),
+        instructions.starts_with("You are gpt-5.6-terra,"),
         "{instructions}"
     );
     assert!(
@@ -891,7 +891,7 @@ async fn capture_can_be_switched_on_while_the_daemon_runs() {
             .post(
                 "/v1/messages",
                 json!({
-                    "model": "claude-sonnet-4",
+                    "model": "claude-sonnet-5",
                     "max_tokens": 512,
                     "messages": [{ "role": "user", "content": "hi" }],
                 }),
@@ -956,7 +956,7 @@ async fn ingress_capture_records_the_untranslated_request() {
         .post(
             "/v1/messages",
             json!({
-                "model": "claude-sonnet-4",
+                "model": "claude-sonnet-5",
                 "max_tokens": 512,
                 "system": "You are Claude Code.",
                 "messages": [{ "role": "user", "content": "hello" }],
@@ -1011,7 +1011,7 @@ async fn a_capture_parses_as_a_corpus_fixture() {
         .post(
             "/v1/messages",
             json!({
-                "model": "claude-sonnet-4",
+                "model": "claude-sonnet-5",
                 "max_tokens": 512,
                 "messages": [{ "role": "user", "content": "hello" }],
             }),
@@ -1063,7 +1063,7 @@ async fn a_conversation_calibrates_across_turns() {
     .await;
 
     let first_body = json!({
-        "model": "claude-sonnet-4",
+        "model": "claude-sonnet-5",
         "max_tokens": 512,
         "system": "You are Claude Code.",
         "messages": [{ "role": "user", "content": "opening turn" }],
@@ -1078,7 +1078,7 @@ async fn a_conversation_calibrates_across_turns() {
     // The same conversation, extended. It resolves to the same session, so the
     // correction from the first turn applies.
     let second_body = json!({
-        "model": "claude-sonnet-4",
+        "model": "claude-sonnet-5",
         "max_tokens": 512,
         "system": "You are Claude Code.",
         "messages": [
@@ -1123,7 +1123,7 @@ async fn an_unrelated_conversation_starts_uncalibrated() {
     .await;
 
     let one = json!({
-        "model": "claude-sonnet-4",
+        "model": "claude-sonnet-5",
         "max_tokens": 512,
         "messages": [{ "role": "user", "content": "first conversation" }],
     });
@@ -1135,7 +1135,7 @@ async fn an_unrelated_conversation_starts_uncalibrated() {
         .unwrap();
 
     let two = json!({
-        "model": "claude-sonnet-4",
+        "model": "claude-sonnet-5",
         "max_tokens": 512,
         "messages": [{ "role": "user", "content": "an entirely separate conversation" }],
     });
@@ -1167,14 +1167,14 @@ async fn the_cache_key_is_stable_across_a_conversation() {
     .await;
 
     let first = json!({
-        "model": "claude-sonnet-4",
+        "model": "claude-sonnet-5",
         "max_tokens": 512,
         "messages": [{ "role": "user", "content": "opening" }],
     });
     let _ = harness.post("/v1/messages", first).await.text().await;
 
     let second = json!({
-        "model": "claude-sonnet-4",
+        "model": "claude-sonnet-5",
         "max_tokens": 512,
         "messages": [
             { "role": "user", "content": "opening" },
@@ -1215,7 +1215,7 @@ async fn count_tokens_uses_what_the_conversation_has_learned() {
     .await;
 
     let conversation = json!({
-        "model": "claude-sonnet-4",
+        "model": "claude-sonnet-5",
         "max_tokens": 512,
         "messages": [{ "role": "user", "content": "opening turn" }],
     });
@@ -1288,8 +1288,8 @@ async fn ingress_sends_through_a_conduit_and_uploads_incrementally() {
         transport: Arc::new(HttpTransport::new(upstream.url.clone())),
         conduits: Some(conduits),
         models: Arc::new(vec![ModelMapping {
-            requested: "claude-sonnet-4".to_owned(),
-            upstream: "gpt-5-codex".to_owned(),
+            requested: "claude-sonnet-5".to_owned(),
+            upstream: "gpt-5.6-terra".to_owned(),
         }]),
         recorder: None,
         capture: Arc::new(codex_cc_proxy::recorder::Switches::default()),
@@ -1324,7 +1324,7 @@ async fn ingress_sends_through_a_conduit_and_uploads_incrementally() {
     };
 
     let first = json!({
-        "model": "claude-sonnet-4",
+        "model": "claude-sonnet-5",
         "max_tokens": 512,
         "messages": [{ "role": "user", "content": "opening" }],
     });
@@ -1333,7 +1333,7 @@ async fn ingress_sends_through_a_conduit_and_uploads_incrementally() {
     // The same conversation, extended by the reply the server produced and one
     // new user turn.
     let second = json!({
-        "model": "claude-sonnet-4",
+        "model": "claude-sonnet-5",
         "max_tokens": 512,
         "messages": [
             { "role": "user", "content": "opening" },
@@ -1406,8 +1406,8 @@ async fn a_second_turn_uploads_the_new_items_and_not_nothing() {
         transport: Arc::new(HttpTransport::new("http://127.0.0.1:1/unused")),
         conduits: Some(conduits),
         models: Arc::new(vec![ModelMapping {
-            requested: "claude-sonnet-4".to_owned(),
-            upstream: "gpt-5-codex".to_owned(),
+            requested: "claude-sonnet-5".to_owned(),
+            upstream: "gpt-5.6-terra".to_owned(),
         }]),
         recorder: None,
         capture: Arc::new(codex_cc_proxy::recorder::Switches::default()),
@@ -1442,14 +1442,14 @@ async fn a_second_turn_uploads_the_new_items_and_not_nothing() {
     };
 
     send(json!({
-        "model": "claude-sonnet-4",
+        "model": "claude-sonnet-5",
         "max_tokens": 64,
         "messages": [{ "role": "user", "content": "first question" }],
     }))
     .await;
 
     send(json!({
-        "model": "claude-sonnet-4",
+        "model": "claude-sonnet-5",
         "max_tokens": 64,
         "messages": [
             { "role": "user", "content": "first question" },
@@ -1519,7 +1519,7 @@ async fn upstream_requests_carry_the_access_token() {
     let transport = HttpTransport::new(upstream.url.clone()).with_credentials(Arc::clone(&tokens));
 
     let request = codex_cc_proxy_core::responses::ResponsesRequest {
-        model: "gpt-5-codex".to_owned(),
+        model: "gpt-5.6-terra".to_owned(),
         ..Default::default()
     };
     let _ = codex_cc_proxy::upstream::Transport::stream(&transport, &request)
@@ -1588,8 +1588,8 @@ async fn a_reasoning_turn_does_not_end_the_session() {
         transport: Arc::new(HttpTransport::new("http://127.0.0.1:1/unused")),
         conduits: Some(conduits),
         models: Arc::new(vec![ModelMapping {
-            requested: "claude-sonnet-4".to_owned(),
-            upstream: "gpt-5-codex".to_owned(),
+            requested: "claude-sonnet-5".to_owned(),
+            upstream: "gpt-5.6-terra".to_owned(),
         }]),
         recorder: None,
         capture: Arc::new(codex_cc_proxy::recorder::Switches::default()),
@@ -1613,7 +1613,7 @@ async fn a_reasoning_turn_does_not_end_the_session() {
 
     for turn in 1..=4 {
         let body = json!({
-            "model": "claude-sonnet-4",
+            "model": "claude-sonnet-5",
             "max_tokens": 64,
             "messages": messages,
         });
@@ -1704,8 +1704,8 @@ async fn a_failed_turn_does_not_advance_the_baseline() {
         transport: Arc::new(HttpTransport::new("http://127.0.0.1:1/unused")),
         conduits: Some(conduits),
         models: Arc::new(vec![ModelMapping {
-            requested: "claude-sonnet-4".to_owned(),
-            upstream: "gpt-5-codex".to_owned(),
+            requested: "claude-sonnet-5".to_owned(),
+            upstream: "gpt-5.6-terra".to_owned(),
         }]),
         recorder: None,
         capture: Arc::new(codex_cc_proxy::recorder::Switches::default()),
@@ -1726,7 +1726,7 @@ async fn a_failed_turn_does_not_advance_the_baseline() {
 
     let client = reqwest::Client::new();
     let opening = json!({
-        "model": "claude-sonnet-4",
+        "model": "claude-sonnet-5",
         "max_tokens": 64,
         "messages": [{ "role": "user", "content": "question 1" }],
     });
@@ -1741,7 +1741,7 @@ async fn a_failed_turn_does_not_advance_the_baseline() {
         .unwrap();
 
     let continued = json!({
-        "model": "claude-sonnet-4",
+        "model": "claude-sonnet-5",
         "max_tokens": 64,
         "messages": [
             { "role": "user", "content": "question 1" },
@@ -1797,7 +1797,7 @@ fn input_of(body: &Value) -> Vec<codex_cc_proxy_core::responses::InputItem> {
 #[tokio::test]
 async fn a_request_larger_than_the_window_is_refused() {
     let catalog = codex_cc_proxy::catalog::Catalog::parse(
-        r#"{"models":[{"slug":"gpt-5-codex","context_window":1000}]}"#,
+        r#"{"models":[{"slug":"gpt-5.6-terra","context_window":1000}]}"#,
     )
     .unwrap();
 
@@ -1808,8 +1808,8 @@ async fn a_request_larger_than_the_window_is_refused() {
         transport: Arc::new(HttpTransport::new(upstream.url.clone())),
         conduits: None,
         models: Arc::new(vec![ModelMapping {
-            requested: "claude-sonnet-4".to_owned(),
-            upstream: "gpt-5-codex".to_owned(),
+            requested: "claude-sonnet-5".to_owned(),
+            upstream: "gpt-5.6-terra".to_owned(),
         }]),
         recorder: None,
         capture: Arc::new(codex_cc_proxy::recorder::Switches::default()),
@@ -1830,7 +1830,7 @@ async fn a_request_larger_than_the_window_is_refused() {
     let response = reqwest::Client::new()
         .post(format!("http://{addr}/v1/messages"))
         .json(&json!({
-            "model": "claude-sonnet-4",
+            "model": "claude-sonnet-5",
             "max_tokens": 64,
             "messages": [{ "role": "user", "content": "word ".repeat(40_000) }],
         }))
@@ -1851,7 +1851,7 @@ async fn a_request_larger_than_the_window_is_refused() {
         "the limit should be named: {message}"
     );
     assert!(
-        message.contains("gpt-5-codex"),
+        message.contains("gpt-5.6-terra"),
         "the model should be named: {message}"
     );
 
@@ -1876,8 +1876,8 @@ async fn an_unknown_window_does_not_refuse_anything() {
         transport: Arc::new(HttpTransport::new(upstream.url.clone())),
         conduits: None,
         models: Arc::new(vec![ModelMapping {
-            requested: "claude-sonnet-4".to_owned(),
-            upstream: "gpt-5-codex".to_owned(),
+            requested: "claude-sonnet-5".to_owned(),
+            upstream: "gpt-5.6-terra".to_owned(),
         }]),
         recorder: None,
         capture: Arc::new(codex_cc_proxy::recorder::Switches::default()),
@@ -1898,7 +1898,7 @@ async fn an_unknown_window_does_not_refuse_anything() {
     let response = reqwest::Client::new()
         .post(format!("http://{addr}/v1/messages"))
         .json(&json!({
-            "model": "claude-sonnet-4",
+            "model": "claude-sonnet-5",
             "max_tokens": 64,
             "messages": [{ "role": "user", "content": "word ".repeat(40_000) }],
         }))
@@ -2003,7 +2003,7 @@ async fn an_unlisted_model_does_not_cap_effort() {
         conduits: None,
         models: Arc::new(vec![ModelMapping {
             requested: "sonnet".to_owned(),
-            upstream: "gpt-5-codex".to_owned(),
+            upstream: "gpt-5.6-terra".to_owned(),
         }]),
         recorder: None,
         capture: Arc::new(codex_cc_proxy::recorder::Switches::default()),
@@ -2060,7 +2060,7 @@ async fn an_upstream_refusal_on_the_first_event_is_a_status() {
         .post(
             "/v1/messages",
             json!({
-                "model": "claude-sonnet-4",
+                "model": "claude-sonnet-5",
                 "max_tokens": 64,
                 "messages": [{ "role": "user", "content": "hello" }],
             }),
@@ -2102,7 +2102,7 @@ async fn a_refusal_after_content_is_still_a_frame() {
         .post(
             "/v1/messages",
             json!({
-                "model": "claude-sonnet-4",
+                "model": "claude-sonnet-5",
                 "max_tokens": 64,
                 "messages": [{ "role": "user", "content": "hello" }],
             }),
@@ -2136,7 +2136,7 @@ async fn a_large_body_is_compressed_and_announced() {
     let transport = HttpTransport::new(upstream.url.clone()).with_compression(true);
 
     let request = codex_cc_proxy_core::responses::ResponsesRequest {
-        model: "gpt-5-codex".to_owned(),
+        model: "gpt-5.6-terra".to_owned(),
         instructions: Some("consideration ".repeat(200)),
         ..Default::default()
     };
@@ -2170,7 +2170,7 @@ async fn a_small_body_is_not_compressed() {
 
     let transport = HttpTransport::new(upstream.url.clone()).with_compression(true);
     let request = codex_cc_proxy_core::responses::ResponsesRequest {
-        model: "gpt-5-codex".to_owned(),
+        model: "gpt-5.6-terra".to_owned(),
         ..Default::default()
     };
 
@@ -2180,7 +2180,7 @@ async fn a_small_body_is_not_compressed() {
 
     assert_eq!(upstream.headers()[0].get("content-encoding"), None);
     // And it still arrives as readable JSON.
-    assert_eq!(upstream.requests()[0]["model"], json!("gpt-5-codex"));
+    assert_eq!(upstream.requests()[0]["model"], json!("gpt-5.6-terra"));
 }
 
 /// A capture is conversation content, and is written as such.
@@ -2261,7 +2261,7 @@ fn an_idle_conversation_is_forgotten() {
 
     let store = SessionStore::new();
     let input = input_of(&json!({
-        "model": "claude-sonnet-4",
+        "model": "claude-sonnet-5",
         "messages": [{ "role": "user", "content": "hello" }],
     }));
 
@@ -2292,7 +2292,7 @@ fn an_active_conversation_survives_the_sweep() {
 
     let store = SessionStore::new();
     let input = input_of(&json!({
-        "model": "claude-sonnet-4",
+        "model": "claude-sonnet-5",
         "messages": [{ "role": "user", "content": "hello" }],
     }));
 

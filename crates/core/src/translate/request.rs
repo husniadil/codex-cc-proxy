@@ -57,6 +57,14 @@ pub struct TranslateOptions {
     /// over the prompt above it has to come after it. Same stability
     /// requirement as the lead.
     pub instructions_trailer: Option<String>,
+    /// §2.7 — the efforts this model accepts, from the catalog.
+    ///
+    /// Empty means unknown, and unknown means leave the request alone. A
+    /// ceiling only bounds the top; it cannot keep a request for an effort
+    /// *below* what a model offers off it, and no current model accepts `none`
+    /// or `minimal`. Such a request fails for a reason the client could not
+    /// have anticipated, having only asked for a tier.
+    pub supported_efforts: Vec<Effort>,
     /// An operator-set ceiling on reasoning effort.
     ///
     /// The client does not know what a turn costs the operator, so it cannot
@@ -115,11 +123,35 @@ fn effort_for(request: &MessagesRequest, options: &TranslateOptions) -> Option<E
         .and_then(|config| config.effort.as_deref())
         .and_then(Effort::parse);
 
-    match (requested, options.effort_ceiling) {
+    let chosen = match (requested, options.effort_ceiling) {
         (Some(requested), Some(ceiling)) => Some(requested.min(ceiling)),
         (Some(requested), None) => Some(requested),
         (None, ceiling) => ceiling,
+    }?;
+
+    Some(nearest_supported(chosen, &options.supported_efforts))
+}
+
+/// The closest effort the model will actually accept.
+///
+/// The highest supported level at or below what was asked for; failing that —
+/// the request was below everything on offer — the lowest supported level,
+/// because asking for less than a model can do is a request for its cheapest
+/// setting, not for one it would refuse.
+///
+/// An empty list is "unknown", not "nothing supported", and leaves the choice
+/// exactly as it was.
+fn nearest_supported(chosen: Effort, supported: &[Effort]) -> Effort {
+    if supported.is_empty() {
+        return chosen;
     }
+    supported
+        .iter()
+        .filter(|effort| **effort <= chosen)
+        .max()
+        .or_else(|| supported.iter().min())
+        .copied()
+        .unwrap_or(chosen)
 }
 
 /// §2.1 — the system prompt, and nothing else.

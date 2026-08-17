@@ -22,19 +22,19 @@ fn tiers() -> Vec<ResolvedTier> {
     vec![
         ResolvedTier {
             tier: "opus",
-            model: "gpt-5-codex".to_owned(),
+            model: "gpt-5.6-terra".to_owned(),
         },
         ResolvedTier {
             tier: "sonnet",
-            model: "gpt-5-codex".to_owned(),
+            model: "gpt-5.6-terra".to_owned(),
         },
         ResolvedTier {
             tier: "haiku",
-            model: "gpt-5-codex-mini".to_owned(),
+            model: "gpt-5.4-mini".to_owned(),
         },
         ResolvedTier {
             tier: "fable",
-            model: "gpt-5-codex-mini".to_owned(),
+            model: "gpt-5.4-mini".to_owned(),
         },
     ]
 }
@@ -62,8 +62,8 @@ impl Harness {
             tiers: Arc::new(tiers()),
             catalog: Arc::new(
                 Catalog::parse(
-                    r#"{"data":[{"id":"gpt-5-codex","context_window":272000},
-                                {"id":"gpt-5-codex-mini","context_window":200000}]}"#,
+                    r#"{"data":[{"id":"gpt-5.6-terra","context_window":272000},
+                                {"id":"gpt-5.4-mini","context_window":200000}]}"#,
                 )
                 .unwrap(),
             ),
@@ -141,7 +141,7 @@ async fn status_reports_the_base_url_and_tiers() {
 
     assert_eq!(status["base_url"], json!("http://127.0.0.1:8787"));
     assert_eq!(status["auth"]["connected"], json!(false));
-    assert_eq!(status["tiers"]["haiku"], json!("gpt-5-codex-mini"));
+    assert_eq!(status["tiers"]["haiku"], json!("gpt-5.4-mini"));
     // Whether the mapping was validated against a real catalog or merely
     // against the fallback list. A caller that cannot tell would report an
     // unvalidated mapping as a validated one.
@@ -235,7 +235,7 @@ async fn env_emits_all_four_tiers_and_the_context_floor() {
     };
 
     assert_eq!(lookup("ANTHROPIC_BASE_URL"), "http://127.0.0.1:8787");
-    assert_eq!(lookup("ANTHROPIC_DEFAULT_HAIKU_MODEL"), "gpt-5-codex-mini");
+    assert_eq!(lookup("ANTHROPIC_DEFAULT_HAIKU_MODEL"), "gpt-5.4-mini");
     assert_eq!(lookup("CLAUDE_CODE_DISABLE_1M_CONTEXT"), "1");
 }
 
@@ -257,8 +257,18 @@ async fn models_lists_windows_and_says_where_they_came_from() {
     let result = harness.call("models").await.unwrap();
 
     assert_eq!(result["authoritative"], json!(true));
-    assert_eq!(result["models"][0]["id"], json!("gpt-5-codex"));
-    assert_eq!(result["models"][0]["context_window"], json!(272_000));
+
+    // Looked up rather than indexed: the order is the catalog's own and says
+    // nothing about the contract. Indexing made this test fail when two model
+    // ids simply sorted differently.
+    let terra = result["models"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|model| model["id"] == json!("gpt-5.6-terra"))
+        .expect("the mapped model should be listed");
+
+    assert_eq!(terra["context_window"], json!(272_000));
 }
 
 /// A model with no known window reports null, not a number. Any figure here
@@ -435,7 +445,7 @@ async fn env_renders_as_shell_exports() {
     let rendered = render::env_shell(&result);
 
     assert!(rendered.contains("export ANTHROPIC_BASE_URL=http://127.0.0.1:8787"));
-    assert!(rendered.contains("export ANTHROPIC_DEFAULT_HAIKU_MODEL=gpt-5-codex-mini"));
+    assert!(rendered.contains("export ANTHROPIC_DEFAULT_HAIKU_MODEL=gpt-5.4-mini"));
     assert!(rendered.contains("export CLAUDE_CODE_DISABLE_1M_CONTEXT=1"));
 }
 
@@ -448,7 +458,7 @@ async fn env_renders_as_a_settings_fragment() {
 
     assert_eq!(
         parsed["env"]["ANTHROPIC_DEFAULT_FABLE_MODEL"],
-        json!("gpt-5-codex-mini")
+        json!("gpt-5.4-mini")
     );
     assert_eq!(parsed["env"]["CLAUDE_CODE_DISABLE_1M_CONTEXT"], json!("1"));
 }

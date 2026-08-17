@@ -33,7 +33,16 @@ pub fn config_path() -> std::path::PathBuf {
 pub const EXAMPLE: &str = r#"port = 8787
 
 # Optional. Caps reasoning effort on every request, whatever the client asks
-# for: one of none, minimal, low, medium, high, xhigh, max.
+# for: one of none, minimal, low, medium, high, xhigh, max, ultra. `ultracode`
+# is the client's name for `ultra` and is accepted as one.
+#
+# `ultra` exists only on some models and only on a paid plan. A model whose
+# catalog entry does not offer it is capped below it; where the catalog offers
+# it and the account cannot use it, the backend refuses the request and says so.
+#
+# Capped again by what the model accepts, and raised to its lowest level when it
+# accepts nothing that low: `minimal` is refused by some models outright, so it
+# is moved to the nearest they will take rather than sent and failed.
 #
 # Both keys sit above the tables on purpose. In TOML a bare key written after a
 # table header belongs to that table, so `effort` placed below `[tiers]` is
@@ -41,10 +50,10 @@ pub const EXAMPLE: &str = r#"port = 8787
 # effort = "low"
 
 [tiers]
-opus   = "gpt-5-codex"
-sonnet = "gpt-5-codex"
-haiku  = "gpt-5-codex-mini"
-fable  = "gpt-5-codex-mini"
+opus   = "gpt-5.6-terra"
+sonnet = "gpt-5.6-luna"
+haiku  = "gpt-5.6-luna"
+fable  = "gpt-5.6-sol"
 
 [transport]
 websocket   = true

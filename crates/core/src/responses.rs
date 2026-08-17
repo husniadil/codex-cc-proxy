@@ -47,6 +47,10 @@ pub enum Effort {
     High,
     XHigh,
     Max,
+    /// Above `max`, and a real wire value — but only on the models that offer
+    /// it, and only on a plan that has them. Where it is not available the
+    /// backend refuses the request outright rather than lowering it.
+    Ultra,
 }
 
 impl Effort {
@@ -61,6 +65,11 @@ impl Effort {
             "high" => Self::High,
             "xhigh" => Self::XHigh,
             "max" => Self::Max,
+            // The two names for the same top level. `ultra` is what the wire
+            // calls it; `ultracode` is what the client calls it, and the
+            // client's own description — xhigh plus workflow orchestration —
+            // describes the mode rather than the level it asks for.
+            "ultra" | "ultracode" => Self::Ultra,
             _ => return None,
         })
     }

@@ -8,14 +8,14 @@ use pretty_assertions::assert_eq;
 const SAMPLE: &str = r#"{
   "data": [
     {
-      "id": "gpt-5-codex",
+      "id": "gpt-5.6-terra",
       "context_window": 272000,
       "max_context_window": 400000,
       "effective_context_window_percent": 95.0,
       "is_visible": true
     },
     {
-      "id": "gpt-5-codex-mini",
+      "id": "gpt-5.4-mini",
       "context_window": 200000,
       "is_visible": true
     },
@@ -98,7 +98,7 @@ fn the_catalog_parses_ids_and_windows() {
 
     assert!(catalog.authoritative);
     assert_eq!(
-        catalog.get("gpt-5-codex").and_then(|m| m.context_window),
+        catalog.get("gpt-5.6-terra").and_then(|m| m.context_window),
         Some(272_000)
     );
 }
@@ -109,7 +109,7 @@ fn the_catalog_parses_ids_and_windows() {
 #[test]
 fn the_smaller_scoped_window_is_authoritative() {
     let catalog = Catalog::parse(SAMPLE).unwrap();
-    let model = catalog.get("gpt-5-codex").unwrap();
+    let model = catalog.get("gpt-5.6-terra").unwrap();
 
     assert_eq!(model.context_window, Some(272_000));
     assert_ne!(model.context_window, Some(400_000));
@@ -122,13 +122,13 @@ fn the_effective_window_applies_the_percentage() {
     let catalog = Catalog::parse(SAMPLE).unwrap();
 
     assert_eq!(
-        catalog.get("gpt-5-codex").unwrap().effective_window(),
+        catalog.get("gpt-5.6-terra").unwrap().effective_window(),
         Some(258_400)
     );
     // Stating no percentage means the default applies, not that all of the
     // window is usable.
     assert_eq!(
-        catalog.get("gpt-5-codex-mini").unwrap().effective_window(),
+        catalog.get("gpt-5.4-mini").unwrap().effective_window(),
         Some(190_000)
     );
 }
@@ -173,7 +173,7 @@ fn hidden_models_are_withheld_from_selection_but_still_known() {
 #[test]
 fn a_mapping_onto_known_models_validates() {
     let catalog = Catalog::parse(SAMPLE).unwrap();
-    assert!(catalog.validate(&["gpt-5-codex".to_owned()]).is_ok());
+    assert!(catalog.validate(&["gpt-5.6-terra".to_owned()]).is_ok());
 }
 
 #[test]
@@ -190,7 +190,7 @@ fn a_mapping_onto_an_unknown_model_is_rejected_and_says_what_exists() {
         error.message
     );
     assert!(
-        error.message.contains("gpt-5-codex"),
+        error.message.contains("gpt-5.6-terra"),
         "the error should name what is available: {}",
         error.message
     );
@@ -236,11 +236,11 @@ fn an_unreadable_catalog_is_an_error() {
 /// Some responses key the list differently. Both shapes parse.
 #[test]
 fn either_list_key_parses() {
-    let catalog = Catalog::parse(r#"{"models":[{"slug":"gpt-5-codex","context_window":1000}]}"#)
+    let catalog = Catalog::parse(r#"{"models":[{"slug":"gpt-5.6-terra","context_window":1000}]}"#)
         .expect("the alternate shape should parse");
 
     assert_eq!(
-        catalog.get("gpt-5-codex").and_then(|m| m.context_window),
+        catalog.get("gpt-5.6-terra").and_then(|m| m.context_window),
         Some(1_000)
     );
 }

@@ -45,7 +45,7 @@ fn message(text: &str) -> Value {
 
 fn request(input: Vec<InputItem>) -> ResponsesRequest {
     ResponsesRequest {
-        model: "gpt-5-codex".to_owned(),
+        model: "gpt-5.6-terra".to_owned(),
         instructions: Some("Be brief.".to_owned()),
         input,
         stream: true,
@@ -375,7 +375,7 @@ async fn the_websocket_transport_carries_a_turn() {
     // The outbound frame names what it is.
     let sent: Value = serde_json::from_str(&server.wait_for_request().await).unwrap();
     assert_eq!(sent["type"], json!("response.create"));
-    assert_eq!(sent["model"], json!("gpt-5-codex"));
+    assert_eq!(sent["model"], json!("gpt-5.6-terra"));
 }
 
 /// A delta names the response it continues. Without that the backend has no way

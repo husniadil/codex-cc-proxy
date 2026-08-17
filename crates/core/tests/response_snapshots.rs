@@ -14,7 +14,7 @@ use serde_json::json;
 fn frames(events: &[Value]) -> String {
     let mut translator = ResponseTranslator::new(ResponseOptions {
         message_id: "msg_snapshot".to_owned(),
-        model: "claude-sonnet-4".to_owned(),
+        model: "claude-sonnet-5".to_owned(),
         estimated_input_tokens: 100,
     });
 
