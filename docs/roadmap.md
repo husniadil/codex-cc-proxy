@@ -229,9 +229,10 @@ setup instructions are followed end to end against the replay server, and the
 documented limitations match what the code actually does.
 
 **Shipped:** five binaries per tag with a checksum file covering all of them,
-and `cargo install --git`. **Not shipped:** the tap, the container image, and
-the install script, which are named here rather than quietly dropped — the
-README says the same, because a missing package is better stated than
+`cargo install --git`, and an install script that verifies the download against
+that checksum file with no way to skip the check. **Not shipped:** the Homebrew
+tap and the container image, which are named here rather than quietly dropped —
+the README says the same, because a missing package is better stated than
 discovered.
 
 Following the README's own instructions is what found the last defect in this

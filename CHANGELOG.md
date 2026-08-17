@@ -4,6 +4,17 @@ All notable changes to this project are recorded here. This project follows
 [semantic versioning](https://semver.org). The semver-bound surfaces are listed
 in [`docs/api.md`](docs/api.md) §6.
 
+## [Unreleased]
+
+### Added
+
+- **An install script.** One command detects the platform, downloads the
+  matching release, verifies it against the release's own `SHA256SUMS`, and
+  installs it. There is no flag to skip verification, and a mismatch installs
+  nothing and exits non-zero — proven by serving a deliberately corrupted
+  archive, since a verifying script and a non-verifying one are
+  indistinguishable on a good download.
+
 ## [0.1.1]
 
 A defect in v0.1.0 that only an installed binary could show.

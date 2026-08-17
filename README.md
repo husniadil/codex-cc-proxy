@@ -49,8 +49,24 @@ falsified on the way.
 
 ## Install
 
-Every release carries a binary for macOS, Linux, and Windows, on both
-architectures where the platform has two. Pick the one for your machine from
+```sh
+curl -fsSL https://raw.githubusercontent.com/husniadil/codex-cc-proxy/main/install.sh | sh
+```
+
+That detects the platform, downloads the matching release, **verifies it against
+the release's own `SHA256SUMS`**, and installs into `~/.local/bin`. There is no
+flag to skip the checksum: a script that fetches a binary and runs it has one
+defence, and an install that succeeded without taking it is the failure the step
+exists to prevent. On a mismatch it installs nothing and exits non-zero — which
+is tested by serving a deliberately corrupted archive, because a verifying
+script and a non-verifying one behave identically on a good download.
+
+`--bin-dir`, `--version`, and `--target` override the choices it makes;
+`--dry-run` reports them and downloads nothing. Windows is released as a binary
+but not installed by this script.
+
+Or do the same by hand. Every release carries a binary for macOS, Linux, and
+Windows, on both architectures where the platform has two — pick one from
 [the releases page](https://github.com/husniadil/codex-cc-proxy/releases), or:
 
 ```sh
@@ -83,9 +99,9 @@ cargo install --git https://github.com/husniadil/codex-cc-proxy --locked codex-c
 Without it Cargo is free to resolve newer ones, which is a different build than
 the one the suite passed against.
 
-There is no package manager entry yet — no tap, no container image, no install
-script. Those are worth having and none of them exists, which is stated here
-rather than left to be discovered.
+There is no package manager entry yet — no Homebrew tap and no container image.
+Both are worth having and neither exists, which is stated here rather than left
+to be discovered.
 
 ---
 
