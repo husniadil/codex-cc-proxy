@@ -138,3 +138,44 @@ fn the_effort_key_is_never_written_under_a_table() {
         "the ceiling landed inside [tiers]:\n{written}"
     );
 }
+
+/// A commented-out `effort` line that sits below a table header is not the key
+/// this setting means, and must not be rewritten into a live one.
+///
+/// In TOML a bare key belongs to the table above it, so replacing that line
+/// writes `tiers.effort` — which parses, which nothing reads, and which leaves
+/// the daemon starting with no ceiling at all after the operator asked for one.
+/// The `None` branch already guards the placement; this is the same rule for
+/// the branch that replaces an existing line.
+#[test]
+fn an_effort_key_below_a_table_header_is_not_the_one_that_gets_set() {
+    let document = "port = 8787\n\n[tiers]\nopus = \"gpt-5.6-terra\"\n# effort = \"low\"\n";
+
+    let written = edit::set_effort(document, Some("high")).unwrap();
+
+    let parsed: toml::Value = toml::from_str(&written).unwrap();
+    assert_eq!(
+        parsed["effort"].as_str(),
+        Some("high"),
+        "the ceiling must land at the top level:\n{written}"
+    );
+    assert!(
+        parsed["tiers"].get("effort").is_none(),
+        "the ceiling landed inside [tiers]:\n{written}"
+    );
+}
+
+/// Removing it has the same hazard in reverse: commenting out a live key is
+/// fine wherever it is, but a file whose only `effort` line is under a table
+/// must not gain a second one there.
+#[test]
+fn removing_a_ceiling_from_a_file_that_never_had_one_adds_nothing_under_a_table() {
+    let written = edit::set_effort("[tiers]\nopus = \"gpt-5.6-terra\"\n", None).unwrap();
+
+    let parsed: toml::Value = toml::from_str(&written).unwrap();
+    assert!(parsed.get("effort").is_none());
+    assert!(
+        parsed["tiers"].get("effort").is_none(),
+        "a commented key was written under [tiers]:\n{written}"
+    );
+}

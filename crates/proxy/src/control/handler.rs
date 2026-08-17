@@ -40,9 +40,10 @@ pub struct ControlState {
     /// The authorization flow, if one is running. Held here because there is
     /// exactly one callback port and every front-end shares it.
     pub login: Arc<crate::auth::daemon_login::LoginFlow>,
-    /// How to ask the backend for a quota figure. `None` where the daemon has
-    /// no credentials to ask with.
-    pub quota: Option<Arc<crate::auth::tokens::TokenSource>>,
+    /// The grant, for the two things this socket reports about it: whether it
+    /// has been refused, and the token a quota request is made with. `None`
+    /// where the daemon holds no credentials at all.
+    pub tokens: Option<Arc<crate::auth::tokens::TokenSource>>,
     pub usage_endpoint: String,
     /// Where a persisted change is written. `None` in tests, which must never
     /// touch an operator's file.
@@ -124,6 +125,12 @@ fn status(state: &ControlState) -> Value {
 
             json!({
                 "connected": true,
+                // A grant the backend has refused is terminal: every turn after
+                // it fails, and nothing else here would say so — `connected`
+                // stays true because the credential file is still readable. A
+                // front-end that could not tell would show a healthy provider
+                // while every dispatch failed.
+                "dead": state.tokens.as_ref().is_some_and(|tokens| tokens.is_dead()),
                 "account_id": credentials.account_id,
                 // Reported, never acted on. Null where neither source said
                 // anything: a defaulted plan would either explain away a
@@ -148,7 +155,7 @@ fn status(state: &ControlState) -> Value {
         "effort_ceiling": state
             .policy
             .get()
-            .effort_ceiling
+            .effort_ceiling()
             .and_then(|effort| serde_json::to_value(effort).ok()),
         // Mapped models the catalog knows but withholds. These pass validation,
         // so without this nothing would ever mention that a tier points at a
@@ -191,7 +198,7 @@ fn mapped_models(state: &ControlState) -> Vec<String> {
     state
         .policy
         .get()
-        .tiers
+        .tiers()
         .iter()
         .map(|tier| tier.model.clone())
         .collect::<std::collections::BTreeSet<_>>()
@@ -201,7 +208,7 @@ fn mapped_models(state: &ControlState) -> Vec<String> {
 
 fn tier_map(state: &ControlState) -> Value {
     let mut map = serde_json::Map::new();
-    for tier in state.policy.get().tiers.iter() {
+    for tier in state.policy.get().tiers().iter() {
         map.insert(tier.tier.to_owned(), Value::from(tier.model.clone()));
     }
     Value::Object(map)
@@ -234,7 +241,7 @@ fn usage(state: &ControlState) -> Value {
     let mut served: Vec<String> = state
         .policy
         .get()
-        .tiers
+        .tiers()
         .iter()
         .map(|tier| tier.model.clone())
         .chain(state.usage.served())
@@ -262,7 +269,7 @@ pub fn environment(state: &ControlState) -> Vec<(String, String)> {
         ("ANTHROPIC_AUTH_TOKEN".to_owned(), "unused".to_owned()),
     ];
 
-    for tier in state.policy.get().tiers.iter() {
+    for tier in state.policy.get().tiers().iter() {
         variables.push((
             format!("ANTHROPIC_DEFAULT_{}_MODEL", tier.tier.to_uppercase()),
             tier.model.clone(),
@@ -283,7 +290,7 @@ pub fn environment(state: &ControlState) -> Vec<(String, String)> {
     if let Some(window) = state
         .policy
         .get()
-        .tiers
+        .tiers()
         .iter()
         .filter_map(|tier| state.catalog.get(&tier.model))
         .filter_map(crate::catalog::Model::effective_window)
@@ -365,7 +372,7 @@ fn set_tiers(state: &ControlState, params: Option<&Value>) -> Result<Value, Prox
         ));
     }
 
-    let mut tiers = state.policy.get().tiers.clone();
+    let mut tiers = state.policy.get().tiers().to_vec();
 
     for (name, model) in requested {
         let model = model.as_str().ok_or_else(|| {
@@ -402,8 +409,6 @@ fn set_tiers(state: &ControlState, params: Option<&Value>) -> Result<Value, Prox
             .collect::<Vec<_>>(),
     )?;
 
-    state.policy.set_tiers(tiers);
-
     // Persisting is asked for, never assumed. A front-end changing a mapping to
     // try something is not the same as an operator changing what this daemon is,
     // and only the caller knows which it is doing.
@@ -412,10 +417,16 @@ fn set_tiers(state: &ControlState, params: Option<&Value>) -> Result<Value, Prox
         .and_then(Value::as_bool)
         .unwrap_or(false);
 
+    // Written BEFORE it is applied. A write that fails leaves the daemon as it
+    // was, so the error the caller gets is the whole story; applying first
+    // would leave it running a policy nobody chose, reported as a failure, and
+    // gone at the next restart.
     let persisted = if persist {
         write_config(state, |document| {
             let mut document = document.to_owned();
             for (name, model) in requested {
+                // Every value was checked to be a non-blank string above, so
+                // this cannot be reached with anything else.
                 let model = model.as_str().unwrap_or_default();
                 document = crate::config::edit::set_tier(&document, name, model)?;
             }
@@ -424,6 +435,8 @@ fn set_tiers(state: &ControlState, params: Option<&Value>) -> Result<Value, Prox
     } else {
         false
     };
+
+    state.policy.set_tiers(tiers);
 
     Ok(json!({
         "tiers": tier_map(state),
@@ -515,13 +528,12 @@ fn set_effort(state: &ControlState, params: Option<&Value>) -> Result<Value, Pro
         }
     };
 
-    state.policy.set_effort_ceiling(ceiling);
-
     let persist = params
         .and_then(|params| params.get("persist"))
         .and_then(Value::as_bool)
         .unwrap_or(false);
 
+    // Written before it is applied, for the same reason `tiers.set` is.
     let persisted = if persist {
         let effort = requested.as_str().map(str::to_owned);
         write_config(state, |document| {
@@ -530,6 +542,8 @@ fn set_effort(state: &ControlState, params: Option<&Value>) -> Result<Value, Pro
     } else {
         false
     };
+
+    state.policy.set_effort_ceiling(ceiling);
 
     Ok(json!({
         "effort": requested.clone(),
@@ -567,7 +581,7 @@ async fn login(state: &ControlState) -> Result<Value, ProxyError> {
 /// that path cannot cover — a front-end with a figure to show on a daemon that
 /// has served no turn yet.
 async fn refresh_usage(state: &ControlState) -> Result<Value, ProxyError> {
-    let Some(tokens) = state.quota.as_ref() else {
+    let Some(tokens) = state.tokens.as_ref() else {
         return Err(ProxyError::authentication(
             "there are no credentials to ask with; run `login` first",
         ));

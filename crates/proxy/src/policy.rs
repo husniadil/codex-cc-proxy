@@ -31,17 +31,22 @@ use std::sync::RwLock;
 ///
 /// Read together and replaced together: a reader that took the tiers and the
 /// ceiling in two calls could see one from before a change and one from after.
+///
+/// **The fields are private on purpose.** `models` is derived from `tiers`, and
+/// the two must never be set independently — `status` reports the tiers while
+/// the ingress routes on the models, so a snapshot where they disagree is a
+/// daemon that reports one mapping and serves another. Constructing one is
+/// therefore going through `new`, which derives the pair, or `routing_only`,
+/// which says in its name that there are no tiers to report.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Snapshot {
-    pub tiers: Vec<ResolvedTier>,
-    /// Tier name to upstream model id, which is what the ingress routes on.
-    /// Derived from `tiers` rather than stored beside it, so the two cannot
-    /// disagree.
-    pub models: Vec<ModelMapping>,
-    pub effort_ceiling: Option<Effort>,
+    tiers: Vec<ResolvedTier>,
+    models: Vec<ModelMapping>,
+    effort_ceiling: Option<Effort>,
 }
 
 impl Snapshot {
+    /// A snapshot from the tier mapping, with the routing table derived from it.
     pub fn new(tiers: Vec<ResolvedTier>, effort_ceiling: Option<Effort>) -> Self {
         let models = tiers
             .iter()
@@ -55,6 +60,33 @@ impl Snapshot {
             models,
             effort_ceiling,
         }
+    }
+
+    /// A snapshot that routes but has no tier mapping to report.
+    ///
+    /// For the probes and for tests, which route a fixed pair of ids without an
+    /// operator's configuration behind them. Named rather than reachable by
+    /// filling in a field, so a caller that wanted `new` cannot arrive here by
+    /// accident and leave `status` reporting nothing.
+    pub fn routing_only(models: Vec<ModelMapping>, effort_ceiling: Option<Effort>) -> Self {
+        Self {
+            tiers: Vec::new(),
+            models,
+            effort_ceiling,
+        }
+    }
+
+    pub fn tiers(&self) -> &[ResolvedTier] {
+        &self.tiers
+    }
+
+    /// Tier name to upstream model id, which is what the ingress routes on.
+    pub fn models(&self) -> &[ModelMapping] {
+        &self.models
+    }
+
+    pub fn effort_ceiling(&self) -> Option<Effort> {
+        self.effort_ceiling
     }
 }
 
@@ -84,19 +116,27 @@ impl Policy {
     }
 
     pub fn set_tiers(&self, tiers: Vec<ResolvedTier>) {
-        let ceiling = self.get().effort_ceiling;
-        self.replace(Snapshot::new(tiers, ceiling));
+        self.update(|current| Snapshot::new(tiers, current.effort_ceiling));
     }
 
     pub fn set_effort_ceiling(&self, ceiling: Option<Effort>) {
-        let tiers = self.get().tiers.clone();
-        self.replace(Snapshot::new(tiers, ceiling));
+        self.update(|current| Snapshot::new(current.tiers.clone(), ceiling));
     }
 
-    fn replace(&self, snapshot: Snapshot) {
+    /// Read and replace under one lock.
+    ///
+    /// Each setter changes one field and has to carry the other across. Reading
+    /// it through `get()` and writing through a second call leaves a window
+    /// where the other field moves in between, and the write puts the stale
+    /// value back — measured, not theorised: two threads setting different
+    /// fields reverted each other within a few hundred thousand iterations.
+    fn update(&self, next: impl FnOnce(&Snapshot) -> Snapshot) {
         match self.current.write() {
-            Ok(mut current) => *current = Arc::new(snapshot),
-            Err(poisoned) => *poisoned.into_inner() = Arc::new(snapshot),
+            Ok(mut current) => *current = Arc::new(next(&current)),
+            Err(poisoned) => {
+                let mut current = poisoned.into_inner();
+                *current = Arc::new(next(&current));
+            }
         }
     }
 }

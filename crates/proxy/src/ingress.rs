@@ -92,10 +92,9 @@ async fn not_found() -> Response {
 
 /// The mapped models, in the Anthropic list shape.
 async fn models(State(state): State<AppState>) -> Response {
-    let data: Vec<Value> = state
-        .policy
-        .get()
-        .models
+    let policy = state.policy.get();
+    let data: Vec<Value> = policy
+        .models()
         .iter()
         .map(|mapping| {
             serde_json::json!({
@@ -158,7 +157,7 @@ async fn messages(
     let policy = state.policy.get();
 
     let upstream_model = policy
-        .models
+        .models()
         .iter()
         .find(|mapping| mapping.requested == request.model)
         .map(|mapping| mapping.upstream.clone());
@@ -177,7 +176,7 @@ async fn messages(
     // effort the model does not support fails the turn for a reason the client
     // could not have anticipated or fixed.
     let catalog_entry = policy
-        .models
+        .models()
         .iter()
         .find(|mapping| mapping.requested == request.model)
         .map(|mapping| mapping.upstream.as_str())
@@ -189,7 +188,7 @@ async fn messages(
         .unwrap_or_default();
 
     let model_ceiling = policy
-        .models
+        .models()
         .iter()
         .find(|mapping| mapping.requested == request.model)
         .map(|mapping| mapping.upstream.as_str())
@@ -197,7 +196,7 @@ async fn messages(
         .and_then(|model| state.catalog.get(model))
         .and_then(crate::catalog::Model::highest_effort);
 
-    let effort_ceiling = match (policy.effort_ceiling, model_ceiling) {
+    let effort_ceiling = match (policy.effort_ceiling(), model_ceiling) {
         (Some(operator), Some(model)) => Some(operator.min(model)),
         (Some(operator), None) => Some(operator),
         (None, model) => model,

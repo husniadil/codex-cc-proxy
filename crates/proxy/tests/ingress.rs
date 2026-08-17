@@ -70,16 +70,13 @@ impl Harness {
 
         let state = AppState {
             policy: Arc::new(codex_cc_proxy::policy::Policy::new(
-                codex_cc_proxy::policy::Snapshot {
-                    tiers: Vec::new(),
-                    models: Arc::new(vec![ModelMapping {
+                codex_cc_proxy::policy::Snapshot::routing_only(
+                    vec![ModelMapping {
                         requested: "claude-sonnet-5".to_owned(),
                         upstream: "gpt-5.6-terra".to_owned(),
-                    }])
-                    .as_ref()
-                    .clone(),
-                    effort_ceiling: None,
-                },
+                    }],
+                    None,
+                ),
             )),
             catalog: Arc::new(codex_cc_proxy::catalog::Catalog::fallback()),
             transport: Arc::new(HttpTransport::new(upstream.url.clone())),
@@ -855,16 +852,13 @@ async fn the_configured_instructions_reach_the_backend() {
 
     let state = AppState {
         policy: Arc::new(codex_cc_proxy::policy::Policy::new(
-            codex_cc_proxy::policy::Snapshot {
-                tiers: Vec::new(),
-                models: Arc::new(vec![ModelMapping {
+            codex_cc_proxy::policy::Snapshot::routing_only(
+                vec![ModelMapping {
                     requested: "claude-sonnet-5".to_owned(),
                     upstream: "gpt-5.6-terra".to_owned(),
-                }])
-                .as_ref()
-                .clone(),
-                effort_ceiling: None,
-            },
+                }],
+                None,
+            ),
         )),
         catalog: Arc::new(codex_cc_proxy::catalog::Catalog::fallback()),
         transport: Arc::new(HttpTransport::new(upstream.url.clone())),
@@ -934,16 +928,13 @@ async fn the_working_budget_reaches_upstream_on_a_default_configuration() {
     .await;
     let state = AppState {
         policy: Arc::new(codex_cc_proxy::policy::Policy::new(
-            codex_cc_proxy::policy::Snapshot {
-                tiers: Vec::new(),
-                models: Arc::new(vec![ModelMapping {
+            codex_cc_proxy::policy::Snapshot::routing_only(
+                vec![ModelMapping {
                     requested: "claude-sonnet-5".to_owned(),
                     upstream: "gpt-5.6-terra".to_owned(),
-                }])
-                .as_ref()
-                .clone(),
-                effort_ceiling: None,
-            },
+                }],
+                None,
+            ),
         )),
         catalog: Arc::new(codex_cc_proxy::catalog::Catalog::fallback()),
         transport: Arc::new(HttpTransport::new(upstream.url.clone())),
@@ -1410,16 +1401,13 @@ async fn ingress_sends_through_a_conduit_and_uploads_incrementally() {
 
     let state = AppState {
         policy: Arc::new(codex_cc_proxy::policy::Policy::new(
-            codex_cc_proxy::policy::Snapshot {
-                tiers: Vec::new(),
-                models: Arc::new(vec![ModelMapping {
+            codex_cc_proxy::policy::Snapshot::routing_only(
+                vec![ModelMapping {
                     requested: "claude-sonnet-5".to_owned(),
                     upstream: "gpt-5.6-terra".to_owned(),
-                }])
-                .as_ref()
-                .clone(),
-                effort_ceiling: None,
-            },
+                }],
+                None,
+            ),
         )),
         catalog: Arc::new(codex_cc_proxy::catalog::Catalog::fallback()),
         transport: Arc::new(HttpTransport::new(upstream.url.clone())),
@@ -1537,16 +1525,13 @@ async fn a_second_turn_uploads_the_new_items_and_not_nothing() {
 
     let state = AppState {
         policy: Arc::new(codex_cc_proxy::policy::Policy::new(
-            codex_cc_proxy::policy::Snapshot {
-                tiers: Vec::new(),
-                models: Arc::new(vec![ModelMapping {
+            codex_cc_proxy::policy::Snapshot::routing_only(
+                vec![ModelMapping {
                     requested: "claude-sonnet-5".to_owned(),
                     upstream: "gpt-5.6-terra".to_owned(),
-                }])
-                .as_ref()
-                .clone(),
-                effort_ceiling: None,
-            },
+                }],
+                None,
+            ),
         )),
         catalog: Arc::new(codex_cc_proxy::catalog::Catalog::fallback()),
         transport: Arc::new(HttpTransport::new("http://127.0.0.1:1/unused")),
@@ -1728,16 +1713,13 @@ async fn a_reasoning_turn_does_not_end_the_session() {
 
     let state = AppState {
         policy: Arc::new(codex_cc_proxy::policy::Policy::new(
-            codex_cc_proxy::policy::Snapshot {
-                tiers: Vec::new(),
-                models: Arc::new(vec![ModelMapping {
+            codex_cc_proxy::policy::Snapshot::routing_only(
+                vec![ModelMapping {
                     requested: "claude-sonnet-5".to_owned(),
                     upstream: "gpt-5.6-terra".to_owned(),
-                }])
-                .as_ref()
-                .clone(),
-                effort_ceiling: None,
-            },
+                }],
+                None,
+            ),
         )),
         catalog: Arc::new(codex_cc_proxy::catalog::Catalog::fallback()),
         transport: Arc::new(HttpTransport::new("http://127.0.0.1:1/unused")),
@@ -1853,16 +1835,13 @@ async fn a_failed_turn_does_not_advance_the_baseline() {
 
     let state = AppState {
         policy: Arc::new(codex_cc_proxy::policy::Policy::new(
-            codex_cc_proxy::policy::Snapshot {
-                tiers: Vec::new(),
-                models: Arc::new(vec![ModelMapping {
+            codex_cc_proxy::policy::Snapshot::routing_only(
+                vec![ModelMapping {
                     requested: "claude-sonnet-5".to_owned(),
                     upstream: "gpt-5.6-terra".to_owned(),
-                }])
-                .as_ref()
-                .clone(),
-                effort_ceiling: None,
-            },
+                }],
+                None,
+            ),
         )),
         catalog: Arc::new(codex_cc_proxy::catalog::Catalog::fallback()),
         transport: Arc::new(HttpTransport::new("http://127.0.0.1:1/unused")),
@@ -1966,16 +1945,13 @@ async fn a_request_larger_than_the_window_is_refused() {
     let upstream = ReplayServer::start(Behavior::Events(Vec::new())).await;
     let state = AppState {
         policy: Arc::new(codex_cc_proxy::policy::Policy::new(
-            codex_cc_proxy::policy::Snapshot {
-                tiers: Vec::new(),
-                models: Arc::new(vec![ModelMapping {
+            codex_cc_proxy::policy::Snapshot::routing_only(
+                vec![ModelMapping {
                     requested: "claude-sonnet-5".to_owned(),
                     upstream: "gpt-5.6-terra".to_owned(),
-                }])
-                .as_ref()
-                .clone(),
-                effort_ceiling: None,
-            },
+                }],
+                None,
+            ),
         )),
         catalog: Arc::new(catalog),
         transport: Arc::new(HttpTransport::new(upstream.url.clone())),
@@ -2041,16 +2017,13 @@ async fn an_unknown_window_does_not_refuse_anything() {
 
     let state = AppState {
         policy: Arc::new(codex_cc_proxy::policy::Policy::new(
-            codex_cc_proxy::policy::Snapshot {
-                tiers: Vec::new(),
-                models: Arc::new(vec![ModelMapping {
+            codex_cc_proxy::policy::Snapshot::routing_only(
+                vec![ModelMapping {
                     requested: "claude-sonnet-5".to_owned(),
                     upstream: "gpt-5.6-terra".to_owned(),
-                }])
-                .as_ref()
-                .clone(),
-                effort_ceiling: None,
-            },
+                }],
+                None,
+            ),
         )),
         // The fallback list carries ids only, and no windows at all.
         catalog: Arc::new(codex_cc_proxy::catalog::Catalog::fallback()),
@@ -2118,16 +2091,13 @@ async fn effort_is_capped_by_what_the_model_supports() {
     let state = AppState {
         // No operator ceiling: the model's own limit is the only one.
         policy: Arc::new(codex_cc_proxy::policy::Policy::new(
-            codex_cc_proxy::policy::Snapshot {
-                tiers: Vec::new(),
-                models: Arc::new(vec![ModelMapping {
+            codex_cc_proxy::policy::Snapshot::routing_only(
+                vec![ModelMapping {
                     requested: "sonnet".to_owned(),
                     upstream: "modest-model".to_owned(),
-                }])
-                .as_ref()
-                .clone(),
-                effort_ceiling: None,
-            },
+                }],
+                None,
+            ),
         )),
         catalog: Arc::new(catalog),
         transport: Arc::new(HttpTransport::new(upstream.url.clone())),
@@ -2185,16 +2155,13 @@ async fn an_unlisted_model_does_not_cap_effort() {
 
     let state = AppState {
         policy: Arc::new(codex_cc_proxy::policy::Policy::new(
-            codex_cc_proxy::policy::Snapshot {
-                tiers: Vec::new(),
-                models: Arc::new(vec![ModelMapping {
+            codex_cc_proxy::policy::Snapshot::routing_only(
+                vec![ModelMapping {
                     requested: "sonnet".to_owned(),
                     upstream: "gpt-5.6-terra".to_owned(),
-                }])
-                .as_ref()
-                .clone(),
-                effort_ceiling: None,
-            },
+                }],
+                None,
+            ),
         )),
         catalog: Arc::new(codex_cc_proxy::catalog::Catalog::fallback()),
         transport: Arc::new(HttpTransport::new(upstream.url.clone())),
@@ -2525,16 +2492,13 @@ async fn every_turn_of_a_conversation_carries_one_session_id() {
 
     let state = AppState {
         policy: Arc::new(codex_cc_proxy::policy::Policy::new(
-            codex_cc_proxy::policy::Snapshot {
-                tiers: Vec::new(),
-                models: Arc::new(vec![ModelMapping {
+            codex_cc_proxy::policy::Snapshot::routing_only(
+                vec![ModelMapping {
                     requested: "claude-sonnet-5".to_owned(),
                     upstream: "gpt-5.6-terra".to_owned(),
-                }])
-                .as_ref()
-                .clone(),
-                effort_ceiling: None,
-            },
+                }],
+                None,
+            ),
         )),
         catalog: Arc::new(codex_cc_proxy::catalog::Catalog::fallback()),
         transport: Arc::new(HttpTransport::new(upstream.url.clone())),

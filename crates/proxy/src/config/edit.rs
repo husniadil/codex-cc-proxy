@@ -93,13 +93,27 @@ pub fn set_effort(document: &str, effort: Option<&str>) -> Result<String, ProxyE
 
     let mut lines: Vec<String> = document.lines().map(str::to_owned).collect();
 
+    // Only the region above the first table header is this setting's. A bare
+    // key belongs to the table above it, so an `effort` line below one is
+    // `tiers.effort` — a different key that nothing reads. Rewriting it would
+    // produce a file that parses, loads, and leaves the daemon with no ceiling
+    // at all after the operator asked for one.
+    let first_table = lines
+        .iter()
+        .position(|line| line.trim_start().starts_with('['))
+        .unwrap_or(lines.len());
+
     // A commented-out key counts: the shipped file ships it that way, and
     // writing a second line would leave the commented one looking like the
     // setting while a live one below it actually decides.
-    let existing = lines.iter().position(|line| {
-        let bare = line.trim_start().trim_start_matches('#').trim_start();
-        is_assignment_to(bare, "effort")
-    });
+    let existing = lines
+        .get(..first_table)
+        .unwrap_or_default()
+        .iter()
+        .position(|line| {
+            let bare = line.trim_start().trim_start_matches('#').trim_start();
+            is_assignment_to(bare, "effort")
+        });
 
     let line = match effort {
         Some(effort) => format!("effort = \"{effort}\""),
@@ -113,15 +127,10 @@ pub fn set_effort(document: &str, effort: Option<&str>) -> Result<String, ProxyE
             }
         }
         None => {
-            // Above every table header, because a bare key written below one
-            // belongs to it. Inserting before the first header is the only
-            // placement that is right whatever the file already contains.
-            let insert = lines
-                .iter()
-                .position(|line| line.trim_start().starts_with('['))
-                .unwrap_or(lines.len());
-            lines.insert(insert, line);
-            lines.insert(insert + 1, String::new());
+            // Above every table header, for the same reason the search above is
+            // bounded by it.
+            lines.insert(first_table, line);
+            lines.insert(first_table + 1, String::new());
         }
     }
 

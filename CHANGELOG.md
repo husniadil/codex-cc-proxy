@@ -10,8 +10,10 @@ in [`docs/api.md`](docs/api.md) §6.
 
 - **The tier mapping and the effort ceiling can be changed on a running daemon**
   — `tiers.set` and `effort.set`. Both move what *routes turns*, not only what
-  `status` reports, and neither writes the configuration file: a change lasts
-  until the daemon stops, and every answer says so. `tiers.set` is validated
+  `status` reports. Neither writes the configuration file unless asked —
+  `{"persist": true}` — and every answer says which it was, because a change
+  the caller believed was saved and was not comes back at the next restart with
+  nothing to explain it. `tiers.set` is validated
   against the catalog exactly as startup validates it, which is why this daemon
   owns the mapping rather than a front-end. It matters most for the ceiling: a
   capped turn **succeeds** and is simply shallower than it was asked to be, so a
@@ -33,6 +35,24 @@ in [`docs/api.md`](docs/api.md) §6.
 
 ### Fixed
 
+- **A persisted tier or effort change was applied even when the write failed.**
+  The caller was told the write failed while the daemon had already moved —
+  running a policy nobody chose, and losing it at the next restart. Validated,
+  written, then applied.
+- **`effort.set --persist` could write the ceiling into the wrong table.** The
+  search for an existing key scanned the whole file, so a commented-out `effort`
+  line below a table header was rewritten in place — producing `tiers.effort`,
+  which parses, which nothing reads, and which leaves the next daemon with no
+  ceiling at all after the operator asked for one.
+- **A refused grant read as healthy.** `status` reports `auth.dead` now:
+  `connected` stays true while the credential file is readable, so nothing else
+  said that every turn was failing.
+- **Two concurrent sets could revert each other.** Each setter carried across
+  the field it was not changing, read through one call and written through
+  another; a mapping write that read the ceiling before another caller changed
+  it put the old value back for good. Read and replace now happen under one
+  lock, and `Snapshot`'s fields are private so the routing table cannot be set
+  apart from the tiers it is derived from.
 - **A status line showed this account's quota to a session that was not using
   it.** The wrapper is configured once and renders for every session the client
   runs, including ones pointed at their own provider, and the daemon answers

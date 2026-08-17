@@ -326,11 +326,12 @@ async fn run_one(probe: &probe::Probe, fixture: &Fixture, backend: &Backend) -> 
     };
 
     let state = AppState {
-        policy: Arc::new(crate::policy::Policy::new(crate::policy::Snapshot {
-            tiers: Vec::new(),
-            models: models.as_ref().clone(),
-            effort_ceiling,
-        })),
+        // Routing only: a probe has no operator tier mapping behind it, and
+        // saying so by name is what keeps it from looking like one that lost
+        // its tiers.
+        policy: Arc::new(crate::policy::Policy::new(
+            crate::policy::Snapshot::routing_only(models.as_ref().clone(), effort_ceiling),
+        )),
         catalog: Arc::new(crate::catalog::Catalog::fallback()),
         transport: Arc::clone(&transport) as Arc<dyn Transport>,
         conduits: None,

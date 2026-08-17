@@ -103,7 +103,7 @@ impl Harness {
             login: Arc::new(codex_cc_proxy::auth::daemon_login::LoginFlow::default()),
             // No credentials to ask with, and no endpoint that would answer:
             // no test may reach the network.
-            quota: None,
+            tokens: None,
             usage_endpoint: String::new(),
             // Inside the temp directory, always. A test that could reach an
             // operator's real configuration would be a test that edits the
@@ -135,6 +135,22 @@ impl Harness {
         }
     }
 
+    /// The same harness, answering on a socket whose daemon holds this grant.
+    async fn with_tokens(self, tokens: Arc<codex_cc_proxy::auth::tokens::TokenSource>) -> Self {
+        let catalog = r#"{"data":[{"id":"gpt-5.6-terra","context_window":272000}]}"#;
+        self.respawn_with(catalog, "gpt-5.6-terra", Some(tokens))
+            .await
+    }
+
+    /// The same harness, answering on a socket whose daemon writes to another
+    /// configuration path — for the tests about what a failed write does.
+    async fn with_config(self, config: std::path::PathBuf) -> Self {
+        let harness = Self { config, ..self };
+        let catalog = r#"{"data":[{"id":"gpt-5.6-terra","context_window":272000},
+                                  {"id":"gpt-5.4-mini","context_window":200000}]}"#;
+        harness.respawn(catalog, "gpt-5.6-terra").await
+    }
+
     /// A harness whose catalog and single mapped model are the caller's, for
     /// tests about what a particular window produces.
     async fn with_catalog(catalog: &str, model: &str) -> Self {
@@ -143,6 +159,15 @@ impl Harness {
     }
 
     async fn respawn(self, catalog: &str, model: &str) -> Self {
+        self.respawn_with(catalog, model, None).await
+    }
+
+    async fn respawn_with(
+        self,
+        catalog: &str,
+        model: &str,
+        tokens: Option<Arc<codex_cc_proxy::auth::tokens::TokenSource>>,
+    ) -> Self {
         let tiers: Vec<ResolvedTier> = ["opus", "sonnet", "haiku", "fable"]
             .into_iter()
             .map(|tier| ResolvedTier {
@@ -164,9 +189,7 @@ impl Harness {
             capture: Arc::clone(&self.switches),
             usage: Arc::clone(&self.usage),
             login: Arc::new(codex_cc_proxy::auth::daemon_login::LoginFlow::default()),
-            // No credentials to ask with, and no endpoint that would answer:
-            // no test may reach the network.
-            quota: None,
+            tokens,
             usage_endpoint: String::new(),
             config_path: Some(self.config.clone()),
         };
@@ -471,7 +494,7 @@ async fn an_unknown_window_is_reported_as_null() {
         capture: Arc::new(codex_cc_proxy::recorder::Switches::default()),
         usage: Arc::new(codex_cc_proxy::usage::UsageStore::default()),
         login: Arc::new(codex_cc_proxy::auth::daemon_login::LoginFlow::default()),
-        quota: None,
+        tokens: None,
         usage_endpoint: String::new(),
         config_path: None,
     };
@@ -618,7 +641,7 @@ async fn a_malformed_request_is_reported_without_closing_the_socket() {
         capture: Arc::new(codex_cc_proxy::recorder::Switches::default()),
         usage: Arc::new(codex_cc_proxy::usage::UsageStore::default()),
         login: Arc::new(codex_cc_proxy::auth::daemon_login::LoginFlow::default()),
-        quota: None,
+        tokens: None,
         usage_endpoint: String::new(),
         config_path: None,
     };
@@ -789,7 +812,7 @@ async fn status_says_when_the_catalog_was_unavailable() {
         capture: Arc::new(codex_cc_proxy::recorder::Switches::default()),
         usage: Arc::new(codex_cc_proxy::usage::UsageStore::default()),
         login: Arc::new(codex_cc_proxy::auth::daemon_login::LoginFlow::default()),
-        quota: None,
+        tokens: None,
         usage_endpoint: String::new(),
         config_path: None,
     };
@@ -819,7 +842,7 @@ async fn models_prints_unknown_rather_than_a_number() {
         capture: Arc::new(codex_cc_proxy::recorder::Switches::default()),
         usage: Arc::new(codex_cc_proxy::usage::UsageStore::default()),
         login: Arc::new(codex_cc_proxy::auth::daemon_login::LoginFlow::default()),
-        quota: None,
+        tokens: None,
         usage_endpoint: String::new(),
         config_path: None,
     };
@@ -889,7 +912,7 @@ async fn env_states_no_window_when_the_catalog_is_unavailable() {
         capture: Arc::new(codex_cc_proxy::recorder::Switches::default()),
         usage: Arc::new(codex_cc_proxy::usage::UsageStore::default()),
         login: Arc::new(codex_cc_proxy::auth::daemon_login::LoginFlow::default()),
-        quota: None,
+        tokens: None,
         usage_endpoint: String::new(),
         config_path: None,
     };
@@ -1069,7 +1092,7 @@ async fn setting_the_tier_mapping_moves_what_routes_turns() {
     let routed = harness.policy.get();
     assert_eq!(
         routed
-            .models
+            .models()
             .iter()
             .find(|mapping| mapping.requested == "sonnet")
             .map(|mapping| mapping.upstream.as_str()),
@@ -1102,7 +1125,7 @@ async fn setting_a_tier_to_a_model_the_catalog_lacks_is_refused() {
         harness
             .policy
             .get()
-            .models
+            .models()
             .iter()
             .find(|mapping| mapping.requested == "sonnet")
             .map(|mapping| mapping.upstream.as_str()),
@@ -1140,7 +1163,7 @@ async fn the_effort_ceiling_can_be_raised_without_a_restart() {
 
     assert_eq!(result["effort"], json!("high"));
     assert_eq!(
-        harness.policy.get().effort_ceiling,
+        harness.policy.get().effort_ceiling(),
         Some(codex_cc_proxy_core::responses::Effort::High)
     );
     // And `status` says so. A capped turn succeeds, so without this nothing
@@ -1167,7 +1190,7 @@ async fn the_effort_ceiling_can_be_removed() {
         .unwrap();
 
     assert_eq!(result["effort"], Value::Null);
-    assert_eq!(harness.policy.get().effort_ceiling, None);
+    assert_eq!(harness.policy.get().effort_ceiling(), None);
     // Null, not the highest value the catalog lists: with no ceiling the only
     // cap left is the model's own.
     assert_eq!(
@@ -1302,4 +1325,117 @@ async fn a_refused_effort_never_reaches_the_file() {
         std::fs::read_to_string(&harness.config).unwrap(),
         "port = 8787\n"
     );
+}
+
+/// A change that could not be written leaves the daemon as it was.
+///
+/// The caller is told the write failed; a daemon that had already moved would
+/// be running a policy nobody chose, reported as an error, and gone at the next
+/// restart. Validate, then persist, then apply — so the only ordering where the
+/// two can disagree is the one where nothing was asked to be persisted at all.
+#[tokio::test]
+async fn a_change_that_cannot_be_written_is_not_applied_either() {
+    let harness = Harness::start().await;
+
+    // A real configuration that reads fine and cannot be written: the read leg
+    // has to succeed, or this would prove the wrong half of the ordering.
+    let unwritable = harness.config.parent().unwrap().join("read-only.toml");
+    std::fs::write(&unwritable, "port = 8787\n").unwrap();
+    let mut permissions = std::fs::metadata(&unwritable).unwrap().permissions();
+    permissions.set_readonly(true);
+    std::fs::set_permissions(&unwritable, permissions).unwrap();
+    let harness = harness.with_config(unwritable).await;
+
+    let before = harness.policy.get();
+
+    let error = harness
+        .call_with(
+            "tiers.set",
+            json!({ "tiers": { "sonnet": "gpt-5.4-mini" }, "persist": true }),
+        )
+        .await
+        .unwrap_err();
+    assert!(error.contains("could not write"), "{error}");
+    assert_eq!(harness.policy.get().tiers(), before.tiers());
+
+    let error = harness
+        .call_with("effort.set", json!({ "effort": "high", "persist": true }))
+        .await
+        .unwrap_err();
+    assert!(error.contains("could not write"), "{error}");
+    assert_eq!(
+        harness.policy.get().effort_ceiling(),
+        before.effort_ceiling()
+    );
+}
+
+/// One loopback reply, then done — enough to have an authorization server
+/// refuse a grant without any test reaching the network.
+async fn refusing_token_endpoint() -> String {
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .unwrap();
+    let url = format!("http://{}/token", listener.local_addr().unwrap());
+
+    tokio::spawn(async move {
+        while let Ok((mut stream, _)) = listener.accept().await {
+            use tokio::io::AsyncWriteExt;
+            let body = r#"{"error":"refresh_token_expired"}"#;
+            let reply = format!(
+                "HTTP/1.1 400 Bad Request\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            let _ = stream.write_all(reply.as_bytes()).await;
+            let _ = stream.shutdown().await;
+        }
+    });
+
+    url
+}
+
+/// A grant the backend has refused is reported as such.
+///
+/// `connected` stays true — the credential file is still there and still
+/// readable — so without this nothing anywhere says the provider is finished.
+/// A front-end would show it healthy while every turn failed with an
+/// authentication error, which is the worst of both: no figure to act on and
+/// no reason to look.
+#[tokio::test]
+async fn status_reports_a_grant_the_backend_refused() {
+    let harness = Harness::start().await;
+    harness
+        .store
+        .save(&Credentials {
+            access_token: "a".to_owned(),
+            refresh_token: "r".to_owned(),
+            id_token: None,
+            account_id: Some("acct_9".to_owned()),
+            // In the past, so the next use has to refresh — which is what gets
+            // refused.
+            expires_at: Some(1_000),
+        })
+        .unwrap();
+
+    let tokens = Arc::new(codex_cc_proxy::auth::tokens::TokenSource::new(
+        Arc::clone(&harness.store) as Arc<dyn CredentialStore>,
+        refusing_token_endpoint().await,
+        "client-abc",
+        Arc::new(codex_cc_proxy::auth::tokens::SystemClock),
+    ));
+
+    let harness = harness.with_tokens(Arc::clone(&tokens)).await;
+    assert_eq!(
+        harness.call("status").await.unwrap()["auth"]["dead"],
+        json!(false)
+    );
+
+    tokens
+        .access_token()
+        .await
+        .expect_err("the grant should have been refused");
+    assert!(tokens.is_dead());
+
+    let status = harness.call("status").await.unwrap();
+    assert_eq!(status["auth"]["connected"], json!(true));
+    assert_eq!(status["auth"]["dead"], json!(true));
 }

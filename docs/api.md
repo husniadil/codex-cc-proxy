@@ -259,7 +259,7 @@ A Unix domain socket, or a named pipe on Windows, carrying JSON-RPC:
 
 | Method | Returns | v0.1 |
 |---|---|---|
-| `status` | connection state, plan and which source reported it, tier mapping, any mapped model the catalog withholds, whether the catalog was authoritative | yes |
+| `status` | connection state, whether the grant has been **refused**, plan and which source reported it, the tier mapping and the effort ceiling, any mapped model the catalog withholds, whether the catalog was authoritative | yes |
 | `disconnect` | clears credentials | yes |
 | `models` | catalog, and whether it is the fallback list | yes |
 | `tiers.get` | tier mapping | yes |
@@ -272,6 +272,16 @@ A Unix domain socket, or a named pipe on Windows, carrying JSON-RPC:
 | `tiers.set` | tier mapping, validated against the catalog and in effect until the daemon stops | yes |
 | `effort.set` | the effort ceiling, or `null` to remove it; in effect until the daemon stops | yes |
 | `doctor` | probe results | no — `doctor` runs in the CLI, which is where `--live` can be given credentials without a daemon already holding them |
+
+`auth.dead` is the one that is easy to miss: a refused grant leaves `connected`
+true, because the credential file is still there and still readable, while every
+turn after it fails with an authentication error. Without that field a front-end
+shows a healthy provider and no reason to look.
+
+**A persisted change is written before it is applied.** A write that fails
+leaves the daemon exactly as it was, so the error the caller receives is the
+whole story — applying first would leave it running a policy nobody chose,
+reported as a failure, and gone at the next restart.
 
 **`tiers.set` and `effort.set` write the configuration file only when asked** —
 `{"persist": true}`. A front-end changing a mapping to try something is not the
