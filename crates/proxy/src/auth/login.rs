@@ -181,17 +181,30 @@ pub async fn run(
 
     open_url(&authorization.url);
 
-    let query = accept_callback(&listener).await?;
+    complete_from_listener(&listener, &authorization, &store).await
+}
+
+/// Wait for the one authorization response and exchange it.
+///
+/// Split out of `run` so the daemon can bind the port itself — reporting a port
+/// it cannot take to the caller that asked, rather than surfacing it later as a
+/// login that never completes — and then wait in a task of its own.
+pub async fn complete_from_listener(
+    listener: &tokio::net::TcpListener,
+    authorization: &Authorization,
+    store: &Arc<dyn CredentialStore>,
+) -> Result<Credentials, ProxyError> {
+    let query = accept_callback(listener).await?;
     let (code, state) = parse_callback(&query)?;
 
     complete(
         &reqwest::Client::new(),
         &super::flow::token_endpoint(),
         super::flow::CLIENT_ID,
-        &authorization,
+        authorization,
         &state,
         &code,
-        &store,
+        store,
     )
     .await
 }

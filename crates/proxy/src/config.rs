@@ -172,6 +172,14 @@ pub struct UpstreamConfig {
     pub websocket: String,
     #[serde(default = "default_catalog")]
     pub catalog: String,
+    /// Where a quota figure can be asked for rather than waited for.
+    ///
+    /// The backend volunteers a snapshot at the head of every stream, and that
+    /// remains the free path and the one §6 describes. This is for a front-end
+    /// that has to show a figure before any turn has been made — a dashboard
+    /// opened on a daemon that has been idle since it started.
+    #[serde(default = "default_usage")]
+    pub usage: String,
 }
 
 fn default_client_version() -> String {
@@ -194,6 +202,10 @@ fn default_catalog() -> String {
     "https://chatgpt.com/backend-api/codex/models".to_owned()
 }
 
+fn default_usage() -> String {
+    "https://chatgpt.com/backend-api/wham/usage".to_owned()
+}
+
 impl Default for UpstreamConfig {
     fn default() -> Self {
         Self {
@@ -202,6 +214,7 @@ impl Default for UpstreamConfig {
             endpoint: default_endpoint(),
             websocket: default_websocket(),
             catalog: default_catalog(),
+            usage: default_usage(),
         }
     }
 }
@@ -343,14 +356,7 @@ impl Config {
         let Some(effort) = &self.effort else {
             return Ok(None);
         };
-        codex_cc_proxy_core::responses::Effort::parse(effort)
-            .map(Some)
-            .ok_or_else(|| {
-                ProxyError::invalid_request(format!(
-                    "`effort = \"{effort}\"` is not a recognized effort. \
-                     One of: none, minimal, low, medium, high, xhigh, max."
-                ))
-            })
+        parse_effort(effort).map(Some)
     }
 
     /// Check the values that parse but cannot work.
@@ -502,6 +508,25 @@ pub struct ResolvedTier {
 ///
 /// These are model ids, so they go stale. A default naming a retired model is
 /// refused at startup by catalog validation, with the error saying what exists.
+/// One effort name, or an error naming every value that would have worked.
+///
+/// An unrecognized value is an error rather than a silent fallback: an operator
+/// who wrote `effort = "cheap"` meant to cap their spending, and quietly
+/// ignoring it spends their quota at full rate.
+pub fn parse_effort(effort: &str) -> Result<codex_cc_proxy_core::responses::Effort, ProxyError> {
+    codex_cc_proxy_core::responses::Effort::parse(effort).ok_or_else(|| {
+        ProxyError::invalid_request(format!(
+            "`{effort}` is not a recognized effort. \
+             One of: none, minimal, low, medium, high, xhigh, max."
+        ))
+    })
+}
+
+/// The four tier names, in the order they are reported.
+///
+/// Named once so an error can list them rather than describing them.
+pub const TIER_NAMES: [&str; 4] = ["opus", "sonnet", "haiku", "fable"];
+
 const DEFAULT_TIERS: [(&str, &str); 4] = [
     ("opus", "gpt-5.6-terra"),
     ("sonnet", "gpt-5.6-luna"),

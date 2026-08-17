@@ -6,6 +6,31 @@ in [`docs/api.md`](docs/api.md) §6.
 
 ## [Unreleased]
 
+### Added
+
+- **The tier mapping and the effort ceiling can be changed on a running daemon**
+  — `tiers.set` and `effort.set`. Both move what *routes turns*, not only what
+  `status` reports, and neither writes the configuration file: a change lasts
+  until the daemon stops, and every answer says so. `tiers.set` is validated
+  against the catalog exactly as startup validates it, which is why this daemon
+  owns the mapping rather than a front-end. It matters most for the ceiling: a
+  capped turn **succeeds** and is simply shallower than it was asked to be, so a
+  ceiling set once for one purpose silently governs every front-end that arrives
+  afterwards, and nothing about that is visible.
+- **`login` over the control socket**, so a front-end that is not a terminal can
+  start the flow. It answers with the authorization URL and returns; the flow
+  completes in the background and `status` reports when it landed. There is one
+  fixed callback port, so a second caller joins the first rather than being
+  handed a URL whose callback would then be rejected — and an abandoned flow
+  releases the port instead of holding it until the daemon stops.
+- **`usage.refresh`** asks the backend for a quota figure rather than waiting for
+  one. The volunteered snapshot is still the primary path and still free; this
+  covers the case it cannot — a front-end with a figure to show on a daemon that
+  has served no turn yet. The response shape was **captured before the parser was
+  written**, and differs from the stream event's in three ways a guess would have
+  got wrong: the window keys, seconds rather than minutes, and where the plan
+  sits.
+
 ### Fixed
 
 - **A status line showed this account's quota to a session that was not using

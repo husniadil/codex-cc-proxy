@@ -326,11 +326,14 @@ async fn run_one(probe: &probe::Probe, fixture: &Fixture, backend: &Backend) -> 
     };
 
     let state = AppState {
-        effort_ceiling,
+        policy: Arc::new(crate::policy::Policy::new(crate::policy::Snapshot {
+            tiers: Vec::new(),
+            models: models.as_ref().clone(),
+            effort_ceiling,
+        })),
         catalog: Arc::new(crate::catalog::Catalog::fallback()),
         transport: Arc::clone(&transport) as Arc<dyn Transport>,
         conduits: None,
-        models,
         recorder: None,
         capture: Arc::new(crate::recorder::Switches::default()),
         // A probe measures the translation, not the operator's prompt policy.

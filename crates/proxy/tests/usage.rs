@@ -151,3 +151,63 @@ fn a_reached_limit_is_reported_as_rejected() {
         "{headers:?}"
     );
 }
+
+/// The quota endpoint's own shape, read from a recorded response.
+///
+/// It lives under `fixtures/upstream/` rather than in the probe corpus: the
+/// corpus is a set of replayable Messages exchanges, and this is a recorded
+/// REST response. Putting it there made four corpus tests fail, which is the
+/// corpus correctly refusing something that is not one of its own.
+///
+/// **This fixture was captured, not written.** The shape differs from the
+/// stream event's in three ways that a guess would have got wrong: the windows
+/// are `primary_window`/`secondary_window` rather than `primary`/`secondary`,
+/// the length is stated in **seconds** rather than minutes, and the plan sits at
+/// the top level rather than beside the limits. A parser written from the
+/// stream shape would have parsed this into nothing and reported "no quota" on
+/// an account that has one.
+#[test]
+fn a_recorded_quota_response_parses_into_the_same_snapshot_a_stream_produces() {
+    let payload = std::fs::read_to_string("../../fixtures/upstream/quota-rest.json").unwrap();
+
+    let snapshot = codex_cc_proxy::usage::Snapshot::parse_rest(&payload)
+        .expect("the recorded response should parse");
+
+    assert_eq!(snapshot.plan.as_deref(), Some("free"));
+    assert!(!snapshot.limit_reached);
+    assert_eq!(snapshot.windows.len(), 1);
+
+    let window = &snapshot.windows[0];
+    assert_eq!(window.used_percent, 15.0);
+    // Seconds on the wire, minutes in the snapshot — the unit every other
+    // reader of a window already uses.
+    assert_eq!(window.window_minutes, Some(43_200));
+    assert_eq!(window.resets_at, Some(1_789_487_264));
+}
+
+/// A null window is absent, never a window reporting zero used.
+#[test]
+fn a_window_the_backend_did_not_report_is_absent_rather_than_zero() {
+    let payload = std::fs::read_to_string("../../fixtures/upstream/quota-rest.json").unwrap();
+    let snapshot = codex_cc_proxy::usage::Snapshot::parse_rest(&payload).unwrap();
+
+    assert!(
+        snapshot
+            .windows
+            .iter()
+            .all(|window| window.used_percent > 0.0),
+        "a null secondary window must not become a zeroed one"
+    );
+}
+
+/// Something that is not this response is refused rather than parsed into an
+/// empty snapshot — which would read as "quota known, nothing used".
+#[test]
+fn an_unrecognized_body_is_not_read_as_an_empty_quota() {
+    assert!(codex_cc_proxy::usage::Snapshot::parse_rest("{}").is_none());
+    assert!(codex_cc_proxy::usage::Snapshot::parse_rest("not json").is_none());
+    assert!(
+        codex_cc_proxy::usage::Snapshot::parse_rest(r#"{"rate_limit":{}}"#).is_none(),
+        "a rate_limit with no window at all says nothing about quota"
+    );
+}

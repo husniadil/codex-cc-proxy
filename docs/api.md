@@ -79,9 +79,13 @@ codex-cc-proxy record     capture exchanges as fixtures
 Every verb except `run` and `login` operates through the control socket (§3)
 against a running daemon.
 
-`login` runs in the CLI. It needs a fixed callback port, and the daemon need not
-be running to authenticate — requiring it would mean starting a daemon that
-cannot serve a request in order to obtain the credentials it needs to serve one.
+`login` runs in the CLI **and** in the daemon (§3), and the two are alternatives
+rather than a duplication. The CLI's exists because the daemon need not be
+running to authenticate: requiring it would mean starting a daemon that cannot
+serve a request in order to obtain the credentials it needs to serve one. The
+daemon's exists because a front-end that is not a terminal has no other way to
+start the flow. Both bind the same fixed callback port, so only one can be in
+flight; the second to ask is told which is holding it.
 
 **The authorization URL is printed, never opened.** Opening it would hand the
 authorization to whichever account the default browser happens to be signed
@@ -260,11 +264,41 @@ A Unix domain socket, or a named pipe on Windows, carrying JSON-RPC:
 | `models` | catalog, and whether it is the fallback list | yes |
 | `tiers.get` | tier mapping | yes |
 | `usage` | quota snapshot as of the last turn, or that no turn has been made, plus `models` — the ids this daemon serves | yes |
+| `usage.refresh` | asks the backend for a figure now, for a front-end with nothing to show on a daemon that has served no turn | yes |
 | `env` | the §2.2 block | yes |
 | `record.start` / `record.stop` | fixture capture | yes — `{"mode": "ingress"}` by default, `"upstream"` must be named because it bills every turn that follows |
-| `login` | authorization URL, then completion | no — `login` runs in the CLI, which owns the callback port |
-| `tiers.set` | tier mapping | no — edit the configuration file |
+| `login` | authorization URL, then completion in the background; `status` reports when it landed | yes |
+| `login.cancel` | abandons a flow and releases the callback port | yes |
+| `tiers.set` | tier mapping, validated against the catalog and in effect until the daemon stops | yes |
+| `effort.set` | the effort ceiling, or `null` to remove it; in effect until the daemon stops | yes |
 | `doctor` | probe results | no — `doctor` runs in the CLI, which is where `--live` can be given credentials without a daemon already holding them |
+
+**`tiers.set` and `effort.set` do not write the configuration file.** The file is
+what the daemon reads at startup, so a change made over the socket lasts until it
+stops — and every answer says so rather than leaving it to be discovered. A
+change meant to outlive the process belongs in the file, where the comments
+explaining each key are.
+
+`tiers.set` is **partial**: naming one tier changes that tier. Treating the
+argument as the whole mapping would let a caller that knows about one tier
+silently unset the three it did not mention. Every set is validated against the
+catalog exactly as startup validates it — that check is why this daemon owns the
+mapping rather than a front-end, since it is the side holding the catalog.
+
+**`login` runs in the daemon.** It answers with the authorization URL and
+returns; the flow completes in the background and `status` is what reports that
+it did. A control call that blocked until the operator finished in a browser
+would hold the socket for minutes and give a front-end nothing to render. There
+is one fixed callback port, so a second caller **joins** the first and is told so
+rather than being handed a URL whose callback would then be rejected as not
+matching. An abandoned flow releases the port after ten minutes.
+
+**`usage.refresh` is not the primary path and does not replace it.** The backend
+volunteers a snapshot at the head of every stream; that one is free, rides a turn
+already being made, and is what `usage` reports. This exists for the case that
+path cannot cover — a front-end with a figure to show on a daemon that has served
+no turn yet — and its answer is recorded where the stream path records its own,
+so everything reading a quota reads one value.
 
 The names are reserved whether or not v0.1 answers them: they are semver-bound
 (§6), and a method that appears later must mean what its name said all along. A

@@ -81,6 +81,47 @@ impl Snapshot {
         })
     }
 
+    /// Read a snapshot out of the quota endpoint's response.
+    ///
+    /// **The shape is not the stream event's**, and the three differences are
+    /// exactly where a guess would have gone wrong: the windows are
+    /// `primary_window`/`secondary_window` rather than `primary`/`secondary`,
+    /// their length is stated in **seconds**, and the plan sits at the top
+    /// level. A parser written from the stream shape parses this into nothing
+    /// and reports no quota on an account that has one — which is why the
+    /// fixture behind this was captured before any of it was written.
+    ///
+    /// `None` where the body is not this response at all. An empty snapshot
+    /// would read as "quota known, nothing used", which is the reassuring
+    /// direction to be wrong in.
+    pub fn parse_rest(payload: &str) -> Option<Self> {
+        let body: Value = serde_json::from_str(payload).ok()?;
+        let limits = body.get("rate_limit")?;
+
+        let windows: Vec<Window> = ["primary_window", "secondary_window"]
+            .into_iter()
+            .filter_map(|name| parse_rest_window(limits.get(name)?))
+            .collect();
+
+        // A response carrying no window at all says nothing about quota, and
+        // saying nothing is not the same as saying none is used.
+        if windows.is_empty() {
+            return None;
+        }
+
+        Some(Self {
+            plan: body
+                .get("plan_type")
+                .and_then(Value::as_str)
+                .map(str::to_owned),
+            limit_reached: limits
+                .get("limit_reached")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+            windows,
+        })
+    }
+
     /// The window matching a nominal duration, if the backend reported one.
     fn window_of(&self, nominal: u64) -> Option<&Window> {
         self.windows
@@ -161,6 +202,24 @@ fn parse_window(value: &Value) -> Option<Window> {
     })
 }
 
+/// One window from the quota endpoint.
+///
+/// Seconds on the wire, minutes in the snapshot — the unit every other reader
+/// of a window already uses, and converting here is what lets one `Snapshot`
+/// serve both sources.
+fn parse_rest_window(value: &Value) -> Option<Window> {
+    let used_percent = value.get("used_percent").and_then(Value::as_f64)?;
+
+    Some(Window {
+        used_percent: used_percent.clamp(0.0, 100.0),
+        window_minutes: value
+            .get("limit_window_seconds")
+            .and_then(Value::as_u64)
+            .map(|seconds| seconds / 60),
+        resets_at: value.get("reset_at").and_then(Value::as_u64),
+    })
+}
+
 /// The most recent snapshot, for whoever asks between turns.
 #[derive(Debug, Default)]
 pub struct UsageStore {
@@ -199,4 +258,59 @@ impl UsageStore {
             .map(|served| served.iter().cloned().collect())
             .unwrap_or_default()
     }
+}
+
+/// Ask the backend for a quota figure, rather than waiting for one.
+///
+/// **This is not the primary path and does not replace it.** The backend
+/// volunteers a snapshot at the head of every stream; that one is free, rides a
+/// turn already being made, and is what `usage` reports. This exists for the
+/// case that one cannot cover: a front-end showing a figure on a daemon that
+/// has served no turn yet, where the alternative is showing nothing at all.
+///
+/// Nothing here is computed. The response is projected into the same `Snapshot`
+/// the stream path produces, and a window the backend did not report is absent
+/// rather than zero.
+pub async fn fetch(
+    client: &reqwest::Client,
+    endpoint: &str,
+    token: &str,
+    account_id: Option<&str>,
+) -> Result<Snapshot, crate::error::ProxyError> {
+    let mut request = client
+        .get(endpoint)
+        .bearer_auth(token)
+        .header("originator", crate::upstream::http::ORIGINATOR)
+        .header(
+            axum::http::header::USER_AGENT,
+            crate::upstream::http::USER_AGENT,
+        );
+
+    if let Some(account) = account_id {
+        request = request.header("chatgpt-account-id", account);
+    }
+
+    let response = request.send().await.map_err(|error| {
+        crate::error::ProxyError::upstream(
+            axum::http::StatusCode::BAD_GATEWAY,
+            format!("could not ask for a quota figure: {error}"),
+        )
+    })?;
+
+    let status = response.status();
+    let body = response.text().await.unwrap_or_default();
+
+    if !status.is_success() {
+        return Err(crate::error::ProxyError::upstream(
+            status,
+            format!("the quota endpoint answered {status}"),
+        ));
+    }
+
+    Snapshot::parse_rest(&body).ok_or_else(|| {
+        crate::error::ProxyError::upstream(
+            axum::http::StatusCode::BAD_GATEWAY,
+            "the quota endpoint answered with a shape this proxy does not recognize",
+        )
+    })
 }

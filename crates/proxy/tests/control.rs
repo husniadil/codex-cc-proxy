@@ -59,6 +59,10 @@ fn tiers() -> Vec<ResolvedTier> {
 struct Harness {
     path: std::path::PathBuf,
     store: Arc<FileStore>,
+    /// The same policy the ingress routes turns from. Asserting on this is the
+    /// difference between testing that a method echoes a value back and testing
+    /// that it moved anything.
+    policy: Arc<codex_cc_proxy::policy::Policy>,
     /// The same store the ingress path writes a quota snapshot into.
     usage: Arc<codex_cc_proxy::usage::UsageStore>,
     /// The same switches the ingress path would read. Asserting on these is
@@ -75,10 +79,13 @@ impl Harness {
         let store = Arc::new(FileStore::new(dir.path().join("credentials.json")));
         let switches = Arc::new(codex_cc_proxy::recorder::Switches::default());
         let usage = Arc::new(codex_cc_proxy::usage::UsageStore::default());
+        let policy = Arc::new(codex_cc_proxy::policy::Policy::new(
+            codex_cc_proxy::policy::Snapshot::new(tiers(), None),
+        ));
 
         let state = ControlState {
             port: 8787,
-            tiers: Arc::new(tiers()),
+            policy: Arc::clone(&policy),
             catalog: Arc::new(
                 Catalog::parse(
                     r#"{"data":[{"id":"gpt-5.6-terra","context_window":272000},
@@ -90,6 +97,11 @@ impl Harness {
             credentials: Arc::clone(&store) as Arc<dyn CredentialStore>,
             capture: Arc::clone(&switches),
             usage: Arc::clone(&usage),
+            login: Arc::new(codex_cc_proxy::auth::daemon_login::LoginFlow::default()),
+            // No credentials to ask with, and no endpoint that would answer:
+            // no test may reach the network.
+            quota: None,
+            usage_endpoint: String::new(),
         };
 
         let socket = path.clone();
@@ -108,6 +120,7 @@ impl Harness {
         Self {
             path,
             store,
+            policy,
             switches,
             usage,
             _dir: dir,
@@ -132,13 +145,21 @@ impl Harness {
             .collect();
 
         let path = self._dir.path().join("control-2.sock");
+        let policy = Arc::new(codex_cc_proxy::policy::Policy::new(
+            codex_cc_proxy::policy::Snapshot::new(tiers, None),
+        ));
         let state = ControlState {
             port: 8787,
-            tiers: Arc::new(tiers),
+            policy: Arc::clone(&policy),
             catalog: Arc::new(Catalog::parse(catalog, 95.0).unwrap()),
             credentials: Arc::clone(&self.store) as Arc<dyn CredentialStore>,
             capture: Arc::clone(&self.switches),
             usage: Arc::clone(&self.usage),
+            login: Arc::new(codex_cc_proxy::auth::daemon_login::LoginFlow::default()),
+            // No credentials to ask with, and no endpoint that would answer:
+            // no test may reach the network.
+            quota: None,
+            usage_endpoint: String::new(),
         };
 
         let socket = path.clone();
@@ -152,11 +173,23 @@ impl Harness {
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }
 
-        Self { path, ..self }
+        Self {
+            path,
+            policy,
+            ..self
+        }
     }
 
     async fn call(&self, method: &str) -> Result<Value, codex_cc_proxy::error::ProxyError> {
         control::call(&self.path, method, None).await
+    }
+
+    /// A call with parameters, whose error is reduced to its message — every
+    /// assertion here is about what the refusal says, not about its code.
+    async fn call_with(&self, method: &str, params: Value) -> Result<Value, String> {
+        control::call(&self.path, method, Some(params))
+            .await
+            .map_err(|error| error.message)
     }
 }
 
@@ -168,6 +201,14 @@ async fn every_documented_method_is_answered() {
     let harness = Harness::start().await;
 
     for method in METHODS {
+        // `login` really starts a flow, and the flow binds the one fixed
+        // callback port. Calling it here would contend with the test that
+        // covers it properly — a scheduling failure wearing a behaviour
+        // failure's clothes, and one that only appears when the machine is
+        // busy enough to overlap them. Its vocabulary is established there.
+        if method == "login" {
+            continue;
+        }
         let result = harness.call(method).await;
         match result {
             Ok(_) => {}
@@ -413,17 +454,23 @@ async fn an_unknown_window_is_reported_as_null() {
     let dir = tempfile::tempdir().unwrap();
     let state = ControlState {
         port: 1,
-        tiers: Arc::new(tiers()),
+        policy: Arc::new(codex_cc_proxy::policy::Policy::new(
+            codex_cc_proxy::policy::Snapshot::new(tiers(), None),
+        )),
         catalog: Arc::new(Catalog::fallback()),
         credentials: Arc::new(FileStore::new(dir.path().join("c.json"))),
         capture: Arc::new(codex_cc_proxy::recorder::Switches::default()),
         usage: Arc::new(codex_cc_proxy::usage::UsageStore::default()),
+        login: Arc::new(codex_cc_proxy::auth::daemon_login::LoginFlow::default()),
+        quota: None,
+        usage_endpoint: String::new(),
     };
 
     let response = control::answer(
         &state,
         &json!({ "jsonrpc": "2.0", "id": 1, "method": "models" }).to_string(),
-    );
+    )
+    .await;
     let result = response.result.unwrap();
 
     assert_eq!(result["authoritative"], json!(false));
@@ -553,21 +600,27 @@ async fn a_malformed_request_is_reported_without_closing_the_socket() {
     let dir = tempfile::tempdir().unwrap();
     let state = ControlState {
         port: 1,
-        tiers: Arc::new(tiers()),
+        policy: Arc::new(codex_cc_proxy::policy::Policy::new(
+            codex_cc_proxy::policy::Snapshot::new(tiers(), None),
+        )),
         catalog: Arc::new(Catalog::fallback()),
         credentials: Arc::new(FileStore::new(dir.path().join("c.json"))),
         capture: Arc::new(codex_cc_proxy::recorder::Switches::default()),
         usage: Arc::new(codex_cc_proxy::usage::UsageStore::default()),
+        login: Arc::new(codex_cc_proxy::auth::daemon_login::LoginFlow::default()),
+        quota: None,
+        usage_endpoint: String::new(),
     };
 
-    let response = control::answer(&state, "{ not json");
+    let response = control::answer(&state, "{ not json").await;
     assert_eq!(response.error.map(|error| error.code), Some(-32700));
 
     // The next request on the same connection still works.
     let response = control::answer(
         &state,
         &json!({ "jsonrpc": "2.0", "id": 2, "method": "status" }).to_string(),
-    );
+    )
+    .await;
     assert!(response.result.is_some());
 }
 
@@ -717,17 +770,23 @@ async fn status_says_when_the_catalog_was_unavailable() {
     let dir = tempfile::tempdir().unwrap();
     let state = ControlState {
         port: 8787,
-        tiers: Arc::new(tiers()),
+        policy: Arc::new(codex_cc_proxy::policy::Policy::new(
+            codex_cc_proxy::policy::Snapshot::new(tiers(), None),
+        )),
         catalog: Arc::new(Catalog::fallback()),
         credentials: Arc::new(FileStore::new(dir.path().join("c.json"))),
         capture: Arc::new(codex_cc_proxy::recorder::Switches::default()),
         usage: Arc::new(codex_cc_proxy::usage::UsageStore::default()),
+        login: Arc::new(codex_cc_proxy::auth::daemon_login::LoginFlow::default()),
+        quota: None,
+        usage_endpoint: String::new(),
     };
 
     let response = control::answer(
         &state,
         &json!({ "jsonrpc": "2.0", "id": 1, "method": "status" }).to_string(),
-    );
+    )
+    .await;
     let rendered = render::status(&response.result.unwrap());
 
     assert!(rendered.contains("has not been validated"), "{rendered}");
@@ -740,17 +799,23 @@ async fn models_prints_unknown_rather_than_a_number() {
     let dir = tempfile::tempdir().unwrap();
     let state = ControlState {
         port: 1,
-        tiers: Arc::new(tiers()),
+        policy: Arc::new(codex_cc_proxy::policy::Policy::new(
+            codex_cc_proxy::policy::Snapshot::new(tiers(), None),
+        )),
         catalog: Arc::new(Catalog::fallback()),
         credentials: Arc::new(FileStore::new(dir.path().join("c.json"))),
         capture: Arc::new(codex_cc_proxy::recorder::Switches::default()),
         usage: Arc::new(codex_cc_proxy::usage::UsageStore::default()),
+        login: Arc::new(codex_cc_proxy::auth::daemon_login::LoginFlow::default()),
+        quota: None,
+        usage_endpoint: String::new(),
     };
 
     let response = control::answer(
         &state,
         &json!({ "jsonrpc": "2.0", "id": 1, "method": "models" }).to_string(),
-    );
+    )
+    .await;
     let rendered = render::models(&response.result.unwrap());
 
     assert!(rendered.contains("window unknown"), "{rendered}");
@@ -803,17 +868,23 @@ async fn env_states_no_window_when_the_catalog_is_unavailable() {
     let dir = tempfile::tempdir().unwrap();
     let state = ControlState {
         port: 8787,
-        tiers: Arc::new(tiers()),
+        policy: Arc::new(codex_cc_proxy::policy::Policy::new(
+            codex_cc_proxy::policy::Snapshot::new(tiers(), None),
+        )),
         catalog: Arc::new(Catalog::fallback()),
         credentials: Arc::new(FileStore::new(dir.path().join("c.json"))),
         capture: Arc::new(codex_cc_proxy::recorder::Switches::default()),
         usage: Arc::new(codex_cc_proxy::usage::UsageStore::default()),
+        login: Arc::new(codex_cc_proxy::auth::daemon_login::LoginFlow::default()),
+        quota: None,
+        usage_endpoint: String::new(),
     };
 
     let response = control::answer(
         &state,
         &json!({ "jsonrpc": "2.0", "id": 1, "method": "env" }).to_string(),
-    );
+    )
+    .await;
     let rendered = render::env_shell(&response.result.unwrap());
 
     assert!(
@@ -956,4 +1027,180 @@ async fn a_window_above_what_the_client_accepts_is_not_emitted() {
         !rendered.contains("CLAUDE_CODE_AUTO_COMPACT_WINDOW"),
         "{rendered}"
     );
+}
+
+/// A tier mapping can be set on a running daemon, and it moves what routes turns.
+///
+/// Asserted on the policy the ingress reads, not only on what `tiers.get`
+/// echoes back. A method that reported a new mapping while turns kept going to
+/// the old model would be the exact failure this project refuses everywhere
+/// else — and only the first of these two assertions can catch it.
+#[tokio::test]
+async fn setting_the_tier_mapping_moves_what_routes_turns() {
+    let harness = Harness::start().await;
+
+    let result = harness
+        .call_with(
+            "tiers.set",
+            json!({ "tiers": { "sonnet": "gpt-5.4-mini" } }),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(result["tiers"]["sonnet"], json!("gpt-5.4-mini"));
+    // Untouched tiers keep what they had: a partial set is a change to the
+    // tiers named, never a replacement of the whole mapping.
+    assert_eq!(result["tiers"]["opus"], json!("gpt-5.6-terra"));
+
+    let routed = harness.policy.get();
+    assert_eq!(
+        routed
+            .models
+            .iter()
+            .find(|mapping| mapping.requested == "sonnet")
+            .map(|mapping| mapping.upstream.as_str()),
+        Some("gpt-5.4-mini")
+    );
+}
+
+/// A model the catalog does not have is refused, and the refusal names what it
+/// does have.
+///
+/// This is the whole reason the daemon owns the mapping rather than a
+/// front-end: it is the side holding the catalog. A set that skipped this check
+/// would let a caller point a tier at a model the backend will not serve, and
+/// the failure would arrive one turn later, as a 400 the client cannot fix.
+#[tokio::test]
+async fn setting_a_tier_to_a_model_the_catalog_lacks_is_refused() {
+    let harness = Harness::start().await;
+
+    let error = harness
+        .call_with(
+            "tiers.set",
+            json!({ "tiers": { "sonnet": "gpt-9-imaginary" } }),
+        )
+        .await
+        .unwrap_err();
+
+    assert!(error.contains("gpt-9-imaginary"), "{error}");
+    // And nothing moved.
+    assert_eq!(
+        harness
+            .policy
+            .get()
+            .models
+            .iter()
+            .find(|mapping| mapping.requested == "sonnet")
+            .map(|mapping| mapping.upstream.as_str()),
+        Some("gpt-5.6-terra")
+    );
+}
+
+/// An unknown tier name is refused rather than quietly added.
+#[tokio::test]
+async fn setting_an_unknown_tier_name_is_refused() {
+    let harness = Harness::start().await;
+
+    let error = harness
+        .call_with("tiers.set", json!({ "tiers": { "hyper": "gpt-5.4-mini" } }))
+        .await
+        .unwrap_err();
+
+    assert!(error.contains("hyper"), "{error}");
+}
+
+/// The effort ceiling can be raised on a running daemon.
+///
+/// It caps every turn regardless of what the client asked for, so a ceiling set
+/// once at startup silently downgrades every request a front-end makes after —
+/// and nothing about that failure is visible: the turns succeed, they are just
+/// shallower than they were asked to be.
+#[tokio::test]
+async fn the_effort_ceiling_can_be_raised_without_a_restart() {
+    let harness = Harness::start().await;
+
+    let result = harness
+        .call_with("effort.set", json!({ "effort": "high" }))
+        .await
+        .unwrap();
+
+    assert_eq!(result["effort"], json!("high"));
+    assert_eq!(
+        harness.policy.get().effort_ceiling,
+        Some(codex_cc_proxy_core::responses::Effort::High)
+    );
+}
+
+/// And removed entirely, which is not the same as setting it to the highest
+/// value the catalog happens to list.
+#[tokio::test]
+async fn the_effort_ceiling_can_be_removed() {
+    let harness = Harness::start().await;
+
+    harness
+        .call_with("effort.set", json!({ "effort": "high" }))
+        .await
+        .unwrap();
+    let result = harness
+        .call_with("effort.set", json!({ "effort": null }))
+        .await
+        .unwrap();
+
+    assert_eq!(result["effort"], Value::Null);
+    assert_eq!(harness.policy.get().effort_ceiling, None);
+}
+
+/// The login flow, end to end short of the browser.
+///
+/// One test rather than three, because every assertion here needs the one fixed
+/// callback port and the suite runs tests concurrently — three tests would
+/// contend for it and fail on scheduling rather than on behaviour.
+///
+/// The discriminating assertions are the ones that could pass only if something
+/// was really bound: a method that returned a URL and armed nothing would look
+/// identical to its caller right up to the moment the browser redirected into
+/// nothing.
+#[tokio::test]
+async fn login_arms_a_callback_joins_a_second_caller_and_releases_on_cancel() {
+    let harness = Harness::start().await;
+
+    let first = harness.call("login").await.unwrap();
+    let url = first["authorization_url"].as_str().unwrap().to_owned();
+
+    assert!(url.starts_with("https://"), "{url}");
+    assert!(url.contains("code_challenge"), "{url}");
+    assert_eq!(first["already_in_flight"], json!(false));
+
+    // The redirect target is a fixed port, and something has to be listening on
+    // it before the operator's browser arrives.
+    assert!(
+        tokio::net::TcpStream::connect(("127.0.0.1", 1455))
+            .await
+            .is_ok(),
+        "the callback port should be listening once login has started"
+    );
+
+    // A second caller joins the first. Beginning again would either fail to
+    // bind or replace the state the first flow is waiting to match, leaving the
+    // operator holding a URL whose callback is guaranteed to be rejected.
+    let second = harness.call("login").await.unwrap();
+    assert_eq!(second["authorization_url"], json!(url));
+    assert_eq!(second["already_in_flight"], json!(true));
+
+    harness.call("login.cancel").await.unwrap();
+
+    // Bindable again means genuinely released. A flow that merely forgot its
+    // state would leave the listener holding the port.
+    let rebound = tokio::net::TcpListener::bind(("127.0.0.1", 1455)).await;
+    assert!(rebound.is_ok(), "the callback port should be free again");
+    drop(rebound);
+
+    let again = harness.call("login").await.unwrap();
+    assert_eq!(again["already_in_flight"], json!(false));
+    assert_ne!(
+        again["authorization_url"],
+        json!(url),
+        "a fresh login is a fresh flow, not the cancelled one"
+    );
+    harness.call("login.cancel").await.unwrap();
 }

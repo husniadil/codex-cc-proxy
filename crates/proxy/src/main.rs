@@ -394,13 +394,24 @@ async fn run_with(args: RunArgs, capture: Capture) -> Result<()> {
             .collect::<Vec<_>>(),
     )?;
 
+    // One policy, shared. The control socket can move the tier mapping and the
+    // effort ceiling on a running daemon, and the ingress routes turns from the
+    // same value — so a change moves what actually happens rather than only
+    // what `status` reports.
+    let policy = Arc::new(codex_cc_proxy::policy::Policy::new(
+        codex_cc_proxy::policy::Snapshot::new(tiers.clone(), effort_ceiling),
+    ));
+
     let control_state = codex_cc_proxy::control::handler::ControlState {
         port: addr.port(),
-        tiers: Arc::new(tiers.clone()),
+        policy: Arc::clone(&policy),
         catalog: Arc::clone(&catalog),
         credentials: Arc::clone(&credentials),
         capture: Arc::clone(&switches),
         usage: Arc::clone(&usage),
+        login: Arc::new(codex_cc_proxy::auth::daemon_login::LoginFlow::default()),
+        quota: Some(Arc::clone(&tokens)),
+        usage_endpoint: config.upstream.usage.clone(),
     };
     let socket_path = control::default_path();
     tokio::spawn(async move {
@@ -448,22 +459,13 @@ async fn run_with(args: RunArgs, capture: Capture) -> Result<()> {
     );
 
     let state = AppState {
-        effort_ceiling,
+        policy: Arc::clone(&policy),
         catalog: Arc::clone(&catalog),
         // Only reached if the factory is absent, which it is not here.
         transport: Arc::new(
             HttpTransport::new(&config.upstream.endpoint).with_credentials(Arc::clone(&tokens)),
         ),
         conduits: Some(conduits),
-        models: Arc::new(
-            tiers
-                .into_iter()
-                .map(|tier| ModelMapping {
-                    requested: tier.tier.to_owned(),
-                    upstream: tier.model,
-                })
-                .collect(),
-        ),
         // §5.4 — empty streams are recorded whether or not capture was asked
         // for, because an empty stream is always a defect and is otherwise
         // invisible.

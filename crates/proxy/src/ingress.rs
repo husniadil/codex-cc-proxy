@@ -41,8 +41,11 @@ pub type ConduitFactory =
 
 #[derive(Clone)]
 pub struct AppState {
-    /// §2.7 — an operator's ceiling on reasoning effort.
-    pub effort_ceiling: Option<codex_cc_proxy_core::responses::Effort>,
+    /// §2.7 — the tier mapping and the operator's ceiling on reasoning effort,
+    /// read together. Shared with the control socket, which can move both on a
+    /// running daemon; a reader takes a snapshot, so a turn keeps the policy it
+    /// started with.
+    pub policy: Arc<crate::policy::Policy>,
     /// §7.2 — what the mapped models can actually hold.
     pub catalog: Arc<crate::catalog::Catalog>,
     /// Used when no factory is supplied — a single stateless transport, which
@@ -51,8 +54,6 @@ pub struct AppState {
     /// Present in the running daemon. Its absence is what makes a test able to
     /// drive one fixed transport.
     pub conduits: Option<ConduitFactory>,
-    /// Tier name to upstream model id.
-    pub models: Arc<Vec<ModelMapping>>,
     /// Where captures are written. Always present: §5.4 records every empty
     /// stream regardless of whether capture was asked for, because an empty
     /// stream is always a defect and is otherwise invisible.
@@ -70,7 +71,7 @@ pub struct AppState {
     pub sessions: Arc<crate::session::SessionStore>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModelMapping {
     pub requested: String,
     pub upstream: String,
@@ -92,6 +93,8 @@ async fn not_found() -> Response {
 /// The mapped models, in the Anthropic list shape.
 async fn models(State(state): State<AppState>) -> Response {
     let data: Vec<Value> = state
+        .policy
+        .get()
         .models
         .iter()
         .map(|mapping| {
@@ -149,7 +152,12 @@ async fn messages(
         }
     };
 
-    let upstream_model = state
+    // One snapshot for the whole turn. Taken before anything is translated, so
+    // a mapping set mid-turn cannot move the model this request is already
+    // being prepared for.
+    let policy = state.policy.get();
+
+    let upstream_model = policy
         .models
         .iter()
         .find(|mapping| mapping.requested == request.model)
@@ -168,7 +176,7 @@ async fn messages(
     // behind it stops at `xhigh` while another goes to `max`. Forwarding an
     // effort the model does not support fails the turn for a reason the client
     // could not have anticipated or fixed.
-    let catalog_entry = state
+    let catalog_entry = policy
         .models
         .iter()
         .find(|mapping| mapping.requested == request.model)
@@ -180,7 +188,7 @@ async fn messages(
         .map(crate::catalog::Model::supported_efforts)
         .unwrap_or_default();
 
-    let model_ceiling = state
+    let model_ceiling = policy
         .models
         .iter()
         .find(|mapping| mapping.requested == request.model)
@@ -189,7 +197,7 @@ async fn messages(
         .and_then(|model| state.catalog.get(model))
         .and_then(crate::catalog::Model::highest_effort);
 
-    let effort_ceiling = match (state.effort_ceiling, model_ceiling) {
+    let effort_ceiling = match (policy.effort_ceiling, model_ceiling) {
         (Some(operator), Some(model)) => Some(operator.min(model)),
         (Some(operator), None) => Some(operator),
         (None, model) => model,

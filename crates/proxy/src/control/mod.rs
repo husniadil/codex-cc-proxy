@@ -65,7 +65,7 @@ async fn handle_connection(
         if line.trim().is_empty() {
             continue;
         }
-        let response = answer(&state, &line);
+        let response = answer(&state, &line).await;
         let mut body = serde_json::to_string(&response).unwrap_or_default();
         body.push('\n');
         writer.write_all(body.as_bytes()).await?;
@@ -77,7 +77,7 @@ async fn handle_connection(
 
 /// Turn one request line into one response. Pure, so the whole vocabulary is
 /// testable without a socket.
-pub fn answer(state: &ControlState, line: &str) -> Response {
+pub async fn answer(state: &ControlState, line: &str) -> Response {
     let request: Request = match serde_json::from_str(line) {
         Ok(request) => request,
         Err(error) => {
@@ -97,7 +97,7 @@ pub fn answer(state: &ControlState, line: &str) -> Response {
         );
     }
 
-    match handler::dispatch(state, &request.method, request.params.as_ref()) {
+    match handler::dispatch(state, &request.method, request.params.as_ref()).await {
         Ok(result) => Response::ok(request.id, result),
         Err(error) => {
             let code = if error.status == axum::http::StatusCode::NOT_FOUND {
@@ -179,7 +179,7 @@ pub async fn serve(path: &Path, state: ControlState) -> Result<(), ProxyError> {
                 if line.trim().is_empty() {
                     continue;
                 }
-                let response = answer(&state, &line);
+                let response = answer(&state, &line).await;
                 let mut body = serde_json::to_string(&response).unwrap_or_default();
                 body.push('\n');
                 if writer.write_all(body.as_bytes()).await.is_err() {
