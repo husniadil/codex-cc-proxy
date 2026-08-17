@@ -38,6 +38,25 @@ pub struct TranslateOptions {
     /// Stable for the life of a conversation (§3.1). Cache hit rate depends on
     /// it directly.
     pub prompt_cache_key: Option<String>,
+    /// §2.1 — operator text placed before the client's system prompt.
+    ///
+    /// The prompt the client sends is written for a different model and opens
+    /// by saying so. Nothing else in the request tells the model what it
+    /// actually is, and nothing in the client can be made to. This is where
+    /// that is said, and it leads because an identity stated after a prompt
+    /// that already asserted a different one reads as a correction rather than
+    /// a fact.
+    ///
+    /// It must be stable for the life of a conversation. Text that varies per
+    /// turn changes `instructions`, and a delta requires every non-input field
+    /// to be unchanged (§4.3).
+    pub instructions_lead: Option<String>,
+    /// §2.1 — operator text placed after the client's system prompt.
+    ///
+    /// Last, and that is the point: an instruction meant to take precedence
+    /// over the prompt above it has to come after it. Same stability
+    /// requirement as the lead.
+    pub instructions_trailer: Option<String>,
     /// An operator-set ceiling on reasoning effort.
     ///
     /// The client does not know what a turn costs the operator, so it cannot
@@ -56,7 +75,7 @@ pub fn translate_request(
     request: &MessagesRequest,
     options: &TranslateOptions,
 ) -> ResponsesRequest {
-    let instructions = build_instructions(request);
+    let instructions = build_instructions(request, options);
 
     ResponsesRequest {
         model: options
@@ -111,9 +130,26 @@ fn effort_for(request: &MessagesRequest, options: &TranslateOptions) -> Option<E
 /// Folding it here looked equivalent and was not: the client attaches per-turn
 /// content that way, so `instructions` changed every turn, and a delta requires
 /// every non-input field to be unchanged.
-fn build_instructions(request: &MessagesRequest) -> Option<String> {
-    let text = request.system.as_ref().map(SystemPrompt::to_text)?;
-    (!text.is_empty()).then_some(text)
+fn build_instructions(request: &MessagesRequest, options: &TranslateOptions) -> Option<String> {
+    let system = request
+        .system
+        .as_ref()
+        .map(SystemPrompt::to_text)
+        .filter(|text| !text.is_empty());
+
+    // Empty parts are dropped rather than joined, so an absent system prompt
+    // leaves no blank run between the operator's own two pieces.
+    let parts: Vec<&str> = [
+        options.instructions_lead.as_deref(),
+        system.as_deref(),
+        options.instructions_trailer.as_deref(),
+    ]
+    .into_iter()
+    .flatten()
+    .filter(|part| !part.is_empty())
+    .collect();
+
+    (!parts.is_empty()).then(|| parts.join("\n\n"))
 }
 
 /// §2.5 — the tool names a request reports as discovered.

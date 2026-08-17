@@ -903,3 +903,106 @@ fn efforts_are_ordered_from_least_to_most() {
         );
     }
 }
+
+/// §2.1 — the operator may lead and follow the system prompt with text of their
+/// own.
+///
+/// The prompt the client sends is written for a different model and says so in
+/// its opening line. Nothing else in the request tells the model what it
+/// actually is, and nothing in the client can be made to.
+///
+/// Order is the whole design. The lead comes first because an identity stated
+/// after a prompt that already asserted a different one reads as a correction
+/// rather than a fact. The trailer comes last because last is what an
+/// instruction has to be in order to take precedence over the prompt above it.
+#[test]
+fn the_operator_may_lead_and_follow_the_system_prompt() {
+    let request: codex_cc_proxy_core::anthropic::MessagesRequest = serde_json::from_value(json!({
+        "model": "gpt-5",
+        "max_tokens": 1024,
+        "system": "You are Claude Code.",
+        "messages": [{ "role": "user", "content": "hello" }],
+    }))
+    .unwrap();
+
+    let out = serde_json::to_value(translate_request(
+        &request,
+        &TranslateOptions {
+            instructions_lead: Some("You are gpt-5.".to_owned()),
+            instructions_trailer: Some("Answer briefly.".to_owned()),
+            ..TranslateOptions::default()
+        },
+    ))
+    .unwrap();
+
+    assert_eq!(
+        out["instructions"],
+        json!("You are gpt-5.\n\nYou are Claude Code.\n\nAnswer briefly.")
+    );
+}
+
+/// A request carrying no system prompt still gets the operator's text, and no
+/// blank run where the prompt would have been.
+#[test]
+fn operator_text_stands_alone_without_a_system_prompt() {
+    let request: codex_cc_proxy_core::anthropic::MessagesRequest = serde_json::from_value(json!({
+        "model": "gpt-5",
+        "max_tokens": 1024,
+        "messages": [{ "role": "user", "content": "hello" }],
+    }))
+    .unwrap();
+
+    let out = serde_json::to_value(translate_request(
+        &request,
+        &TranslateOptions {
+            instructions_lead: Some("You are gpt-5.".to_owned()),
+            instructions_trailer: Some("Answer briefly.".to_owned()),
+            ..TranslateOptions::default()
+        },
+    ))
+    .unwrap();
+
+    assert_eq!(
+        out["instructions"],
+        json!("You are gpt-5.\n\nAnswer briefly.")
+    );
+}
+
+/// §4.3 — injected text is per conversation, never per turn.
+///
+/// `instructions` must be byte-identical across turns or the delta is refused
+/// and `prompt_cache_key` buys nothing. Text that varies — a timestamp, a
+/// token count — would cost the whole incremental path, so this asserts the
+/// injected form is stable for a conversation that has grown.
+#[test]
+fn injected_instructions_are_identical_on_a_later_turn() {
+    let options = TranslateOptions {
+        instructions_lead: Some("You are gpt-5.".to_owned()),
+        instructions_trailer: Some("Answer briefly.".to_owned()),
+        ..TranslateOptions::default()
+    };
+
+    let first: codex_cc_proxy_core::anthropic::MessagesRequest = serde_json::from_value(json!({
+        "model": "gpt-5",
+        "max_tokens": 1024,
+        "system": "Base prompt.",
+        "messages": [{ "role": "user", "content": "one" }],
+    }))
+    .unwrap();
+    let later: codex_cc_proxy_core::anthropic::MessagesRequest = serde_json::from_value(json!({
+        "model": "gpt-5",
+        "max_tokens": 1024,
+        "system": "Base prompt.",
+        "messages": [
+            { "role": "user", "content": "one" },
+            { "role": "assistant", "content": "two" },
+            { "role": "user", "content": "three" },
+        ],
+    }))
+    .unwrap();
+
+    assert_eq!(
+        translate_request(&first, &options).instructions,
+        translate_request(&later, &options).instructions
+    );
+}

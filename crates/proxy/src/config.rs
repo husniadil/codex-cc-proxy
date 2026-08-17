@@ -52,6 +52,19 @@ websocket   = true
 # zstd on the HTTP body. Not the WebSocket, where compression is negotiated in
 # the upgrade rather than chosen here.
 compression = true
+
+[instructions]
+# Lead the system prompt with one line naming the model that is actually
+# answering. The prompt the client sends opens by calling the model something
+# else, and nothing in the client can be made to say otherwise.
+identity = true
+
+# Optional. Placed after the system prompt, which is where an instruction has to
+# be to take precedence over it. Keep it constant: text that changes between
+# turns changes `instructions`, and that costs every delta and every cache hit.
+# append = """
+# Prefer a targeted search over reading a whole file.
+# """
 "#;
 
 /// Unknown keys are refused rather than ignored.
@@ -78,6 +91,69 @@ pub struct Config {
     /// applies — not that effort is zero.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub effort: Option<String>,
+    #[serde(default)]
+    pub instructions: InstructionsConfig,
+}
+
+/// §2.1 — what the proxy adds around the client's system prompt.
+///
+/// The prompt the client sends is written for a different model and opens by
+/// saying so. Nothing else in the request tells the model what it actually is,
+/// and nothing in the client can be made to — `--append-system-prompt` reaches
+/// the same `system` field, so it can add to that prompt but never precede it.
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct InstructionsConfig {
+    /// Lead with one line naming the model that is actually answering.
+    ///
+    /// On by default: a model told it is a different product is being given a
+    /// false premise on every turn, and that is not a neutral default.
+    #[serde(default = "default_identity")]
+    pub identity: bool,
+    /// Operator text placed after the system prompt, where an instruction has
+    /// to be in order to take precedence over the prompt above it.
+    ///
+    /// It must be stable for the life of a conversation: anything varying per
+    /// turn changes `instructions`, which costs every delta and every cache hit
+    /// (§4.3).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub append: Option<String>,
+}
+
+fn default_identity() -> bool {
+    true
+}
+
+impl Default for InstructionsConfig {
+    fn default() -> Self {
+        Self {
+            identity: default_identity(),
+            append: None,
+        }
+    }
+}
+
+impl InstructionsConfig {
+    /// The line that leads `instructions`, for the model actually answering.
+    ///
+    /// Names the client too, because "you are X" without saying where leaves
+    /// the model to reconcile it with a harness prompt that says otherwise.
+    /// Both halves are true, which is the only reason either is here.
+    pub fn lead(&self, model: &str) -> Option<String> {
+        self.identity.then(|| {
+            format!(
+                "You are {model}, answering through Claude Code, a terminal-based coding agent."
+            )
+        })
+    }
+
+    pub fn trailer(&self) -> Option<String> {
+        self.append
+            .as_deref()
+            .map(str::trim)
+            .filter(|text| !text.is_empty())
+            .map(str::to_owned)
+    }
 }
 
 fn default_port() -> u16 {
@@ -154,6 +230,7 @@ impl Default for Config {
             tiers: Tiers::default(),
             transport: TransportConfig::default(),
             effort: None,
+            instructions: InstructionsConfig::default(),
         }
     }
 }

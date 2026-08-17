@@ -208,10 +208,24 @@ fable  = "..."
 [transport]
 websocket   = true
 compression = true
+
+[instructions]
+identity = true
+append   = "..."
 ```
 
 All four tiers are required. The daemon refuses to start without them, and
 validates each against the live catalog when one is reachable.
+
+`[instructions]` is what the proxy puts around the client's system prompt
+(`proxy-behavior.md` §2.1). `identity` leads with one line naming the model that
+is actually answering, and is **on by default** — a model told it is a different
+product is being given a false premise on every turn, which is not a neutral
+default to pick on an operator's behalf. `append` is operator text placed after
+the system prompt, where an instruction has to be to take precedence over it.
+
+Both must be constant for a conversation. Text that changes between turns
+changes `instructions`, and that costs every delta and every cache hit.
 
 The file is read once, at startup: **v0.1 does not watch it**, and a change
 takes effect on the next `run`. `--port` is the only override outside the file.

@@ -76,6 +76,10 @@ impl Harness {
             }]),
             recorder: recorder.clone(),
             capture: Arc::clone(&switches),
+            instructions: Arc::new(codex_cc_proxy::config::InstructionsConfig {
+                identity: false,
+                append: None,
+            }),
             sessions: Arc::new(codex_cc_proxy::session::SessionStore::new()),
         };
 
@@ -751,6 +755,73 @@ async fn upstream_capture_records_a_turn_that_produced_content() {
     assert_eq!(capture["upstream"].as_array().unwrap().len(), 3);
 }
 
+/// §2.1 — the configured lead and trailer reach the backend, around the
+/// client's own prompt.
+///
+/// Asserted on the wire rather than on the translation, because this is the
+/// only place the three pieces are seen in the order the model reads them.
+#[tokio::test]
+async fn the_configured_instructions_reach_the_backend() {
+    let upstream = ReplayServer::start(Behavior::Events(vec![
+        json!({ "type": "response.created", "response": { "id": "resp_1" } }),
+        completed(),
+    ]))
+    .await;
+
+    let state = AppState {
+        effort_ceiling: None,
+        catalog: Arc::new(codex_cc_proxy::catalog::Catalog::fallback()),
+        transport: Arc::new(HttpTransport::new(upstream.url.clone())),
+        conduits: None,
+        models: Arc::new(vec![ModelMapping {
+            requested: "claude-sonnet-4".to_owned(),
+            upstream: "gpt-5-codex".to_owned(),
+        }]),
+        recorder: None,
+        capture: Arc::new(codex_cc_proxy::recorder::Switches::default()),
+        instructions: Arc::new(codex_cc_proxy::config::InstructionsConfig {
+            identity: true,
+            append: Some("  Answer briefly.  ".to_owned()),
+        }),
+        sessions: Arc::new(codex_cc_proxy::session::SessionStore::new()),
+    };
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, router(state)).await;
+    });
+
+    let response = reqwest::Client::new()
+        .post(format!("http://{addr}/v1/messages"))
+        .json(&json!({
+            "model": "claude-sonnet-4",
+            "max_tokens": 64,
+            "system": "You are Claude Code.",
+            "messages": [{ "role": "user", "content": "hi" }],
+        }))
+        .send()
+        .await
+        .unwrap();
+    let _ = response.text().await.unwrap();
+
+    let sent = upstream.requests();
+    let instructions = sent[0]["instructions"].as_str().unwrap();
+
+    // The model that answers, not the tier that was asked for.
+    assert!(
+        instructions.starts_with("You are gpt-5-codex,"),
+        "{instructions}"
+    );
+    assert!(
+        instructions.contains("You are Claude Code."),
+        "{instructions}"
+    );
+    // Trailing, and trimmed: surrounding whitespace in a config file is
+    // formatting, not instruction.
+    assert!(instructions.ends_with("Answer briefly."), "{instructions}");
+}
+
 /// Capture can be turned on while the daemon is running.
 ///
 /// This is what `record.start` over the control socket means. Reading the flag
@@ -1180,6 +1251,10 @@ async fn ingress_sends_through_a_conduit_and_uploads_incrementally() {
         }]),
         recorder: None,
         capture: Arc::new(codex_cc_proxy::recorder::Switches::default()),
+        instructions: Arc::new(codex_cc_proxy::config::InstructionsConfig {
+            identity: false,
+            append: None,
+        }),
         sessions: Arc::new(codex_cc_proxy::session::SessionStore::new()),
     };
 
@@ -1293,6 +1368,10 @@ async fn a_second_turn_uploads_the_new_items_and_not_nothing() {
         }]),
         recorder: None,
         capture: Arc::new(codex_cc_proxy::recorder::Switches::default()),
+        instructions: Arc::new(codex_cc_proxy::config::InstructionsConfig {
+            identity: false,
+            append: None,
+        }),
         sessions: Arc::new(codex_cc_proxy::session::SessionStore::new()),
     };
 
@@ -1470,6 +1549,10 @@ async fn a_reasoning_turn_does_not_end_the_session() {
         }]),
         recorder: None,
         capture: Arc::new(codex_cc_proxy::recorder::Switches::default()),
+        instructions: Arc::new(codex_cc_proxy::config::InstructionsConfig {
+            identity: false,
+            append: None,
+        }),
         sessions: Arc::new(codex_cc_proxy::session::SessionStore::new()),
     };
     let sessions = Arc::clone(&state.sessions);
@@ -1581,6 +1664,10 @@ async fn a_failed_turn_does_not_advance_the_baseline() {
         }]),
         recorder: None,
         capture: Arc::new(codex_cc_proxy::recorder::Switches::default()),
+        instructions: Arc::new(codex_cc_proxy::config::InstructionsConfig {
+            identity: false,
+            append: None,
+        }),
         sessions: Arc::new(codex_cc_proxy::session::SessionStore::new()),
     };
     let sessions = Arc::clone(&state.sessions);
@@ -1680,6 +1767,10 @@ async fn a_request_larger_than_the_window_is_refused() {
         }]),
         recorder: None,
         capture: Arc::new(codex_cc_proxy::recorder::Switches::default()),
+        instructions: Arc::new(codex_cc_proxy::config::InstructionsConfig {
+            identity: false,
+            append: None,
+        }),
         sessions: Arc::new(codex_cc_proxy::session::SessionStore::new()),
     };
 
@@ -1743,6 +1834,10 @@ async fn an_unknown_window_does_not_refuse_anything() {
         }]),
         recorder: None,
         capture: Arc::new(codex_cc_proxy::recorder::Switches::default()),
+        instructions: Arc::new(codex_cc_proxy::config::InstructionsConfig {
+            identity: false,
+            append: None,
+        }),
         sessions: Arc::new(codex_cc_proxy::session::SessionStore::new()),
     };
 
@@ -1805,6 +1900,10 @@ async fn effort_is_capped_by_what_the_model_supports() {
         }]),
         recorder: None,
         capture: Arc::new(codex_cc_proxy::recorder::Switches::default()),
+        instructions: Arc::new(codex_cc_proxy::config::InstructionsConfig {
+            identity: false,
+            append: None,
+        }),
         sessions: Arc::new(codex_cc_proxy::session::SessionStore::new()),
     };
 
@@ -1859,6 +1958,10 @@ async fn an_unlisted_model_does_not_cap_effort() {
         }]),
         recorder: None,
         capture: Arc::new(codex_cc_proxy::recorder::Switches::default()),
+        instructions: Arc::new(codex_cc_proxy::config::InstructionsConfig {
+            identity: false,
+            append: None,
+        }),
         sessions: Arc::new(codex_cc_proxy::session::SessionStore::new()),
     };
 

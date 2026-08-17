@@ -51,8 +51,27 @@ conversation, and `prompt_cache_key` buys nothing when the cached prefix differs
 each time. Measured against a real agent loop: three turns, no deltas at all.
 Carried as input items instead, the same loop uploads only what is new.
 
-**`instructions` is the system prompt and nothing else.** Anything that varies
-per turn belongs in the input, where it appends.
+**Nothing that varies per turn belongs in `instructions`.** Per-turn content
+goes in the input, where it appends.
+
+What may be added is text that does not vary: an operator-configured lead before
+the system prompt and trailer after it.
+
+The lead exists because the prompt the client sends is written for a different
+model and opens by saying so. Nothing else in the request tells the model what
+it actually is, and nothing in the client can be made to — its own
+append-system-prompt flag reaches the same `system` field, so it can add to that
+prompt but never precede it. Stating the identity *after* a prompt that already
+asserted a different one reads as a correction rather than a fact, which is why
+this is a lead and not part of the trailer.
+
+The trailer is last for the mirrored reason: an instruction meant to take
+precedence over the prompt above it has to come after it.
+
+Both are per conversation, never per turn. A lead carrying a timestamp or a
+token count would change `instructions` on every turn and cost the whole
+incremental path — the same failure this section already describes, arriving
+through the door built to prevent it.
 
 ### 2.2 Content blocks
 

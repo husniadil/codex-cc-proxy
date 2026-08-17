@@ -228,6 +228,13 @@ async fn run_one(probe: &probe::Probe, fixture: &Fixture, backend: &Backend) -> 
         models,
         recorder: None,
         capture: Arc::new(crate::recorder::Switches::default()),
+        // A probe measures the translation, not the operator's prompt policy.
+        // Injecting here would make a probe's request differ from the fixture
+        // it is derived from, for no gain in what the probe establishes.
+        instructions: Arc::new(crate::config::InstructionsConfig {
+            identity: false,
+            append: None,
+        }),
         sessions: Arc::new(crate::session::SessionStore::new()),
     };
 

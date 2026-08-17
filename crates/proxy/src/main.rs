@@ -380,6 +380,7 @@ async fn run_with(args: RunArgs, capture: Capture) -> Result<()> {
             codex_cc_proxy::recorder::Recorder::default_directory(),
         )),
         capture: Arc::clone(&switches),
+        instructions: Arc::new(config.instructions.clone()),
         sessions: Arc::new(codex_cc_proxy::session::SessionStore::new()),
     };
 

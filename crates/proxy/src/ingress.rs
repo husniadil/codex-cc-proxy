@@ -57,6 +57,8 @@ pub struct AppState {
     /// Which captures are on, shared with the control socket so `record.start`
     /// changes what a running daemon does rather than reporting that it did.
     pub capture: Arc<crate::recorder::Switches>,
+    /// §2.1 — what the proxy puts around the client's system prompt.
+    pub instructions: Arc<crate::config::InstructionsConfig>,
     /// Per-conversation state: calibration, discovered tools, and the baseline
     /// the incremental path will use.
     pub sessions: Arc<crate::session::SessionStore>,
@@ -175,7 +177,16 @@ async fn messages(
         (None, model) => model,
     };
 
+    // Derived from the model that will answer, not the tier that was asked
+    // for: the tier is a name the client chose and the model is what is
+    // actually reading the prompt.
+    let answering = upstream_model
+        .clone()
+        .unwrap_or_else(|| request.model.clone());
+
     let options = TranslateOptions {
+        instructions_lead: state.instructions.lead(&answering),
+        instructions_trailer: state.instructions.trailer(),
         model: upstream_model,
         discovered_tools: session.discovered(),
         prompt_cache_key: Some(session.cache_key.clone()),
