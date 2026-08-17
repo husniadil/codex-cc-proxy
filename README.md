@@ -72,11 +72,18 @@ this example if it is missing:
 ```toml
 port = 8787
 
+# A ceiling on reasoning effort, whatever the client asks for.
+effort = "low"
+
 [tiers]
 opus   = "gpt-5-codex"
 sonnet = "gpt-5-codex"
 haiku  = "gpt-5-codex-mini"
 fable  = "gpt-5-codex-mini"
+
+[instructions]
+# Lead the system prompt with one line naming the model that is answering.
+identity = true
 ```
 
 Both the model and the reasoning effort are chosen per request, not baked in.
@@ -85,6 +92,13 @@ also sends a model id, and any id the backend knows passes straight through. So
 `ANTHROPIC_DEFAULT_SONNET_MODEL=gpt-5.6-terra` takes effect on the next request
 with no restart, and the `effort` key above is a *ceiling* on what the client
 asks for rather than a fixed value.
+
+The system prompt Claude Code sends is written for a different model and opens
+by saying so, and the client cannot be made to say otherwise —
+`--append-system-prompt` reaches the same field, so it can add to that prompt but
+never precede it. `[instructions]` is where the proxy states what the model
+actually is, and where an operator can append text that outranks the prompt
+above it. See [`docs/api.md`](docs/api.md) §4.
 
 All four tiers are required and the daemon refuses to start without them.
 `WebFetch` runs on the haiku tier, so an unmapped haiku breaks it in a way that
@@ -100,8 +114,9 @@ eval "$(cargo run -q -- env)"            # point Claude Code at it
 claude
 ```
 
-`status`, `models`, `env`, and `doctor` all talk to the running daemon over a
-control socket; the CLI holds no state of its own. See
+`status`, `models`, and `env` talk to the running daemon over a control socket;
+the CLI holds no state of its own. `doctor` is the exception and runs in the
+CLI, because `--live` needs credentials whether or not a daemon is up. See
 [`docs/api.md`](docs/api.md).
 
 ---

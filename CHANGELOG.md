@@ -6,6 +6,33 @@ in [`docs/api.md`](docs/api.md) §6.
 
 ## [Unreleased]
 
+### Added
+
+- **`doctor --live`** answers the capability probes from the real backend rather
+  than from recordings, mapping the corpus's model ids through the configured
+  tiers and spending at the configured effort ceiling.
+- **`record upstream`** captures the whole exchange — the client's request and
+  the stream that answered it — which is both halves of a fixture.
+- **`[instructions]`** puts operator text around the client's system prompt: a
+  lead naming the model that is actually answering, on by default, and an
+  optional trailer placed where an instruction outranks the prompt above it.
+
+### Fixed
+
+- **A tool call forked the conversation.** Arguments were compared as text, so a
+  client replaying the same object with its keys in a different order looked
+  like a different call, and every turn after the model wrote a file uploaded
+  the whole history again.
+- **`record.start` captured nothing.** The switch it set was read by `status`
+  and by nothing else.
+- **Two capability probes proved nothing.** Their attachments were valid base64
+  and were not a PNG or a PDF, so they passed against a recording written to
+  pass them. Both now carry real files.
+- **A marker split across deltas read as missing**, failing every attachment
+  probe against a backend that had read the attachment and said so.
+- **An opaque access token refreshed on every request**, because the response's
+  own `expires_in` was ignored.
+
 ## [0.1.0]
 
 First release.
