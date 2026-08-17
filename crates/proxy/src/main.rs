@@ -221,18 +221,38 @@ async fn print_env(args: cli::EnvArgs) -> Result<()> {
 /// involved at the point of capture.
 async fn record(args: cli::RecordArgs) -> Result<()> {
     match args.mode {
-        cli::RecordMode::Ingress => run_with(RunArgs { port: None }, true).await,
+        cli::RecordMode::Ingress => run_with(RunArgs { port: None }, Capture::Ingress).await,
         cli::RecordMode::Upstream => {
-            bail!("`record upstream` needs credentials and is not implemented yet")
+            // Says so before it starts, because the cost is the difference
+            // between the two modes and it is not recoverable afterwards.
+            tracing::warn!(
+                "recording upstream: every turn through this daemon spends quota \
+                 and is written to disk with its content"
+            );
+            run_with(RunArgs { port: None }, Capture::Upstream).await
         }
     }
 }
 
-async fn run(args: RunArgs) -> Result<()> {
-    run_with(args, false).await
+/// What a run captures, beyond the empty streams §5.4 always records.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Capture {
+    /// Nothing extra.
+    Nothing,
+    /// What the client sent, before translation. Free.
+    Ingress,
+    /// The exchange with the backend. Spends quota, and holds both halves of
+    /// what a fixture needs.
+    Upstream,
 }
 
-async fn run_with(args: RunArgs, record_ingress: bool) -> Result<()> {
+async fn run(args: RunArgs) -> Result<()> {
+    run_with(args, Capture::Nothing).await
+}
+
+async fn run_with(args: RunArgs, capture: Capture) -> Result<()> {
+    let record_ingress = capture == Capture::Ingress;
+    let record_upstream = capture == Capture::Upstream;
     let config = Config::load()?;
     let port = args.port.unwrap_or(config.port);
 
@@ -255,7 +275,9 @@ async fn run_with(args: RunArgs, record_ingress: bool) -> Result<()> {
     let credentials: Arc<dyn codex_cc_proxy::auth::store::CredentialStore> = Arc::new(
         codex_cc_proxy::auth::store::FileStore::new(credential_path()),
     );
-    let recording = Arc::new(std::sync::atomic::AtomicBool::new(record_ingress));
+    let recording = Arc::new(std::sync::atomic::AtomicBool::new(
+        record_ingress || record_upstream,
+    ));
 
     let tokens = Arc::new(codex_cc_proxy::auth::tokens::TokenSource::new(
         Arc::clone(&credentials),
@@ -357,6 +379,7 @@ async fn run_with(args: RunArgs, record_ingress: bool) -> Result<()> {
             codex_cc_proxy::recorder::Recorder::default_directory(),
         )),
         record_ingress,
+        record_upstream,
         sessions: Arc::new(codex_cc_proxy::session::SessionStore::new()),
     };
 

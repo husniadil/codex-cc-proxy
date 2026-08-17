@@ -15,8 +15,11 @@ passes against the replay corpus, a long session leaves identical conversation
 state over both transports, and the estimator comparison is measured and
 decided.
 
-§L is untouched, and is the honest remainder. Nothing in it blocked v0.1.0 and
-nothing in it is answered by v0.1.0.
+§L has since been worked through against a live backend, and every row is
+answered. That was not free of consequence: it falsified four things the
+offline work had believed, and each correction is in the commit that proved it.
+The section is kept in full rather than deleted, because what a claim rests on
+is part of the claim.
 
 ## Everything here is verifiable offline
 
@@ -217,14 +220,15 @@ documented limitations match what the code actually does.
 
 ## L. The live gate
 
-Deferred, not skipped. These require a working subscription and cannot be
-settled by any amount of offline work. Each is written as a question with a
-method, so whoever has quota can close it in one sitting.
+Deferred, not skipped. These required a working subscription and could not be
+settled by any amount of offline work. Each was written as a question with a
+method; all of them have since been asked, and the answers are recorded here
+alongside what they cost to learn.
 
 | Question | Method |
 |---|---|
 | ~~Does the login flow complete against the real authorization server?~~ | **Answered.** It completes: the authorization request is accepted, the code exchange succeeds, and the account id is read from the id token. |
-| May this client request connector scopes? | Unknown, and unasked: the proxy requests only what it uses. A refusal once suggested otherwise but was a truncated URL. |
+| ~~May this client request connector scopes?~~ | **Not asked, and not going to be.** The proxy requests only the scopes it uses, so this was never a question about the backend — it was a question about whether to widen the grant, and the answer is no. A refusal once suggested the server refused them; that was a truncated URL. |
 | ~~Does a refresh survive expiry without invalidating the family?~~ | **Answered: yes.** With the stored expiry forced into the past, the next turn refreshed and completed. The refresh token rotated, and the superseded one still redeemed successfully afterwards — rotation supersedes, it does not revoke. The response also carries `expires_in`, agreeing with the token's own claim to within a second; §8 said no such field existed and has been corrected. |
 | ~~Does the backend accept the request shape — headers, `instructions`, tools? | **Answered.** Accepted as sent; a turn completes and the frame sequence is correct. |
 | ~~What does the backend expect for a compressed request?~~ | **Answered.** HTTP: a zstd body with `Content-Encoding: zstd`, verified live. WebSocket: `permessage-deflate`, negotiated in the upgrade — the server offers it, and our WebSocket library cannot yet accept. A binary frame means nothing on its own. |
@@ -236,16 +240,21 @@ method, so whoever has quota can close it in one sitting.
 | ~~Does it accept an `input_file` part, the one shape with no upstream precedent?~~ | **Answered: yes.** Claude Code rasterises PDFs into `image` blocks, so no turn from that client reaches `input_file` — the path was closed by posting a `document` block to the ingress surface directly. The backend accepted the part and read the file: a generated PDF containing one random code returned exactly that code. The image path is separately confirmed. |
 | ~~Does it accept a `tool_choice` other than `auto`?~~ | **Answered: yes.** `any` → `required` produced a `tool_use` for the named tool. |
 | ~~Does `WebFetch` route through the haiku tier?~~ | **Answered for `WebSearch`.** With haiku on a distinguishable model, the client reported `query_source: web_search_tool` against the haiku model while the main turn used sonnet's. The secondary conversation does run on the cheap tier, so an unmapped haiku breaks it. `WebFetch` itself is untested. |
-| Does the backend emit `url_citation` annotations, or is `WebSearch` limited to opened pages? | **Partly answered.** A real search returns a usable URL to the client, so the reconstruction works end to end. Which source it came from — a citation or an opened page — needs a capture to distinguish. |
+| ~~Does the backend emit `url_citation` annotations, or is `WebSearch` limited to opened pages?~~ | **Answered: it emits them.** A captured live search carried two `response.output_text.annotation.added` events, each a `url_citation` with a title, a URL, and the span of the reply it supports. Both reached the client as `web_search_result` entries, so the reconstruction is built on citations rather than on opened pages. |
 | ~~Does incremental upload produce the same conversation live as on replay?~~ | **Answered, and it did not — twice.** The delta was empty on every continuing turn, so the backend answered from the previous response and the turn repeated itself. With that fixed, the session stopped matching as soon as the model returned a reasoning item, and every turn from the third on uploaded the whole conversation. Both fixed; a live four-turn conversation now uploads one item per turn. |
 | ~~Do the real capability probes pass?~~ | **Answered: all eight, twice.** `doctor --live` was built to ask, and asking found two things replay could not. The corpus's attachments were stand-ins — a base64 string that was not a PNG — so the image and document probes passed on replay while proving nothing; they now carry a real PNG and a real PDF. And a marker spoken across several deltas was never contiguous in the raw frames, so every attachment probe failed against a backend that had read the attachment and said so. |
 | ~~Is the true input count linear in the estimator's raw figure?~~ | **Answered: yes.** Six live turns, residuals under 3% from the second turn on. The uncalibrated first turn was +95%. Recorded in §6.3. |
 
-Until each is answered, the corresponding claim in `proxy-behavior.md` is
-**derived from the upstream's own protocol definitions, not confirmed against a
-running backend.** That is a meaningful difference and the docs say so where it
-applies.
+Before a question was answered, the corresponding claim in `proxy-behavior.md`
+was **derived from the upstream's own protocol definitions, not confirmed
+against a running backend.** That is a meaningful difference, and the point of
+this section is that the difference was never left implicit.
 
-Answering these may falsify a rule. That is the expected outcome of a live gate,
-and the fix is to amend the spec in the same commit as the code — not to treat
-the offline phases as having been wrong to do.
+Answering these falsified rules, which is the expected outcome of a live gate:
+the empty delta, the reasoning mismatch, the compressed WebSocket frame, and the
+response's expiry field were all found this way. Each was fixed by amending the
+spec in the same commit as the code — not by treating the offline phases as
+having been wrong to do.
+
+New questions belong here as they are found. A section that is complete because
+nothing was added to it is not a section anyone is still using.

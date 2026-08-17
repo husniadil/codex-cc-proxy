@@ -206,6 +206,7 @@ async fn run_one(probe: &probe::Probe, fixture: &Fixture, backend: &Backend) -> 
         models,
         recorder: None,
         record_ingress: false,
+        record_upstream: false,
         sessions: Arc::new(crate::session::SessionStore::new()),
     };
 

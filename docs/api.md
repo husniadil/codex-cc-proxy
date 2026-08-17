@@ -111,10 +111,16 @@ costs anything:
 - **ingress** captures what Claude Code sends to the proxy. It needs a working
   client and no upstream credentials at all, since the exchange is recorded
   before translation.
-- **upstream** captures what the backend sends back. It needs credentials and
-  spends quota, and is **not implemented in v0.1** — there was no quota to
-  develop it against, and a capture path that has never captured anything is
-  not something to claim.
+- **upstream** captures the whole exchange: the client's request, untranslated,
+  paired with the stream the backend answered it with. It needs credentials and
+  spends quota, because the turn it records is a real one. Every turn through a
+  daemon started this way is captured, not only the failing ones — a fixture is
+  made from an exchange that worked.
+
+Both halves are needed to replay one. The request cannot be inferred from the
+stream, which is why the capture holds the client's request rather than the
+translated one: a capture of the translated request could not be replayed
+through the translation it had already been through.
 
 Both write to the same fixture format, so a test replays either without knowing
 which mode produced it.
@@ -171,7 +177,7 @@ A Unix domain socket, or a named pipe on Windows, carrying JSON-RPC:
 | `record.start` / `record.stop` | fixture capture | yes |
 | `login` | authorization URL, then completion | no — `login` runs in the CLI, which owns the browser and the callback port |
 | `tiers.set` | tier mapping | no — edit the configuration file |
-| `doctor` | probe results | no — `doctor` runs in the CLI against the fixture corpus |
+| `doctor` | probe results | no — `doctor` runs in the CLI, which is where `--live` can be given credentials without a daemon already holding them |
 
 The names are reserved whether or not v0.1 answers them: they are semver-bound
 (§6), and a method that appears later must mean what its name said all along. A

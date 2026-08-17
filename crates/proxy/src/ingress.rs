@@ -56,6 +56,12 @@ pub struct AppState {
     pub recorder: Option<crate::recorder::Recorder>,
     /// Whether to capture every request, not only the defective ones.
     pub record_ingress: bool,
+    /// Whether to capture every upstream exchange, not only the empty ones.
+    ///
+    /// This is what makes a fixture: the translated request paired with the
+    /// stream that answered it. It costs quota, because the turn it records is
+    /// a real one.
+    pub record_upstream: bool,
     /// Per-conversation state: calibration, discovered tools, and the baseline
     /// the incremental path will use.
     pub sessions: Arc<crate::session::SessionStore>,
@@ -327,6 +333,7 @@ async fn messages(
         },
         Arc::clone(&session),
         translated.input,
+        state.record_upstream,
     )
 }
 
@@ -342,6 +349,7 @@ fn sse_response(
     calibration: Calibration,
     session: Arc<crate::session::Session>,
     sent_input: Vec<codex_cc_proxy_core::responses::InputItem>,
+    record_upstream: bool,
 ) -> Response {
     let state = StreamState {
         translator,
@@ -349,6 +357,7 @@ fn sse_response(
         seen: Vec::new(),
         produced_content: false,
         watch: empty_stream_watch,
+        record_upstream,
         calibration,
         session,
         sent_input,
@@ -391,7 +400,7 @@ fn sse_response(
                 state.done = true;
                 state.calibrate();
                 state.close_turn();
-                state.record_if_empty();
+                state.record_upstream_exchange();
                 if frames.is_empty() {
                     return None;
                 }
@@ -426,6 +435,8 @@ struct StreamState {
     seen: Vec<Value>,
     produced_content: bool,
     watch: Option<(crate::recorder::Recorder, Value)>,
+    /// Capture the exchange whether or not it was defective.
+    record_upstream: bool,
     calibration: Calibration,
     session: Arc<crate::session::Session>,
     /// What this turn put on the wire, which together with what the server adds
@@ -500,21 +511,32 @@ impl StreamState {
     ///
     /// It is always a defect, and it is otherwise invisible: the client sees a
     /// well-formed empty turn and reports nothing wrong.
-    fn record_if_empty(&mut self) {
-        if self.produced_content {
+    ///
+    /// Under `record upstream` every exchange is recorded instead, defective or
+    /// not — a fixture is made from a turn that worked.
+    fn record_upstream_exchange(&mut self) {
+        if self.produced_content && !self.record_upstream {
             return;
         }
         let Some((recorder, request)) = self.watch.take() else {
             return;
         };
 
+        let note = if self.produced_content {
+            "Captured from a live exchange: the client's request, and the upstream \
+             stream that answered it. Both halves are needed to replay it as a \
+             fixture — the request cannot be inferred from the stream."
+        } else {
+            "An empty stream: the upstream events below produced no content at all. \
+             Always a defect, and invisible without this record — the client sees a \
+             well-formed turn that simply said nothing."
+        };
+
         recorder.record(
             crate::recorder::Mode::Upstream,
             &request,
             std::mem::take(&mut self.seen),
-            "An empty stream: the upstream events below produced no content at all. \
-             Always a defect, and invisible without this record — the client sees a \
-             well-formed turn that simply said nothing.",
+            note,
         );
     }
 }

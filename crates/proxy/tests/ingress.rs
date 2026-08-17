@@ -33,6 +33,22 @@ impl Harness {
         behavior: Behavior,
         recorder: Option<codex_cc_proxy::recorder::Recorder>,
     ) -> Self {
+        Self::build(behavior, recorder, false).await
+    }
+
+    /// Capture upstream as well, which is what `record upstream` turns on.
+    async fn start_recording_upstream(
+        behavior: Behavior,
+        recorder: codex_cc_proxy::recorder::Recorder,
+    ) -> Self {
+        Self::build(behavior, Some(recorder), true).await
+    }
+
+    async fn build(
+        behavior: Behavior,
+        recorder: Option<codex_cc_proxy::recorder::Recorder>,
+        record_upstream: bool,
+    ) -> Self {
         let upstream = ReplayServer::start(behavior).await;
 
         let state = AppState {
@@ -45,7 +61,8 @@ impl Harness {
                 upstream: "gpt-5-codex".to_owned(),
             }]),
             recorder: recorder.clone(),
-            record_ingress: recorder.is_some(),
+            record_ingress: recorder.is_some() && !record_upstream,
+            record_upstream,
             sessions: Arc::new(codex_cc_proxy::session::SessionStore::new()),
         };
 
@@ -667,6 +684,59 @@ async fn a_stream_that_produced_content_is_not_recorded() {
     assert_eq!(upstream_captures, 0);
 }
 
+/// `record upstream` captures a turn that worked, which is the whole point of
+/// it: a fixture is made from an exchange that succeeded, not from one that
+/// failed. The default stays as it was — only empty streams — because
+/// recording every exchange buries the defective ones.
+#[tokio::test]
+async fn upstream_capture_records_a_turn_that_produced_content() {
+    let dir = tempfile::tempdir().unwrap();
+    let recorder = codex_cc_proxy::recorder::Recorder::new(dir.path());
+
+    let harness = Harness::start_recording_upstream(
+        Behavior::Events(vec![
+            json!({ "type": "response.created", "response": { "id": "resp_1" } }),
+            json!({ "type": "response.output_text.delta", "delta": "content" }),
+            completed(),
+        ]),
+        recorder,
+    )
+    .await;
+
+    let response = harness
+        .post(
+            "/v1/messages",
+            json!({
+                "model": "claude-sonnet-4",
+                "max_tokens": 512,
+                "messages": [{ "role": "user", "content": "hi" }],
+            }),
+        )
+        .await;
+    let _ = response.text().await.unwrap();
+
+    let capture: Value = std::fs::read_dir(dir.path())
+        .unwrap()
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .find(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with("upstream-"))
+        })
+        .map(|path| serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap())
+        .expect("a turn that produced content should have been captured");
+
+    // The client's own request, untranslated — that is what a fixture replays,
+    // and a capture of the translated one could not be replayed through the
+    // translation it had already been through.
+    assert_eq!(capture["request"]["model"], json!("claude-sonnet-4"));
+    // And the upstream stream verbatim, which is the half that cannot be
+    // invented.
+    assert_eq!(capture["upstream"][0]["type"], json!("response.created"));
+    assert_eq!(capture["upstream"].as_array().unwrap().len(), 3);
+}
+
 /// `record ingress` captures what the client sends, before translation. No
 /// credentials are involved, because nothing upstream is yet.
 #[tokio::test]
@@ -1025,6 +1095,7 @@ async fn ingress_sends_through_a_conduit_and_uploads_incrementally() {
         }]),
         recorder: None,
         record_ingress: false,
+        record_upstream: false,
         sessions: Arc::new(codex_cc_proxy::session::SessionStore::new()),
     };
 
@@ -1138,6 +1209,7 @@ async fn a_second_turn_uploads_the_new_items_and_not_nothing() {
         }]),
         recorder: None,
         record_ingress: false,
+        record_upstream: false,
         sessions: Arc::new(codex_cc_proxy::session::SessionStore::new()),
     };
 
@@ -1315,6 +1387,7 @@ async fn a_reasoning_turn_does_not_end_the_session() {
         }]),
         recorder: None,
         record_ingress: false,
+        record_upstream: false,
         sessions: Arc::new(codex_cc_proxy::session::SessionStore::new()),
     };
     let sessions = Arc::clone(&state.sessions);
@@ -1426,6 +1499,7 @@ async fn a_failed_turn_does_not_advance_the_baseline() {
         }]),
         recorder: None,
         record_ingress: false,
+        record_upstream: false,
         sessions: Arc::new(codex_cc_proxy::session::SessionStore::new()),
     };
     let sessions = Arc::clone(&state.sessions);
@@ -1525,6 +1599,7 @@ async fn a_request_larger_than_the_window_is_refused() {
         }]),
         recorder: None,
         record_ingress: false,
+        record_upstream: false,
         sessions: Arc::new(codex_cc_proxy::session::SessionStore::new()),
     };
 
@@ -1588,6 +1663,7 @@ async fn an_unknown_window_does_not_refuse_anything() {
         }]),
         recorder: None,
         record_ingress: false,
+        record_upstream: false,
         sessions: Arc::new(codex_cc_proxy::session::SessionStore::new()),
     };
 
@@ -1650,6 +1726,7 @@ async fn effort_is_capped_by_what_the_model_supports() {
         }]),
         recorder: None,
         record_ingress: false,
+        record_upstream: false,
         sessions: Arc::new(codex_cc_proxy::session::SessionStore::new()),
     };
 
@@ -1704,6 +1781,7 @@ async fn an_unlisted_model_does_not_cap_effort() {
         }]),
         recorder: None,
         record_ingress: false,
+        record_upstream: false,
         sessions: Arc::new(codex_cc_proxy::session::SessionStore::new()),
     };
 
