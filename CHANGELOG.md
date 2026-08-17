@@ -4,7 +4,9 @@ All notable changes to this project are recorded here. This project follows
 [semantic versioning](https://semver.org). The semver-bound surfaces are listed
 in [`docs/api.md`](docs/api.md) §6.
 
-## [Unreleased]
+## [0.1.0]
+
+First release.
 
 ### Added
 
@@ -20,6 +22,26 @@ in [`docs/api.md`](docs/api.md) §6.
   stream — free, never polled, and absent rather than zero before a turn.
 - **`statusline`** wraps an existing status-line script and merges that quota
   into the payload it already reads, so the script keeps working as written.
+- **WebSocket compression.** `permessage-deflate`, negotiated on the upgrade.
+  Measured on the wire, one identical turn with it offered and declined: about
+  65% off in both directions, 267 KB on a single first turn. The inbound half is
+  the larger one, because the backend echoes the whole request back three times
+  per turn. It saves bytes and **no tokens** — quota is unaffected.
+- **A working budget in the instructions, on by default.** The conversation is
+  replayed upstream every turn and echoed back three times, so context pulled in
+  is paid for repeatedly; without a budget the window goes quickly on reads that
+  changed nothing. Switch it off with `working_budget = false`.
+- **Defaults for every configuration key, and the file itself is optional.** A
+  missing configuration is a first run rather than a failure. All four tiers
+  default; a defaulted model this account cannot see is substituted for one it
+  has, and said out loud, while a model the operator stated is never touched.
+- **`status` reports the plan**, preferring what the backend said on the last
+  turn over the older claim in the grant, and naming which answered. It also
+  names any mapped model the catalog withholds — those pass validation, so
+  nothing else would mention them.
+- **`[upstream]`** makes the endpoints, the reported client version, and the
+  usable share of a context window configurable, so a pinned binary can be
+  repointed rather than rebuilt.
 
 ### Fixed
 
@@ -36,13 +58,16 @@ in [`docs/api.md`](docs/api.md) §6.
   probe against a backend that had read the attachment and said so.
 - **An opaque access token refreshed on every request**, because the response's
   own `expires_in` was ignored.
+- **The WebSocket upgrade carried no `originator` or `user-agent`**, which every
+  other upstream path sends. Nothing tested the upgrade's headers.
+- **A compaction window outside 100,000–1,000,000 was emitted and silently
+  discarded** by the client, so it was not an early compaction or a late one but
+  no setting at all. It is now omitted, with a warning.
+- **The effort ceiling and the window guard were inert in the shipping binary**,
+  which was handed a fallback catalog while the real one went to the control
+  socket.
 
-## [0.1.0]
-
-First release.
-
-### Added
-
+### Added — the foundation these sit on
 - **Anthropic Messages ingress** on loopback: streaming `/v1/messages`,
   `/v1/messages/count_tokens`, and `/v1/models`, with the full error vocabulary
   and cancellation propagated upstream.

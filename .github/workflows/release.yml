@@ -19,6 +19,10 @@ jobs:
         with:
           install: true
           cache: true
+      # `.tool-versions` cannot express components, and `just check` is mostly
+      # rustfmt and clippy. Without this the gate fails on its first command —
+      # which is exactly how the first CI run failed.
+      - run: rustup component add rustfmt clippy
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-nextest
@@ -92,9 +96,15 @@ jobs:
           files: dist/*
           generate_release_notes: true
           body: |
-            Nothing in this release has been confirmed against a live backend.
-            Every capability claim is derived from the upstream protocol
-            definitions and verified against replayed fixtures — see
-            `docs/roadmap.md` §L for what only a subscription can settle, and
-            run `codex-cc-proxy doctor` to see the same distinction in its own
-            output.
+            The test suite never touches the network: every upstream
+            interaction in it runs against a local replay server, so it is
+            green without credentials and without quota.
+
+            Capability claims are not all of one kind, and the difference is
+            recorded rather than smoothed over. Most have since been settled
+            against a live subscription — `docs/roadmap.md` §L lists each
+            question, its answer, and the four things the offline work believed
+            that a live backend falsified. A few remain derived rather than
+            confirmed, and §L says which. `codex-cc-proxy doctor` makes the same
+            distinction in its own output: a replayed run says so, and a probe
+            that could not run is reported as skipped rather than passed.
