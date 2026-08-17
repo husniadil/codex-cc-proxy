@@ -125,6 +125,113 @@ fn configuration_parses_with_documented_defaults() {
     assert!(config.tiers.resolve().is_ok());
 }
 
+/// The upstream is configurable, and its defaults are the shipping ones.
+///
+/// Three of these have a failure mode nothing else can reach. `client_version`
+/// is what the backend filters the model list by, and one that is too low
+/// returns an empty catalog rather than an error — indistinguishable from an
+/// account with no models. The endpoints move when the backend moves, and a
+/// pinned binary that cannot be repointed is a binary that has to be rebuilt.
+#[test]
+fn the_upstream_defaults_are_what_ships() {
+    let config = Config::default();
+
+    assert_eq!(config.upstream.client_version, "2.0.0");
+    assert_eq!(
+        config.upstream.endpoint,
+        "https://chatgpt.com/backend-api/codex/responses"
+    );
+    assert_eq!(
+        config.upstream.websocket,
+        "wss://chatgpt.com/backend-api/codex/responses"
+    );
+    assert_eq!(
+        config.upstream.catalog,
+        "https://chatgpt.com/backend-api/codex/models"
+    );
+}
+
+/// Each is overridable on its own, without restating the rest.
+#[test]
+fn an_upstream_override_leaves_the_others_alone() {
+    let config: Config = toml::from_str(
+        r#"
+        [tiers]
+        opus = "gpt-5.6-terra"
+        sonnet = "gpt-5.6-terra"
+        haiku = "gpt-5.6-luna"
+        fable = "gpt-5.6-luna"
+
+        [upstream]
+        client_version = "3.1.0"
+        "#,
+    )
+    .expect("a partial upstream table should parse");
+
+    assert_eq!(config.upstream.client_version, "3.1.0");
+    assert_eq!(
+        config.upstream.catalog, "https://chatgpt.com/backend-api/codex/models",
+        "an untouched endpoint keeps its default"
+    );
+}
+
+/// The share of a window left usable is configurable, because it decides the
+/// figure the client is told and therefore when compaction fires.
+#[test]
+fn the_effective_window_percent_is_configurable_and_defaults_to_what_ships() {
+    assert_eq!(Config::default().upstream.effective_window_percent, 95.0);
+
+    let config: Config = toml::from_str(
+        r#"
+        [tiers]
+        opus = "gpt-5.6-terra"
+        sonnet = "gpt-5.6-terra"
+        haiku = "gpt-5.6-luna"
+        fable = "gpt-5.6-luna"
+
+        [upstream]
+        effective_window_percent = 80.0
+        "#,
+    )
+    .unwrap();
+
+    assert_eq!(config.upstream.effective_window_percent, 80.0);
+}
+
+/// A percentage outside the range is refused rather than clamped.
+///
+/// Zero advertises a window of nothing and every turn is refused; above a
+/// hundred advertises more than exists and the guard stops guarding. Both are
+/// silent, and a clamp would make an operator's mistake look like it worked.
+#[test]
+fn an_impossible_window_percentage_is_refused() {
+    for percent in ["0.0", "-5.0", "100.1", "1000.0"] {
+        let raw = format!(
+            r#"
+            [tiers]
+            opus = "gpt-5.6-terra"
+            sonnet = "gpt-5.6-terra"
+            haiku = "gpt-5.6-luna"
+            fable = "gpt-5.6-luna"
+
+            [upstream]
+            effective_window_percent = {percent}
+            "#
+        );
+        let config: Config = toml::from_str(&raw).unwrap();
+        assert!(
+            config.validate().is_err(),
+            "`{percent}` should be refused, not clamped"
+        );
+    }
+}
+
+/// A workable percentage passes.
+#[test]
+fn a_usable_window_percentage_validates() {
+    assert!(Config::default().validate().is_ok());
+}
+
 /// Credentials are never stored in the configuration file. A key that looks
 /// like one is not a field, so it cannot be read even if someone writes it.
 #[test]

@@ -78,10 +78,26 @@ pub fn status(result: &Value) -> String {
             .and_then(|auth| field(auth, "account_id"))
             .and_then(Value::as_str)
             .unwrap_or("account unknown");
-        format!("auth       connected ({account})")
+        let who = auth
+            .and_then(|auth| field(auth, "email"))
+            .and_then(Value::as_str)
+            .unwrap_or(account);
+        format!("auth       connected ({who})")
     } else {
         "auth       not connected — run `codex-cc-proxy login`".to_owned()
     });
+
+    // Reported, never enforced. Models and efforts are gated on it, and a
+    // refusal names the value it rejected rather than the entitlement that was
+    // missing — so this line is often the only local half of the explanation.
+    // Absent where the grant said nothing: a guessed plan misleads in whichever
+    // direction it guesses.
+    if let Some(plan) = auth
+        .and_then(|auth| field(auth, "plan"))
+        .and_then(Value::as_str)
+    {
+        lines.push(format!("plan       {plan}"));
+    }
 
     if let Some(tiers) = field(result, "tiers").and_then(Value::as_object) {
         for (tier, model) in tiers {
@@ -97,6 +113,21 @@ pub fn status(result: &Value) -> String {
     // one.
     if field(result, "catalog_authoritative").and_then(Value::as_bool) == Some(false) {
         lines.push("catalog    unavailable — the tier mapping has not been validated".to_owned());
+    }
+
+    // A tier pointing at a model the catalog withholds. It passed validation —
+    // the catalog knows the id — so this is the only place it is ever
+    // mentioned. Not an error: the backend may still serve it, and mapping one
+    // deliberately is a reasonable thing to do.
+    let withheld: Vec<&str> = field(result, "unlisted_tiers")
+        .and_then(Value::as_array)
+        .map(|entries| entries.iter().filter_map(Value::as_str).collect())
+        .unwrap_or_default();
+    if !withheld.is_empty() {
+        lines.push(format!(
+            "catalog    {} is mapped but not offered by the catalog",
+            withheld.join(", ")
+        ));
     }
 
     if field(result, "recording").and_then(Value::as_bool) == Some(true) {

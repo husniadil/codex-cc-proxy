@@ -19,16 +19,6 @@ use codex_cc_proxy::render;
 use codex_cc_proxy::upstream::http::HttpTransport;
 use std::sync::Arc;
 
-/// Where the Responses API lives. Not a published or supported endpoint — see
-/// `docs/api.md` §7.
-const UPSTREAM_ENDPOINT: &str = "https://chatgpt.com/backend-api/codex/responses";
-
-/// The same surface over a socket.
-const UPSTREAM_WEBSOCKET: &str = "wss://chatgpt.com/backend-api/codex/responses";
-
-/// Where the model catalog lives.
-const UPSTREAM_CATALOG: &str = "https://chatgpt.com/backend-api/codex/models";
-
 #[tokio::main]
 async fn main() -> Result<()> {
     init_tracing();
@@ -65,8 +55,12 @@ fn live_transport() -> Result<Arc<dyn codex_cc_proxy::upstream::Transport>> {
         Arc::new(codex_cc_proxy::auth::tokens::SystemClock),
     ));
 
+    // The operator's endpoint, not a compiled-in one: a probe run that contacts
+    // somewhere other than the daemon would answer about the wrong backend.
+    let endpoint = Config::load()?.upstream.endpoint;
+
     Ok(Arc::new(
-        HttpTransport::new(UPSTREAM_ENDPOINT).with_credentials(tokens),
+        HttpTransport::new(endpoint).with_credentials(tokens),
     ))
 }
 
@@ -321,6 +315,10 @@ async fn run_with(args: RunArgs, capture: Capture) -> Result<()> {
     let config = Config::load()?;
     let port = args.port.unwrap_or(config.port);
 
+    // Values that parse but cannot work, refused before binding rather than
+    // clamped — a clamp makes an operator's mistake look like it was accepted.
+    config.validate()?;
+
     // Refused before binding: a daemon that starts with an incomplete mapping
     // breaks WebFetch in a way that looks unrelated to tier mapping (§7.1).
     let tiers = config.tiers.resolve()?;
@@ -356,9 +354,11 @@ async fn run_with(args: RunArgs, capture: Capture) -> Result<()> {
         Ok(token) => {
             codex_cc_proxy::catalog::fetch(
                 &reqwest::Client::new(),
-                UPSTREAM_CATALOG,
+                &config.upstream.catalog,
                 &token,
                 tokens.account_id().as_deref(),
+                &config.upstream.client_version,
+                config.upstream.effective_window_percent,
             )
             .await
         }
@@ -400,15 +400,17 @@ async fn run_with(args: RunArgs, capture: Capture) -> Result<()> {
     let websocket_enabled = config.transport.websocket;
     let compression = config.transport.compression;
     let conduit_tokens = Arc::clone(&tokens);
+    let conduit_endpoint = config.upstream.endpoint.clone();
+    let conduit_websocket = config.upstream.websocket.clone();
     let conduits: codex_cc_proxy::ingress::ConduitFactory = Arc::new(move || {
         let http = Arc::new(
-            HttpTransport::new(UPSTREAM_ENDPOINT)
+            HttpTransport::new(&conduit_endpoint)
                 .with_credentials(Arc::clone(&conduit_tokens))
                 .with_compression(compression),
         );
         let websocket = websocket_enabled.then(|| {
             Arc::new(
-                codex_cc_proxy::upstream::websocket::WebSocketTransport::new(UPSTREAM_WEBSOCKET)
+                codex_cc_proxy::upstream::websocket::WebSocketTransport::new(&conduit_websocket)
                     .with_credentials(Arc::clone(&conduit_tokens))
                     .with_compression(compression),
             )
@@ -433,7 +435,7 @@ async fn run_with(args: RunArgs, capture: Capture) -> Result<()> {
         catalog: Arc::clone(&catalog),
         // Only reached if the factory is absent, which it is not here.
         transport: Arc::new(
-            HttpTransport::new(UPSTREAM_ENDPOINT).with_credentials(Arc::clone(&tokens)),
+            HttpTransport::new(&config.upstream.endpoint).with_credentials(Arc::clone(&tokens)),
         ),
         conduits: Some(conduits),
         models: Arc::new(

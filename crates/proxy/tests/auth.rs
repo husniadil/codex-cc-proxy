@@ -613,6 +613,39 @@ fn the_account_id_is_read_from_the_id_token() {
     );
 }
 
+/// The plan sits beside the account id, under the same namespace.
+///
+/// It is worth reading because it is the only local explanation for a whole
+/// class of refusal: efforts and models are gated on the subscription, and a
+/// free account asking for one gets an error that names the value, never the
+/// plan. Reporting it turns "the backend said no" into a checkable fact.
+#[test]
+fn the_plan_is_read_from_the_id_token() {
+    let token = token_with(serde_json::json!({
+        "https://api.openai.com/auth": {
+            "chatgpt_account_id": "acct_from_claim",
+            "chatgpt_plan_type": "plus",
+        },
+    }));
+
+    assert_eq!(jwt::plan(Some(&token)).as_deref(), Some("plus"));
+}
+
+/// A missing plan is absent, not guessed at. Defaulting to "free" would be a
+/// fabricated figure, and defaulting to "plus" would explain away a refusal
+/// that deserves explaining.
+#[test]
+fn an_id_token_without_a_plan_claims_nothing() {
+    assert_eq!(jwt::plan(None), None);
+    assert_eq!(jwt::plan(Some("not-a-jwt")), None);
+    assert_eq!(
+        jwt::plan(Some(&token_with(serde_json::json!({
+            "https://api.openai.com/auth": { "chatgpt_account_id": "a" },
+        })))),
+        None
+    );
+}
+
 #[test]
 fn an_id_token_without_the_claim_yields_no_account() {
     assert_eq!(jwt::account_id(None), None);

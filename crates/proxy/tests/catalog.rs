@@ -5,6 +5,11 @@
 use codex_cc_proxy::catalog::Catalog;
 use pretty_assertions::assert_eq;
 
+/// The share the shipping configuration applies. Stated here rather than
+/// imported so that a change to the default has to be made deliberately in two
+/// places, one of which is a test that says what the figure means.
+const SHIPPING: f64 = 95.0;
+
 const SAMPLE: &str = r#"{
   "data": [
     {
@@ -58,7 +63,7 @@ const LIVE_SHAPE: &str = r#"{
 /// backend withholds was offered for mapping.
 #[test]
 fn a_hidden_model_is_withheld_however_visibility_is_spelled() {
-    let catalog = Catalog::parse(LIVE_SHAPE).expect("the live shape should parse");
+    let catalog = Catalog::parse(LIVE_SHAPE, SHIPPING).expect("the live shape should parse");
 
     let offered: Vec<&str> = catalog
         .selectable()
@@ -75,7 +80,7 @@ fn a_hidden_model_is_withheld_however_visibility_is_spelled() {
 /// one it does not support can be recognized rather than sent and rejected.
 #[test]
 fn supported_efforts_are_read_from_the_catalog() {
-    let catalog = Catalog::parse(LIVE_SHAPE).unwrap();
+    let catalog = Catalog::parse(LIVE_SHAPE, SHIPPING).unwrap();
     let luna = catalog.get("gpt-5.6-luna").unwrap();
 
     assert_eq!(luna.efforts, vec!["low", "medium"]);
@@ -84,7 +89,7 @@ fn supported_efforts_are_read_from_the_catalog() {
 /// An entry keyed by `slug` is the same as one keyed by `id`.
 #[test]
 fn the_live_shape_yields_real_windows() {
-    let catalog = Catalog::parse(LIVE_SHAPE).unwrap();
+    let catalog = Catalog::parse(LIVE_SHAPE, SHIPPING).unwrap();
     let luna = catalog.get("gpt-5.6-luna").unwrap();
 
     assert_eq!(luna.context_window, Some(272_000));
@@ -94,7 +99,7 @@ fn the_live_shape_yields_real_windows() {
 
 #[test]
 fn the_catalog_parses_ids_and_windows() {
-    let catalog = Catalog::parse(SAMPLE).expect("the catalog should parse");
+    let catalog = Catalog::parse(SAMPLE, SHIPPING).expect("the catalog should parse");
 
     assert!(catalog.authoritative);
     assert_eq!(
@@ -108,7 +113,7 @@ fn the_catalog_parses_ids_and_windows() {
 /// requests through that the account cannot actually serve.
 #[test]
 fn the_smaller_scoped_window_is_authoritative() {
-    let catalog = Catalog::parse(SAMPLE).unwrap();
+    let catalog = Catalog::parse(SAMPLE, SHIPPING).unwrap();
     let model = catalog.get("gpt-5.6-terra").unwrap();
 
     assert_eq!(model.context_window, Some(272_000));
@@ -119,7 +124,7 @@ fn the_smaller_scoped_window_is_authoritative() {
 /// output.
 #[test]
 fn the_effective_window_applies_the_percentage() {
-    let catalog = Catalog::parse(SAMPLE).unwrap();
+    let catalog = Catalog::parse(SAMPLE, SHIPPING).unwrap();
 
     assert_eq!(
         catalog.get("gpt-5.6-terra").unwrap().effective_window(),
@@ -138,7 +143,7 @@ fn the_effective_window_applies_the_percentage() {
 /// and both are worse than declining to guess.
 #[test]
 fn a_model_with_no_window_is_unknown_rather_than_assumed() {
-    let catalog = Catalog::parse(SAMPLE).unwrap();
+    let catalog = Catalog::parse(SAMPLE, SHIPPING).unwrap();
     let model = catalog
         .get("windowless")
         .expect("it should still be listed");
@@ -152,7 +157,7 @@ fn a_model_with_no_window_is_unknown_rather_than_assumed() {
 /// is better than not.
 #[test]
 fn hidden_models_are_withheld_from_selection_but_still_known() {
-    let catalog = Catalog::parse(SAMPLE).unwrap();
+    let catalog = Catalog::parse(SAMPLE, SHIPPING).unwrap();
 
     assert!(
         !catalog
@@ -172,13 +177,13 @@ fn hidden_models_are_withheld_from_selection_but_still_known() {
 
 #[test]
 fn a_mapping_onto_known_models_validates() {
-    let catalog = Catalog::parse(SAMPLE).unwrap();
+    let catalog = Catalog::parse(SAMPLE, SHIPPING).unwrap();
     assert!(catalog.validate(&["gpt-5.6-terra".to_owned()]).is_ok());
 }
 
 #[test]
 fn a_mapping_onto_an_unknown_model_is_rejected_and_says_what_exists() {
-    let catalog = Catalog::parse(SAMPLE).unwrap();
+    let catalog = Catalog::parse(SAMPLE, SHIPPING).unwrap();
 
     let error = catalog
         .validate(&["gpt-4-imaginary".to_owned()])
@@ -193,6 +198,50 @@ fn a_mapping_onto_an_unknown_model_is_rejected_and_says_what_exists() {
         error.message.contains("gpt-5.6-terra"),
         "the error should name what is available: {}",
         error.message
+    );
+}
+
+/// A mapping onto a hidden model validates, and that is the problem.
+///
+/// `validate` asks whether the catalog knows the id, and it knows the hidden
+/// ones too — so a tier mapped onto a withheld model starts cleanly and then
+/// never appears in `models`. Nothing else in the system would mention it.
+#[test]
+fn a_tier_mapped_onto_a_withheld_model_is_reported_without_being_refused() {
+    let catalog = Catalog::parse(SAMPLE, SHIPPING).unwrap();
+    let mapped = ["internal-preview".to_owned()];
+
+    assert!(
+        catalog.validate(&mapped).is_ok(),
+        "a hidden model is known, so it is not a mapping error"
+    );
+    assert_eq!(catalog.unlisted(&mapped), vec!["internal-preview"]);
+}
+
+/// A mapping onto listed models has nothing to report.
+#[test]
+fn a_mapping_onto_listed_models_is_not_flagged() {
+    let catalog = Catalog::parse(SAMPLE, SHIPPING).unwrap();
+    assert!(catalog.unlisted(&["gpt-5.6-terra".to_owned()]).is_empty());
+}
+
+/// A model the catalog never mentioned is not "withheld" — it is unknown, and
+/// `validate` is what speaks to that. Reporting it here as well would say the
+/// same thing twice in two different vocabularies.
+#[test]
+fn an_unknown_model_is_not_reported_as_withheld() {
+    let catalog = Catalog::parse(SAMPLE, SHIPPING).unwrap();
+    assert!(catalog.unlisted(&["gpt-4-imaginary".to_owned()]).is_empty());
+}
+
+/// An unreachable catalog withholds nothing, because it knows nothing. Every
+/// mapped model would otherwise read as hidden the moment the network blinked.
+#[test]
+fn an_unavailable_catalog_reports_nothing_as_withheld() {
+    assert!(
+        Catalog::fallback()
+            .unlisted(&["gpt-5.6-terra".to_owned()])
+            .is_empty()
     );
 }
 
@@ -230,17 +279,173 @@ fn the_fallback_states_no_windows() {
 /// An empty one reads as "no models exist", which would fail every mapping.
 #[test]
 fn an_unreadable_catalog_is_an_error() {
-    assert!(Catalog::parse("{{ not json").is_err());
+    assert!(Catalog::parse("{{ not json", SHIPPING).is_err());
 }
 
 /// Some responses key the list differently. Both shapes parse.
 #[test]
 fn either_list_key_parses() {
-    let catalog = Catalog::parse(r#"{"models":[{"slug":"gpt-5.6-terra","context_window":1000}]}"#)
-        .expect("the alternate shape should parse");
+    let catalog = Catalog::parse(
+        r#"{"models":[{"slug":"gpt-5.6-terra","context_window":1000}]}"#,
+        SHIPPING,
+    )
+    .expect("the alternate shape should parse");
 
     assert_eq!(
         catalog.get("gpt-5.6-terra").and_then(|m| m.context_window),
         Some(1_000)
+    );
+}
+
+/// The configured share is the one applied, not a compiled-in constant.
+///
+/// This is the figure the client is told, and the client compacts against it.
+/// A configuration key that parses and then changes nothing would leave an
+/// operator believing they had moved it.
+#[test]
+fn the_configured_share_is_what_the_window_is_measured_against() {
+    let catalog = Catalog::parse(SAMPLE, 50.0).unwrap();
+
+    assert_eq!(
+        catalog.get("gpt-5.4-mini").unwrap().effective_window(),
+        Some(100_000),
+        "half of a 200,000 window"
+    );
+}
+
+/// A share stated by the catalog itself still wins over the configured default.
+/// The default is what applies where the catalog said nothing — it is not an
+/// override of what the backend reported about its own model.
+#[test]
+fn a_share_the_catalog_states_is_not_overridden_by_the_default() {
+    let catalog = Catalog::parse(SAMPLE, 50.0).unwrap();
+
+    assert_eq!(
+        catalog.get("gpt-5.6-terra").unwrap().effective_window(),
+        Some(258_400),
+        "the entry states 95% of its own, and that is authoritative"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// What the fetch actually sends. The configured client version is the one that
+// goes on the wire, because a version the backend does not like returns an
+// empty list rather than an error — and an empty list is indistinguishable from
+// an account with no models.
+// ---------------------------------------------------------------------------
+
+/// A catalog endpoint that records the query it was asked with.
+async fn recording_catalog() -> (String, std::sync::Arc<std::sync::Mutex<Vec<String>>>) {
+    use axum::extract::RawQuery;
+    use axum::extract::State;
+    use axum::routing::get;
+
+    type Seen = std::sync::Arc<std::sync::Mutex<Vec<String>>>;
+
+    let seen: Seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+
+    async fn handle(State(seen): State<Seen>, RawQuery(query): RawQuery) -> &'static str {
+        if let Ok(mut seen) = seen.lock() {
+            seen.push(query.unwrap_or_default());
+        }
+        r#"{"data":[{"id":"gpt-5.6-luna","context_window":272000}]}"#
+    }
+
+    let app = axum::Router::new()
+        .route("/models", get(handle))
+        .with_state(std::sync::Arc::clone(&seen));
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, app).await;
+    });
+
+    (format!("http://{addr}/models"), seen)
+}
+
+#[tokio::test]
+async fn the_configured_client_version_is_the_one_sent() {
+    let (endpoint, seen) = recording_catalog().await;
+
+    let catalog = codex_cc_proxy::catalog::fetch(
+        &reqwest::Client::new(),
+        &endpoint,
+        "token",
+        None,
+        "9.9.9",
+        SHIPPING,
+    )
+    .await;
+
+    assert!(catalog.authoritative);
+    let queries = seen.lock().unwrap().clone();
+    assert_eq!(queries, vec!["client_version=9.9.9".to_owned()]);
+}
+
+/// And the configured share reaches the models the fetch returns, not just the
+/// ones parsed directly. This is the path the daemon actually takes.
+#[tokio::test]
+async fn a_fetched_catalog_carries_the_configured_share() {
+    let (endpoint, _) = recording_catalog().await;
+
+    let catalog = codex_cc_proxy::catalog::fetch(
+        &reqwest::Client::new(),
+        &endpoint,
+        "token",
+        None,
+        "2.0.0",
+        25.0,
+    )
+    .await;
+
+    assert_eq!(
+        catalog.get("gpt-5.6-luna").unwrap().effective_window(),
+        Some(68_000),
+        "a quarter of a 272,000 window"
+    );
+}
+
+/// A model mapped to several tiers is named once.
+///
+/// Four tiers pointing at one model produced "gpt-5.6-luna, gpt-5.6-luna,
+/// gpt-5.6-luna, gpt-5.6-luna", which reads as four separate problems and
+/// buries the one that matters — that the catalog came back empty.
+#[test]
+fn a_model_mapped_to_several_tiers_is_named_once() {
+    let catalog = Catalog::parse(SAMPLE, SHIPPING).unwrap();
+    let mapped = vec![
+        "gpt-4-imaginary".to_owned(),
+        "gpt-4-imaginary".to_owned(),
+        "gpt-4-imaginary".to_owned(),
+    ];
+
+    let error = catalog
+        .validate(&mapped)
+        .expect_err("still a mapping error");
+
+    assert_eq!(
+        error.message.matches("gpt-4-imaginary").count(),
+        1,
+        "{}",
+        error.message
+    );
+}
+
+/// An empty catalog says so, rather than printing an empty list and leaving the
+/// reader to infer it. This is what a stale `client_version` looks like, and it
+/// is the one case where the list of alternatives is the least useful part.
+#[test]
+fn an_empty_catalog_explains_itself_rather_than_listing_nothing() {
+    let catalog = Catalog::parse(r#"{"data":[]}"#, SHIPPING).unwrap();
+
+    let error = catalog
+        .validate(&["gpt-5.6-luna".to_owned()])
+        .expect_err("an empty catalog cannot satisfy a mapping");
+
+    assert!(
+        error.message.contains("client_version"),
+        "the reader needs to be pointed at the cause: {}",
+        error.message
     );
 }

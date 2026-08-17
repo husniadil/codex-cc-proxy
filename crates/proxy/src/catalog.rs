@@ -4,18 +4,6 @@ use crate::error::ProxyError;
 use serde::Deserialize;
 use std::collections::BTreeMap;
 
-/// The share of a context window left usable after instructions, tool overhead,
-/// and output are accounted for. Applied where an entry states no percentage of
-/// its own.
-const DEFAULT_EFFECTIVE_PERCENT: f64 = 95.0;
-
-/// The client version this proxy reports to the catalog.
-///
-/// Not this crate's own version: the backend uses it to decide which models a
-/// client is new enough to be told about, so reporting 0.1.0 hides every model
-/// that requires anything newer — which is all of them.
-const CLIENT_VERSION: &str = "2.0.0";
-
 #[derive(Debug, Clone, PartialEq)]
 pub struct Model {
     pub id: String,
@@ -57,11 +45,15 @@ impl Model {
     }
 
     /// The window the guard actually enforces.
+    ///
+    /// `effective_percent` is resolved at parse time — either the share the
+    /// catalog stated for this model, or the configured default where it stated
+    /// none. There is no compiled-in figure left to fall back to, which is what
+    /// stops the configured one from being quietly ignored.
     pub fn effective_window(&self) -> Option<u64> {
         let window = self.context_window?;
-        let percent = self.effective_percent.unwrap_or(DEFAULT_EFFECTIVE_PERCENT);
         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-        Some((window as f64 * percent / 100.0) as u64)
+        Some((window as f64 * self.effective_percent? / 100.0) as u64)
     }
 }
 
@@ -151,7 +143,14 @@ impl Catalog {
         }
     }
 
-    pub fn parse(body: &str) -> Result<Self, ProxyError> {
+    /// Read a catalog, applying `default_percent` to every entry that stated no
+    /// share of its own.
+    ///
+    /// The share is resolved here rather than at the point of use so there is
+    /// only one place it can come from. A model whose entry states a percentage
+    /// keeps it: that is the backend describing its own model, and the
+    /// configured value is a default, not an override.
+    pub fn parse(body: &str, default_percent: f64) -> Result<Self, ProxyError> {
         let response: CatalogResponse = serde_json::from_str(body).map_err(|error| {
             ProxyError::upstream(
                 axum::http::StatusCode::BAD_GATEWAY,
@@ -174,7 +173,11 @@ impl Catalog {
                     // authoritative: the maximum describes a ceiling this
                     // account may not have.
                     context_window: entry.context_window.or(entry.max_context_window),
-                    effective_percent: entry.effective_context_window_percent,
+                    effective_percent: Some(
+                        entry
+                            .effective_context_window_percent
+                            .unwrap_or(default_percent),
+                    ),
                     visible: match (entry.is_visible, entry.visibility.as_deref()) {
                         (Some(visible), _) => visible,
                         (None, Some(visibility)) => visibility != "hide",
@@ -217,6 +220,28 @@ impl Catalog {
         self.models.keys().map(String::as_str).collect()
     }
 
+    /// Mapped models the catalog knows but withholds.
+    ///
+    /// `validate` asks a different question — whether the id exists at all —
+    /// and a hidden entry exists, so a tier mapped onto one starts cleanly and
+    /// then never appears among the models on offer. That is worth saying out
+    /// loud rather than refusing: the backend may well still serve it, and an
+    /// operator who mapped it deliberately should not be blocked.
+    ///
+    /// An unknown id is absent from this list. It is not withheld, it is
+    /// unknown, and `validate` is where that is reported.
+    pub fn unlisted(&self, mapped: &[String]) -> Vec<String> {
+        if !self.authoritative {
+            return Vec::new();
+        }
+
+        mapped
+            .iter()
+            .filter(|id| self.models.get(*id).is_some_and(|model| !model.visible))
+            .cloned()
+            .collect()
+    }
+
     /// Check a tier mapping against the catalog.
     ///
     /// An unreachable catalog skips validation rather than failing it. Fetch
@@ -229,14 +254,32 @@ impl Catalog {
             return Ok(());
         }
 
+        // Deduplicated: four tiers pointing at one missing model is one
+        // problem, and naming it four times buries whatever else is wrong.
         let unknown: Vec<&str> = mapped
             .iter()
             .map(String::as_str)
             .filter(|id| !self.models.contains_key(*id))
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
             .collect();
 
         if unknown.is_empty() {
             return Ok(());
+        }
+
+        // An authoritative catalog with nothing in it is not an account with no
+        // models — it is almost always a client version the backend considers
+        // too old to be told about any. It returns an empty list rather than an
+        // error, so nothing upstream of here says so.
+        if self.models.is_empty() {
+            return Err(ProxyError::invalid_request(format!(
+                "the backend returned an empty model catalog, so no mapping can be validated \
+                 (asked for: {}).\n\nThis is usually `upstream.client_version` in config.toml \
+                 being older than every model requires — the backend answers a version it \
+                 considers too old with an empty list rather than an error.",
+                unknown.join(", ")
+            )));
         }
 
         Err(ProxyError::invalid_request(format!(
@@ -257,6 +300,8 @@ pub async fn fetch(
     endpoint: &str,
     token: &str,
     account_id: Option<&str>,
+    client_version: &str,
+    default_percent: f64,
 ) -> Catalog {
     let mut request = client
         .get(endpoint)
@@ -265,7 +310,7 @@ pub async fn fetch(
         // client version, and a version below every minimum returns an empty
         // catalog rather than an error — which reads exactly like an account
         // with no models.
-        .query(&[("client_version", CLIENT_VERSION)])
+        .query(&[("client_version", client_version)])
         .bearer_auth(token)
         .header("originator", crate::upstream::http::ORIGINATOR)
         .header(
@@ -291,6 +336,6 @@ pub async fn fetch(
     };
 
     body.as_deref()
-        .and_then(|body| Catalog::parse(body).ok())
+        .and_then(|body| Catalog::parse(body, default_percent).ok())
         .unwrap_or_else(Catalog::fallback)
 }

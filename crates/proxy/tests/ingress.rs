@@ -1798,6 +1798,7 @@ fn input_of(body: &Value) -> Vec<codex_cc_proxy_core::responses::InputItem> {
 async fn a_request_larger_than_the_window_is_refused() {
     let catalog = codex_cc_proxy::catalog::Catalog::parse(
         r#"{"models":[{"slug":"gpt-5.6-terra","context_window":1000}]}"#,
+        95.0,
     )
     .unwrap();
 
@@ -1927,6 +1928,7 @@ async fn effort_is_capped_by_what_the_model_supports() {
                 { "effort": "high" }
             ]
         }]}"#,
+        95.0,
     )
     .unwrap();
 

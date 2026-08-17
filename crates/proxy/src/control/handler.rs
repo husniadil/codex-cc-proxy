@@ -81,8 +81,20 @@ fn status(state: &ControlState) -> Value {
         .load()
         .ok()
         .flatten()
-        .map(|credentials| credentials.account_id)
-        .map(|account| json!({ "connected": true, "account_id": account }))
+        .map(|credentials| {
+            let id_token = credentials.id_token.as_deref();
+            json!({
+                "connected": true,
+                "account_id": credentials.account_id,
+                // Read from the grant, reported, and never acted on. Null where
+                // the token said nothing: a defaulted plan would either explain
+                // away a refusal that has another cause or deny one that is
+                // real.
+                "plan": crate::auth::jwt::plan(id_token),
+                "email": crate::auth::jwt::email(id_token),
+                "expires_at": credentials.expires_at,
+            })
+        })
         .unwrap_or_else(|| json!({ "connected": false }));
 
     json!({
@@ -90,6 +102,11 @@ fn status(state: &ControlState) -> Value {
         "base_url": format!("http://127.0.0.1:{}", state.port),
         "auth": authenticated,
         "tiers": tier_map(state),
+        // Mapped models the catalog knows but withholds. These pass validation,
+        // so without this nothing would ever mention that a tier points at a
+        // model the backend does not offer. Present and empty rather than
+        // absent, so "nothing withheld" is distinguishable from "not reported".
+        "unlisted_tiers": state.catalog.unlisted(&mapped_models(state)),
         // Whether the catalog is the backend's or the fallback list. A caller
         // that cannot tell would report an unvalidated mapping as a validated
         // one.
@@ -119,6 +136,19 @@ fn models(state: &ControlState) -> Value {
 
 fn tiers(state: &ControlState) -> Value {
     json!({ "tiers": tier_map(state) })
+}
+
+/// Every model a tier points at, once each.
+fn mapped_models(state: &ControlState) -> Vec<String> {
+    let mut models: Vec<String> = state
+        .tiers
+        .iter()
+        .map(|tier| tier.model.clone())
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    models.sort();
+    models
 }
 
 fn tier_map(state: &ControlState) -> Value {

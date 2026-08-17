@@ -74,6 +74,27 @@ identity = true
 # append = """
 # Prefer a targeted search over reading a whole file.
 # """
+
+# Every key here has a default that is correct today and will not always be.
+# They are configurable so a pinned binary can be repointed rather than rebuilt.
+[upstream]
+# What this proxy reports when asking for the model list. Not this crate's
+# version. The backend filters the list by it — each model declares a minimum,
+# and a version below every minimum returns an EMPTY LIST rather than an error,
+# which reads exactly like an account with no models. Raise it when a new model
+# is missing from `codex-cc-proxy models` but exists for your account.
+# client_version = "2.0.0"
+
+# The share of a context window left usable once instructions, tool overhead,
+# and output are accounted for, where the catalog states no share of its own.
+# This is the figure the client is told, so it decides when compaction fires:
+# lower compacts sooner and wastes window, higher risks a turn refused for
+# length. A model whose catalog entry states its own share keeps that one.
+# effective_window_percent = 95.0
+
+# endpoint  = "https://chatgpt.com/backend-api/codex/responses"
+# websocket = "wss://chatgpt.com/backend-api/codex/responses"
+# catalog   = "https://chatgpt.com/backend-api/codex/models"
 "#;
 
 /// Unknown keys are refused rather than ignored.
@@ -102,6 +123,74 @@ pub struct Config {
     pub effort: Option<String>,
     #[serde(default)]
     pub instructions: InstructionsConfig,
+    #[serde(default)]
+    pub upstream: UpstreamConfig,
+}
+
+/// Where the backend is, and what this client says it is.
+///
+/// These have defaults that are correct today and will not always be. They are
+/// here so a pinned binary can be repointed rather than rebuilt — and because
+/// `client_version` in particular fails in a way nothing else can diagnose.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct UpstreamConfig {
+    /// The version this proxy reports when asking for the model catalog.
+    ///
+    /// Not this crate's version. The backend filters the catalog by it — each
+    /// entry declares a minimum, and a version below every minimum returns an
+    /// **empty list rather than an error**, which reads exactly like an account
+    /// with no models. It goes stale as new models raise the bar, and when it
+    /// does the symptom is a daemon that starts fine and offers nothing.
+    #[serde(default = "default_client_version")]
+    pub client_version: String,
+    /// The share of a context window left usable once instructions, tool
+    /// overhead, and output are accounted for. Applied where the catalog states
+    /// no percentage of its own.
+    ///
+    /// This is the figure the client is told, so it decides when compaction
+    /// fires. Lowering it compacts sooner and wastes window; raising it risks a
+    /// turn refused for length, which the client cannot retry its way out of.
+    #[serde(default = "default_effective_window_percent")]
+    pub effective_window_percent: f64,
+    #[serde(default = "default_endpoint")]
+    pub endpoint: String,
+    #[serde(default = "default_websocket")]
+    pub websocket: String,
+    #[serde(default = "default_catalog")]
+    pub catalog: String,
+}
+
+fn default_client_version() -> String {
+    "2.0.0".to_owned()
+}
+
+fn default_effective_window_percent() -> f64 {
+    95.0
+}
+
+fn default_endpoint() -> String {
+    "https://chatgpt.com/backend-api/codex/responses".to_owned()
+}
+
+fn default_websocket() -> String {
+    "wss://chatgpt.com/backend-api/codex/responses".to_owned()
+}
+
+fn default_catalog() -> String {
+    "https://chatgpt.com/backend-api/codex/models".to_owned()
+}
+
+impl Default for UpstreamConfig {
+    fn default() -> Self {
+        Self {
+            client_version: default_client_version(),
+            effective_window_percent: default_effective_window_percent(),
+            endpoint: default_endpoint(),
+            websocket: default_websocket(),
+            catalog: default_catalog(),
+        }
+    }
 }
 
 /// §2.1 — what the proxy adds around the client's system prompt.
@@ -191,6 +280,24 @@ impl Config {
             })
     }
 
+    /// Check the values that parse but cannot work.
+    ///
+    /// Refused rather than clamped. A clamp makes an operator's mistake look
+    /// like it was accepted, and both ends of this range fail silently: zero
+    /// advertises a window of nothing so every turn is refused for length, and
+    /// over a hundred advertises more window than exists so the guard that was
+    /// meant to catch that stops catching it.
+    pub fn validate(&self) -> Result<(), ProxyError> {
+        let percent = self.upstream.effective_window_percent;
+        if !(percent > 0.0 && percent <= 100.0) {
+            return Err(ProxyError::invalid_request(format!(
+                "`upstream.effective_window_percent = {percent}` is not a usable share of a \
+                 context window. It must be greater than 0 and at most 100."
+            )));
+        }
+        Ok(())
+    }
+
     /// Read the configuration, or report why it could not be read.
     ///
     /// A missing file is not an error — it is a first run, and the message says
@@ -240,6 +347,7 @@ impl Default for Config {
             transport: TransportConfig::default(),
             effort: None,
             instructions: InstructionsConfig::default(),
+            upstream: UpstreamConfig::default(),
         }
     }
 }

@@ -18,6 +18,19 @@ use serde_json::Value;
 use serde_json::json;
 use std::sync::Arc;
 
+/// An unsigned JWT carrying the given claims. Nothing here verifies one, and
+/// nothing should — see the note on the `jwt` module.
+fn id_token(claims: Value) -> String {
+    use base64::Engine;
+    let encode = |value: &[u8]| base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(value);
+    format!(
+        "{}.{}.{}",
+        encode(br#"{"alg":"none"}"#),
+        encode(claims.to_string().as_bytes()),
+        encode(b"signature")
+    )
+}
+
 fn tiers() -> Vec<ResolvedTier> {
     vec![
         ResolvedTier {
@@ -64,6 +77,7 @@ impl Harness {
                 Catalog::parse(
                     r#"{"data":[{"id":"gpt-5.6-terra","context_window":272000},
                                 {"id":"gpt-5.4-mini","context_window":200000}]}"#,
+                    95.0,
                 )
                 .unwrap(),
             ),
@@ -166,6 +180,79 @@ async fn status_reflects_stored_credentials() {
 
     assert_eq!(status["auth"]["connected"], json!(true));
     assert_eq!(status["auth"]["account_id"], json!("acct_9"));
+}
+
+/// The plan and the identity behind the grant are reported, because they are
+/// the local half of an explanation the backend never gives.
+///
+/// A refusal names the value it rejected — an effort, a model — and not the
+/// entitlement that was missing. Knowing the plan is what turns that into a
+/// checkable fact instead of a guess.
+#[tokio::test]
+async fn status_reports_the_plan_and_identity_behind_the_grant() {
+    let harness = Harness::start().await;
+    harness
+        .store
+        .save(&Credentials {
+            access_token: "a".to_owned(),
+            refresh_token: "r".to_owned(),
+            id_token: Some(id_token(json!({
+                "email": "someone@example.com",
+                "https://api.openai.com/auth": {
+                    "chatgpt_account_id": "acct_9",
+                    "chatgpt_plan_type": "plus",
+                },
+            }))),
+            account_id: Some("acct_9".to_owned()),
+            expires_at: Some(9_999_999_999),
+        })
+        .unwrap();
+
+    let status = harness.call("status").await.unwrap();
+
+    assert_eq!(status["auth"]["plan"], json!("plus"));
+    assert_eq!(status["auth"]["email"], json!("someone@example.com"));
+    assert_eq!(status["auth"]["expires_at"], json!(9_999_999_999u64));
+}
+
+/// A grant whose token says nothing claims nothing. An absent plan is absent,
+/// never defaulted — a guessed "free" would explain away a refusal that has
+/// some other cause, and a guessed "plus" would deny one that is real.
+#[tokio::test]
+async fn status_claims_no_plan_it_was_not_told() {
+    let harness = Harness::start().await;
+    harness
+        .store
+        .save(&Credentials {
+            access_token: "a".to_owned(),
+            refresh_token: "r".to_owned(),
+            id_token: None,
+            account_id: Some("acct_9".to_owned()),
+            expires_at: None,
+        })
+        .unwrap();
+
+    let status = harness.call("status").await.unwrap();
+
+    assert_eq!(status["auth"]["connected"], json!(true));
+    assert!(status["auth"]["plan"].is_null());
+    assert!(status["auth"]["email"].is_null());
+}
+
+/// A tier mapped onto a model the catalog withholds is named in `status`.
+///
+/// It passed validation — the catalog knows the id — so nothing else in the
+/// system would ever mention that the model is not among the ones on offer.
+#[tokio::test]
+async fn status_names_a_tier_mapped_onto_a_withheld_model() {
+    let harness = Harness::start().await;
+
+    let status = harness.call("status").await.unwrap();
+
+    // The harness maps nothing hidden, so there is nothing to report — and the
+    // field is present and empty rather than absent, so a caller can tell
+    // "nothing withheld" from "this daemon does not report it".
+    assert_eq!(status["unlisted_tiers"], json!([]));
 }
 
 /// `disconnect` clears credentials, and is safe to run twice.
@@ -461,6 +548,95 @@ async fn env_renders_as_a_settings_fragment() {
         json!("gpt-5.4-mini")
     );
     assert_eq!(parsed["env"]["CLAUDE_CODE_DISABLE_1M_CONTEXT"], json!("1"));
+}
+
+/// The rendered status names the plan and the account, because that is the
+/// surface a person reads when a turn was refused and they want to know why.
+#[tokio::test]
+async fn the_rendered_status_names_the_plan_and_the_account() {
+    let harness = Harness::start().await;
+    harness
+        .store
+        .save(&Credentials {
+            access_token: "a".to_owned(),
+            refresh_token: "r".to_owned(),
+            id_token: Some(id_token(json!({
+                "email": "someone@example.com",
+                "https://api.openai.com/auth": { "chatgpt_plan_type": "free" },
+            }))),
+            account_id: Some("acct_9".to_owned()),
+            expires_at: Some(9_999_999_999),
+        })
+        .unwrap();
+
+    let rendered = render::status(&harness.call("status").await.unwrap());
+
+    assert!(rendered.contains("free"), "{rendered}");
+    assert!(rendered.contains("someone@example.com"), "{rendered}");
+}
+
+/// An unknown plan says so rather than printing a blank or a guess.
+#[tokio::test]
+async fn the_rendered_status_does_not_invent_a_plan() {
+    let harness = Harness::start().await;
+    harness
+        .store
+        .save(&Credentials {
+            access_token: "a".to_owned(),
+            refresh_token: "r".to_owned(),
+            id_token: None,
+            account_id: Some("acct_9".to_owned()),
+            expires_at: None,
+        })
+        .unwrap();
+
+    let rendered = render::status(&harness.call("status").await.unwrap());
+
+    assert!(rendered.contains("acct_9"), "{rendered}");
+    assert!(
+        !rendered.contains("plan"),
+        "a plan it was never told should not be printed at all: {rendered}"
+    );
+}
+
+/// A tier pointing at a withheld model is said out loud, naming the model.
+///
+/// This is the case that starts cleanly and then behaves oddly: validation
+/// passed, so nothing refused it, but the model is not among the ones offered.
+#[test]
+fn the_rendered_status_names_a_withheld_model() {
+    let rendered = render::status(&json!({
+        "base_url": "http://127.0.0.1:8787",
+        "auth": { "connected": true, "account_id": "acct_9" },
+        "tiers": { "opus": "internal-preview" },
+        "catalog_authoritative": true,
+        "unlisted_tiers": ["internal-preview"],
+    }));
+
+    assert!(rendered.contains("internal-preview"), "{rendered}");
+    assert!(
+        rendered.to_lowercase().contains("not offered")
+            || rendered.to_lowercase().contains("withheld"),
+        "{rendered}"
+    );
+}
+
+/// Nothing withheld prints no warning at all.
+#[test]
+fn the_rendered_status_is_quiet_when_nothing_is_withheld() {
+    let rendered = render::status(&json!({
+        "base_url": "http://127.0.0.1:8787",
+        "auth": { "connected": false },
+        "tiers": { "opus": "gpt-5.6-terra" },
+        "catalog_authoritative": true,
+        "unlisted_tiers": [],
+    }));
+
+    assert!(!rendered.to_lowercase().contains("withheld"), "{rendered}");
+    assert!(
+        !rendered.to_lowercase().contains("not offered"),
+        "{rendered}"
+    );
 }
 
 /// A reader must be able to tell an unvalidated mapping from a validated one.
