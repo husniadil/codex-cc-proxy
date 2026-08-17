@@ -251,8 +251,11 @@ async fn run(args: RunArgs) -> Result<()> {
 }
 
 async fn run_with(args: RunArgs, capture: Capture) -> Result<()> {
-    let record_ingress = capture == Capture::Ingress;
-    let record_upstream = capture == Capture::Upstream;
+    let switches = Arc::new(codex_cc_proxy::recorder::Switches::new(match capture {
+        Capture::Nothing => None,
+        Capture::Ingress => Some(codex_cc_proxy::recorder::Mode::Ingress),
+        Capture::Upstream => Some(codex_cc_proxy::recorder::Mode::Upstream),
+    }));
     let config = Config::load()?;
     let port = args.port.unwrap_or(config.port);
 
@@ -275,9 +278,6 @@ async fn run_with(args: RunArgs, capture: Capture) -> Result<()> {
     let credentials: Arc<dyn codex_cc_proxy::auth::store::CredentialStore> = Arc::new(
         codex_cc_proxy::auth::store::FileStore::new(credential_path()),
     );
-    let recording = Arc::new(std::sync::atomic::AtomicBool::new(
-        record_ingress || record_upstream,
-    ));
 
     let tokens = Arc::new(codex_cc_proxy::auth::tokens::TokenSource::new(
         Arc::clone(&credentials),
@@ -320,7 +320,7 @@ async fn run_with(args: RunArgs, capture: Capture) -> Result<()> {
         tiers: Arc::new(tiers.clone()),
         catalog: Arc::clone(&catalog),
         credentials: Arc::clone(&credentials),
-        recording: Arc::clone(&recording),
+        recording: Arc::clone(&switches),
     };
     let socket_path = control::default_path();
     tokio::spawn(async move {
@@ -378,8 +378,7 @@ async fn run_with(args: RunArgs, capture: Capture) -> Result<()> {
         recorder: Some(codex_cc_proxy::recorder::Recorder::new(
             codex_cc_proxy::recorder::Recorder::default_directory(),
         )),
-        record_ingress,
-        record_upstream,
+        capture: Arc::clone(&switches),
         sessions: Arc::new(codex_cc_proxy::session::SessionStore::new()),
     };
 

@@ -17,7 +17,6 @@ use pretty_assertions::assert_eq;
 use serde_json::Value;
 use serde_json::json;
 use std::sync::Arc;
-use std::sync::atomic::AtomicBool;
 
 fn tiers() -> Vec<ResolvedTier> {
     vec![
@@ -43,6 +42,10 @@ fn tiers() -> Vec<ResolvedTier> {
 struct Harness {
     path: std::path::PathBuf,
     store: Arc<FileStore>,
+    /// The same switches the ingress path would read. Asserting on these is
+    /// the difference between testing that a flag round-trips and testing that
+    /// the method does anything.
+    switches: Arc<codex_cc_proxy::recorder::Switches>,
     _dir: tempfile::TempDir,
 }
 
@@ -51,6 +54,7 @@ impl Harness {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("control.sock");
         let store = Arc::new(FileStore::new(dir.path().join("credentials.json")));
+        let switches = Arc::new(codex_cc_proxy::recorder::Switches::default());
 
         let state = ControlState {
             port: 8787,
@@ -63,7 +67,7 @@ impl Harness {
                 .unwrap(),
             ),
             credentials: Arc::clone(&store) as Arc<dyn CredentialStore>,
-            recording: Arc::new(AtomicBool::new(false)),
+            recording: Arc::clone(&switches),
         };
 
         let socket = path.clone();
@@ -82,6 +86,7 @@ impl Harness {
         Self {
             path,
             store,
+            switches,
             _dir: dir,
         }
     }
@@ -264,7 +269,7 @@ async fn an_unknown_window_is_reported_as_null() {
         tiers: Arc::new(tiers()),
         catalog: Arc::new(Catalog::fallback()),
         credentials: Arc::new(FileStore::new(dir.path().join("c.json"))),
-        recording: Arc::new(AtomicBool::new(false)),
+        recording: Arc::new(codex_cc_proxy::recorder::Switches::default()),
     };
 
     let response = control::answer(
@@ -289,6 +294,12 @@ async fn unseen_quota_reports_unknown_rather_than_zero() {
     assert!(usage.get("used_percent").is_none());
 }
 
+/// Starting a capture over the socket changes what the daemon captures.
+///
+/// Asserted on the switches the ingress path actually reads, not only on what
+/// `status` reports back. A method that reports success and changes nothing is
+/// the failure this project refuses everywhere else, and only the first of
+/// those two assertions can catch it.
 #[tokio::test]
 async fn recording_can_be_started_and_stopped() {
     let harness = Harness::start().await;
@@ -305,16 +316,63 @@ async fn recording_can_be_started_and_stopped() {
     )
     .await
     .unwrap();
+    assert!(harness.switches.ingress(), "ingress capture should be on");
+    assert!(
+        !harness.switches.upstream(),
+        "and the mode that spends quota should not have been started for it"
+    );
     assert_eq!(
         harness.call("status").await.unwrap()["recording"],
         json!(true)
     );
 
     harness.call("record.stop").await.unwrap();
+    assert!(!harness.switches.ingress());
     assert_eq!(
         harness.call("status").await.unwrap()["recording"],
         json!(false)
     );
+}
+
+/// The costly mode has to be named. It bills every turn that follows, so it is
+/// never what an unqualified `record.start` means.
+#[tokio::test]
+async fn upstream_capture_must_be_asked_for_by_name() {
+    let harness = Harness::start().await;
+
+    control::call(&harness.path, "record.start", None)
+        .await
+        .unwrap();
+    assert!(harness.switches.ingress());
+    assert!(!harness.switches.upstream());
+
+    control::call(
+        &harness.path,
+        "record.start",
+        Some(json!({ "mode": "upstream" })),
+    )
+    .await
+    .unwrap();
+    assert!(harness.switches.upstream());
+}
+
+/// A mode nobody implements is refused rather than silently treated as the
+/// default, which would start the wrong capture and report success.
+#[tokio::test]
+async fn an_unknown_capture_mode_is_refused() {
+    let harness = Harness::start().await;
+
+    let error = control::call(
+        &harness.path,
+        "record.start",
+        Some(json!({ "mode": "sideways" })),
+    )
+    .await
+    .expect_err("an unknown mode should be refused");
+
+    assert!(error.message.contains("sideways"), "{}", error.message);
+    assert!(!harness.switches.ingress());
+    assert!(!harness.switches.upstream());
 }
 
 /// A malformed line does not take the connection down with it.
@@ -326,7 +384,7 @@ async fn a_malformed_request_is_reported_without_closing_the_socket() {
         tiers: Arc::new(tiers()),
         catalog: Arc::new(Catalog::fallback()),
         credentials: Arc::new(FileStore::new(dir.path().join("c.json"))),
-        recording: Arc::new(AtomicBool::new(false)),
+        recording: Arc::new(codex_cc_proxy::recorder::Switches::default()),
     };
 
     let response = control::answer(&state, "{ not json");
@@ -400,7 +458,7 @@ async fn status_says_when_the_catalog_was_unavailable() {
         tiers: Arc::new(tiers()),
         catalog: Arc::new(Catalog::fallback()),
         credentials: Arc::new(FileStore::new(dir.path().join("c.json"))),
-        recording: Arc::new(AtomicBool::new(false)),
+        recording: Arc::new(codex_cc_proxy::recorder::Switches::default()),
     };
 
     let response = control::answer(
@@ -422,7 +480,7 @@ async fn models_prints_unknown_rather_than_a_number() {
         tiers: Arc::new(tiers()),
         catalog: Arc::new(Catalog::fallback()),
         credentials: Arc::new(FileStore::new(dir.path().join("c.json"))),
-        recording: Arc::new(AtomicBool::new(false)),
+        recording: Arc::new(codex_cc_proxy::recorder::Switches::default()),
     };
 
     let response = control::answer(
@@ -484,7 +542,7 @@ async fn env_states_no_window_when_the_catalog_is_unavailable() {
         tiers: Arc::new(tiers()),
         catalog: Arc::new(Catalog::fallback()),
         credentials: Arc::new(FileStore::new(dir.path().join("c.json"))),
-        recording: Arc::new(AtomicBool::new(false)),
+        recording: Arc::new(codex_cc_proxy::recorder::Switches::default()),
     };
 
     let response = control::answer(

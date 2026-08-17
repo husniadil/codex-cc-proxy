@@ -205,8 +205,7 @@ async fn run_one(probe: &probe::Probe, fixture: &Fixture, backend: &Backend) -> 
         conduits: None,
         models,
         recorder: None,
-        record_ingress: false,
-        record_upstream: false,
+        capture: Arc::new(crate::recorder::Switches::default()),
         sessions: Arc::new(crate::session::SessionStore::new()),
     };
 

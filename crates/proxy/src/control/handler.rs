@@ -19,7 +19,9 @@ pub struct ControlState {
     pub tiers: Arc<Vec<ResolvedTier>>,
     pub catalog: Arc<Catalog>,
     pub credentials: Arc<dyn CredentialStore>,
-    pub recording: Arc<std::sync::atomic::AtomicBool>,
+    /// The same switches the ingress path reads, so starting a capture here
+    /// changes what the next turn does.
+    pub recording: Arc<crate::recorder::Switches>,
 }
 
 /// Dispatch one method.
@@ -39,19 +41,28 @@ pub fn dispatch(
             Ok(json!({ "disconnected": true }))
         }
         "record.start" => {
-            let mode = params
+            // Defaulting to ingress is the safe default and the documented
+            // one: it is the mode that needs no credentials and spends
+            // nothing. Starting an upstream capture has to be asked for by
+            // name, because it bills every turn that follows.
+            let requested = params
                 .and_then(|params| params.get("mode"))
                 .and_then(Value::as_str)
                 .unwrap_or("ingress");
-            state
-                .recording
-                .store(true, std::sync::atomic::Ordering::SeqCst);
-            Ok(json!({ "recording": true, "mode": mode }))
+            let mode = match requested {
+                "ingress" => crate::recorder::Mode::Ingress,
+                "upstream" => crate::recorder::Mode::Upstream,
+                other => {
+                    return Err(ProxyError::invalid_request(format!(
+                        "unknown capture mode `{other}`; expected `ingress` or `upstream`"
+                    )));
+                }
+            };
+            state.recording.start(mode);
+            Ok(json!({ "recording": true, "mode": requested }))
         }
         "record.stop" => {
-            state
-                .recording
-                .store(false, std::sync::atomic::Ordering::SeqCst);
+            state.recording.stop();
             Ok(json!({ "recording": false }))
         }
         "login" | "doctor" | "tiers.set" => Err(ProxyError::invalid_request(format!(
@@ -80,7 +91,7 @@ fn status(state: &ControlState) -> Value {
         // that cannot tell would report an unvalidated mapping as a validated
         // one.
         "catalog_authoritative": state.catalog.authoritative,
-        "recording": state.recording.load(std::sync::atomic::Ordering::SeqCst),
+        "recording": state.recording.any(),
     })
 }
 

@@ -54,14 +54,9 @@ pub struct AppState {
     /// stream regardless of whether capture was asked for, because an empty
     /// stream is always a defect and is otherwise invisible.
     pub recorder: Option<crate::recorder::Recorder>,
-    /// Whether to capture every request, not only the defective ones.
-    pub record_ingress: bool,
-    /// Whether to capture every upstream exchange, not only the empty ones.
-    ///
-    /// This is what makes a fixture: the translated request paired with the
-    /// stream that answered it. It costs quota, because the turn it records is
-    /// a real one.
-    pub record_upstream: bool,
+    /// Which captures are on, shared with the control socket so `record.start`
+    /// changes what a running daemon does rather than reporting that it did.
+    pub capture: Arc<crate::recorder::Switches>,
     /// Per-conversation state: calibration, discovered tools, and the baseline
     /// the incremental path will use.
     pub sessions: Arc<crate::session::SessionStore>,
@@ -224,7 +219,7 @@ async fn messages(
 
     // Ingress capture happens here, before anything is sent. It needs no
     // credentials because nothing upstream is involved yet.
-    if state.record_ingress
+    if state.capture.ingress()
         && let Some(recorder) = &state.recorder
         && let Ok(raw) = serde_json::to_value(&request)
     {
@@ -333,7 +328,7 @@ async fn messages(
         },
         Arc::clone(&session),
         translated.input,
-        state.record_upstream,
+        state.capture.upstream(),
     )
 }
 

@@ -34,6 +34,57 @@ pub enum Mode {
     Upstream,
 }
 
+/// Which captures are switched on, shared between the ingress path and the
+/// control socket.
+///
+/// Shared rather than copied, because `record.start` is meant to change what a
+/// *running* daemon captures. A copy taken at startup makes the method report
+/// success and do nothing — a plausible answer to a request that had no effect,
+/// which is the one failure this project refuses everywhere else.
+#[derive(Debug, Default)]
+pub struct Switches {
+    ingress: std::sync::atomic::AtomicBool,
+    upstream: std::sync::atomic::AtomicBool,
+}
+
+impl Switches {
+    pub fn new(mode: Option<Mode>) -> Self {
+        let switches = Self::default();
+        if let Some(mode) = mode {
+            switches.start(mode);
+        }
+        switches
+    }
+
+    pub fn ingress(&self) -> bool {
+        self.ingress.load(Ordering::SeqCst)
+    }
+
+    pub fn upstream(&self) -> bool {
+        self.upstream.load(Ordering::SeqCst)
+    }
+
+    /// Whether anything beyond the always-on empty-stream capture is running.
+    pub fn any(&self) -> bool {
+        self.ingress() || self.upstream()
+    }
+
+    /// Turn one mode on. The other is untouched: they cost differently, and
+    /// starting an upstream capture by asking for an ingress one would spend
+    /// quota nobody asked to spend.
+    pub fn start(&self, mode: Mode) {
+        match mode {
+            Mode::Ingress => self.ingress.store(true, Ordering::SeqCst),
+            Mode::Upstream => self.upstream.store(true, Ordering::SeqCst),
+        }
+    }
+
+    pub fn stop(&self) {
+        self.ingress.store(false, Ordering::SeqCst);
+        self.upstream.store(false, Ordering::SeqCst);
+    }
+}
+
 /// A captured exchange, in the corpus format.
 #[derive(Debug, Serialize)]
 struct Capture<'a> {

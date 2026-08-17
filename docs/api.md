@@ -174,7 +174,7 @@ A Unix domain socket, or a named pipe on Windows, carrying JSON-RPC:
 | `tiers.get` | tier mapping | yes |
 | `usage` | quota snapshot, or that none has been seen | yes |
 | `env` | the §2.1 block | yes |
-| `record.start` / `record.stop` | fixture capture | yes |
+| `record.start` / `record.stop` | fixture capture | yes — `{"mode": "ingress"}` by default, `"upstream"` must be named because it bills every turn that follows |
 | `login` | authorization URL, then completion | no — `login` runs in the CLI, which owns the browser and the callback port |
 | `tiers.set` | tier mapping | no — edit the configuration file |
 | `doctor` | probe results | no — `doctor` runs in the CLI, which is where `--live` can be given credentials without a daemon already holding them |

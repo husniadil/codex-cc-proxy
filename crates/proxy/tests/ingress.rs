@@ -22,6 +22,9 @@ struct Harness {
     base: String,
     upstream: ReplayServer,
     client: reqwest::Client,
+    /// The same switches the control socket holds, so a test can turn capture
+    /// on the way `record.start` does.
+    switches: Arc<codex_cc_proxy::recorder::Switches>,
 }
 
 impl Harness {
@@ -33,7 +36,12 @@ impl Harness {
         behavior: Behavior,
         recorder: Option<codex_cc_proxy::recorder::Recorder>,
     ) -> Self {
-        Self::build(behavior, recorder, false).await
+        // A recorder passed here means the test wants ingress capture on from
+        // the start, which is what `record ingress` does.
+        let mode = recorder
+            .as_ref()
+            .map(|_| codex_cc_proxy::recorder::Mode::Ingress);
+        Self::build(behavior, recorder, mode).await
     }
 
     /// Capture upstream as well, which is what `record upstream` turns on.
@@ -41,15 +49,21 @@ impl Harness {
         behavior: Behavior,
         recorder: codex_cc_proxy::recorder::Recorder,
     ) -> Self {
-        Self::build(behavior, Some(recorder), true).await
+        Self::build(
+            behavior,
+            Some(recorder),
+            Some(codex_cc_proxy::recorder::Mode::Upstream),
+        )
+        .await
     }
 
     async fn build(
         behavior: Behavior,
         recorder: Option<codex_cc_proxy::recorder::Recorder>,
-        record_upstream: bool,
+        mode: Option<codex_cc_proxy::recorder::Mode>,
     ) -> Self {
         let upstream = ReplayServer::start(behavior).await;
+        let switches = Arc::new(codex_cc_proxy::recorder::Switches::new(mode));
 
         let state = AppState {
             effort_ceiling: None,
@@ -61,8 +75,7 @@ impl Harness {
                 upstream: "gpt-5-codex".to_owned(),
             }]),
             recorder: recorder.clone(),
-            record_ingress: recorder.is_some() && !record_upstream,
-            record_upstream,
+            capture: Arc::clone(&switches),
             sessions: Arc::new(codex_cc_proxy::session::SessionStore::new()),
         };
 
@@ -76,6 +89,7 @@ impl Harness {
             base: format!("http://{addr}"),
             upstream,
             client: reqwest::Client::new(),
+            switches,
         }
     }
 
@@ -737,6 +751,77 @@ async fn upstream_capture_records_a_turn_that_produced_content() {
     assert_eq!(capture["upstream"].as_array().unwrap().len(), 3);
 }
 
+/// Capture can be turned on while the daemon is running.
+///
+/// This is what `record.start` over the control socket means. Reading the flag
+/// once at startup makes that method report success and change nothing — a
+/// plausible answer to a request that had no effect, which is the failure this
+/// project refuses everywhere else.
+#[tokio::test]
+async fn capture_can_be_switched_on_while_the_daemon_runs() {
+    let dir = tempfile::tempdir().unwrap();
+    let recorder = codex_cc_proxy::recorder::Recorder::new(dir.path());
+
+    let harness = Harness::build(
+        Behavior::Events(vec![
+            json!({ "type": "response.created", "response": { "id": "resp_1" } }),
+            json!({ "type": "response.output_text.delta", "delta": "hi" }),
+            completed(),
+        ]),
+        Some(recorder),
+        None,
+    )
+    .await;
+
+    let ask = || async {
+        let response = harness
+            .post(
+                "/v1/messages",
+                json!({
+                    "model": "claude-sonnet-4",
+                    "max_tokens": 512,
+                    "messages": [{ "role": "user", "content": "hi" }],
+                }),
+            )
+            .await;
+        let _ = response.text().await.unwrap();
+    };
+
+    ask().await;
+    assert_eq!(captures(dir.path(), "ingress-"), 0, "nothing asked for yet");
+
+    harness
+        .switches
+        .start(codex_cc_proxy::recorder::Mode::Ingress);
+    ask().await;
+    assert_eq!(
+        captures(dir.path(), "ingress-"),
+        1,
+        "capture was switched on"
+    );
+
+    harness.switches.stop();
+    ask().await;
+    assert_eq!(
+        captures(dir.path(), "ingress-"),
+        1,
+        "and switched off again"
+    );
+}
+
+fn captures(dir: &std::path::Path, prefix: &str) -> usize {
+    std::fs::read_dir(dir)
+        .unwrap()
+        .filter_map(Result::ok)
+        .filter(|entry| {
+            entry
+                .file_name()
+                .to_str()
+                .is_some_and(|name| name.starts_with(prefix))
+        })
+        .count()
+}
+
 /// `record ingress` captures what the client sends, before translation. No
 /// credentials are involved, because nothing upstream is yet.
 #[tokio::test]
@@ -1094,8 +1179,7 @@ async fn ingress_sends_through_a_conduit_and_uploads_incrementally() {
             upstream: "gpt-5-codex".to_owned(),
         }]),
         recorder: None,
-        record_ingress: false,
-        record_upstream: false,
+        capture: Arc::new(codex_cc_proxy::recorder::Switches::default()),
         sessions: Arc::new(codex_cc_proxy::session::SessionStore::new()),
     };
 
@@ -1208,8 +1292,7 @@ async fn a_second_turn_uploads_the_new_items_and_not_nothing() {
             upstream: "gpt-5-codex".to_owned(),
         }]),
         recorder: None,
-        record_ingress: false,
-        record_upstream: false,
+        capture: Arc::new(codex_cc_proxy::recorder::Switches::default()),
         sessions: Arc::new(codex_cc_proxy::session::SessionStore::new()),
     };
 
@@ -1386,8 +1469,7 @@ async fn a_reasoning_turn_does_not_end_the_session() {
             upstream: "gpt-5-codex".to_owned(),
         }]),
         recorder: None,
-        record_ingress: false,
-        record_upstream: false,
+        capture: Arc::new(codex_cc_proxy::recorder::Switches::default()),
         sessions: Arc::new(codex_cc_proxy::session::SessionStore::new()),
     };
     let sessions = Arc::clone(&state.sessions);
@@ -1498,8 +1580,7 @@ async fn a_failed_turn_does_not_advance_the_baseline() {
             upstream: "gpt-5-codex".to_owned(),
         }]),
         recorder: None,
-        record_ingress: false,
-        record_upstream: false,
+        capture: Arc::new(codex_cc_proxy::recorder::Switches::default()),
         sessions: Arc::new(codex_cc_proxy::session::SessionStore::new()),
     };
     let sessions = Arc::clone(&state.sessions);
@@ -1598,8 +1679,7 @@ async fn a_request_larger_than_the_window_is_refused() {
             upstream: "gpt-5-codex".to_owned(),
         }]),
         recorder: None,
-        record_ingress: false,
-        record_upstream: false,
+        capture: Arc::new(codex_cc_proxy::recorder::Switches::default()),
         sessions: Arc::new(codex_cc_proxy::session::SessionStore::new()),
     };
 
@@ -1662,8 +1742,7 @@ async fn an_unknown_window_does_not_refuse_anything() {
             upstream: "gpt-5-codex".to_owned(),
         }]),
         recorder: None,
-        record_ingress: false,
-        record_upstream: false,
+        capture: Arc::new(codex_cc_proxy::recorder::Switches::default()),
         sessions: Arc::new(codex_cc_proxy::session::SessionStore::new()),
     };
 
@@ -1725,8 +1804,7 @@ async fn effort_is_capped_by_what_the_model_supports() {
             upstream: "modest-model".to_owned(),
         }]),
         recorder: None,
-        record_ingress: false,
-        record_upstream: false,
+        capture: Arc::new(codex_cc_proxy::recorder::Switches::default()),
         sessions: Arc::new(codex_cc_proxy::session::SessionStore::new()),
     };
 
@@ -1780,8 +1858,7 @@ async fn an_unlisted_model_does_not_cap_effort() {
             upstream: "gpt-5-codex".to_owned(),
         }]),
         recorder: None,
-        record_ingress: false,
-        record_upstream: false,
+        capture: Arc::new(codex_cc_proxy::recorder::Switches::default()),
         sessions: Arc::new(codex_cc_proxy::session::SessionStore::new()),
     };
 
