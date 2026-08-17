@@ -4,7 +4,9 @@ All notable changes to this project are recorded here. This project follows
 [semantic versioning](https://semver.org). The semver-bound surfaces are listed
 in [`docs/api.md`](docs/api.md) §6.
 
-## [Unreleased]
+## [0.1.1]
+
+A defect in v0.1.0 that only an installed binary could show.
 
 ### Fixed
 
