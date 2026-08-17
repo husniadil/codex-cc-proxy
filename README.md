@@ -67,7 +67,7 @@ cargo run -- doctor
 
 To use it for real, write a configuration first. It lives at
 `~/.config/codex-cc-proxy/config.toml` (or `$XDG_CONFIG_HOME`), and `run` prints
-this example if it is missing:
+a commented version of this — `[transport]` included — if it is missing:
 
 ```toml
 port = 8787
@@ -114,10 +114,28 @@ eval "$(cargo run -q -- env)"            # point Claude Code at it
 claude
 ```
 
-`status`, `models`, and `env` talk to the running daemon over a control socket;
-the CLI holds no state of its own. `doctor` is the exception and runs in the
-CLI, because `--live` needs credentials whether or not a daemon is up. See
+`login` prints a URL rather than opening one. Whichever ChatGPT account that
+browser is signed into is the one being authorized, and that is not a choice to
+make on someone's behalf — open it in a private window to pick a different one.
+
+| | |
+|---|---|
+| `status`, `models`, `env` | connection, catalog, and the environment to export |
+| `usage` | what quota is left, as of the last turn |
+| `statusline -- <script>` | wraps your own status-line script and merges that quota into what it reads |
+| `record ingress` / `record upstream` | capture exchanges as fixtures |
+| `doctor` | capability probes; `--live` answers them from the real backend |
+
+Everything but `doctor` talks to the running daemon over a control socket, and
+the CLI holds no state of its own. `doctor` is the exception because `--live`
+needs credentials whether or not a daemon is up. See
 [`docs/api.md`](docs/api.md).
+
+**One warning is expected and harmless.** The client does not recognize these
+model ids, so it reports that its own 200,000-token limit is not enforced and
+suggests setting the compaction window to 200,000. Do not: `env` already sets it
+to the model's real effective window, which is larger, and using it is the
+point.
 
 ---
 
@@ -142,11 +160,19 @@ clock, no filesystem. That boundary is what makes every translation rule
 testable as a pure function over recorded data.
 
 WebSocket is primary and HTTP is its fallback, but neither is a degraded version
-of the other — the backend closes WebSocket connections under policy conditions
-often enough that HTTP is a normal operating mode. A session that falls back
-stays fallen back rather than retrying the socket every turn.
+of the other. A session that falls back stays fallen back rather than retrying
+the socket every turn, and the HTTP path is held to the same tests rather than
+treated as an error route.
 
-Set `websocket = false` under `[transport]` to use HTTP only.
+That posture was chosen against the possibility of the backend refusing sockets
+under policy conditions. On the account this has been run against, **no such
+refusal has been seen** — it connects, and the catalog marks these models as
+preferring sockets. The fallback is tested as a normal path anyway: one
+account's experience is not evidence about every account's.
+
+Set `websocket = false` under `[transport]` to use HTTP only. Compression is
+HTTP-only in either case — the socket's extension is `permessage-deflate`, which
+no published Rust WebSocket library implements.
 
 ---
 
