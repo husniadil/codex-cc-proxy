@@ -25,6 +25,8 @@ pub enum Command {
     Env(EnvArgs),
     /// Probe backend capabilities.
     Doctor(DoctorArgs),
+    /// What quota is left, as of the last turn.
+    Usage(UsageArgs),
     /// Capture exchanges as fixtures.
     Record(RecordArgs),
 }
@@ -57,6 +59,13 @@ pub struct DoctorArgs {
     /// credentials. Without it nothing is contacted and nothing is billed.
     #[arg(long)]
     pub live: bool,
+}
+
+#[derive(Debug, clap::Args)]
+pub struct UsageArgs {
+    /// Emit the raw snapshot, for a status line or a script.
+    #[arg(long)]
+    pub json: bool,
 }
 
 #[derive(Debug, clap::Args)]

@@ -57,6 +57,9 @@ pub struct AppState {
     /// Which captures are on, shared with the control socket so `record.start`
     /// changes what a running daemon does rather than reporting that it did.
     pub capture: Arc<crate::recorder::Switches>,
+    /// The latest quota snapshot the backend volunteered, for whoever asks
+    /// between turns.
+    pub usage: Arc<crate::usage::UsageStore>,
     /// §2.1 — what the proxy puts around the client's system prompt.
     pub instructions: Arc<crate::config::InstructionsConfig>,
     /// Per-conversation state: calibration, discovered tools, and the baseline
@@ -298,23 +301,37 @@ async fn messages(
 
     session.remember_request(&translated);
 
-    // An upstream refusal arriving as the very first event is not a mid-stream
-    // failure. Nothing has been written to the client yet, so it can still be a
-    // status — and it must be: a 200 whose body is one error frame and no
-    // `message_start` is not a message the client can read, and it reports it
-    // as an empty or malformed response rather than as the refusal it is.
-    let (first, events) = peek(events).await;
-    if let Some(Ok(payload)) = &first
-        && let Some(error) = upstream_refusal(payload)
-    {
-        return error.into_response();
+    // An upstream refusal arriving before the response begins is not a
+    // mid-stream failure. Nothing has been written to the client yet, so it can
+    // still be a status — and it must be: a 200 whose body is one error frame
+    // and no `message_start` is not a message the client can read, and it
+    // reports it as an empty or malformed response rather than as the refusal
+    // it is.
+    //
+    // Not just the first event. The backend opens a stream with a quota
+    // snapshot and its own metadata before saying anything about the response,
+    // so the refusal is the first event that *speaks to the outcome* rather
+    // than the first event on the wire.
+    let mut rate_limit_headers: Vec<(&'static str, String)> = Vec::new();
+    let (preamble, events) = peek_preamble(events).await;
+    for payload in preamble.iter().flatten() {
+        if let Some(error) = upstream_refusal(payload) {
+            return error.into_response();
+        }
     }
-    let events = match first {
-        Some(first) => futures::stream::once(async move { first })
-            .chain(events)
-            .boxed(),
-        None => events,
-    };
+
+    // The same preamble carries what quota is left, which is why it is read
+    // here rather than during the stream: response headers are gone by then.
+    if let Some(snapshot) = preamble
+        .iter()
+        .flatten()
+        .find_map(|payload| crate::usage::Snapshot::parse(payload))
+    {
+        state.usage.record(&snapshot);
+        rate_limit_headers = snapshot.headers();
+    }
+
+    let events = futures::stream::iter(preamble).chain(events).boxed();
 
     let translator = ResponseTranslator::new(ResponseOptions {
         message_id: format!("msg_{}", uuid::Uuid::new_v4().simple()),
@@ -331,6 +348,7 @@ async fn messages(
 
     sse_response(
         events,
+        rate_limit_headers,
         translator,
         empty_stream_watch,
         Calibration {
@@ -350,6 +368,7 @@ async fn messages(
 /// chain rather than leaving the backend generating into nothing (§5.3).
 fn sse_response(
     events: crate::upstream::EventStream,
+    rate_limit_headers: Vec<(&'static str, String)>,
     translator: ResponseTranslator,
     empty_stream_watch: Option<(crate::recorder::Recorder, Value)>,
     calibration: Calibration,
@@ -424,6 +443,19 @@ fn sse_response(
     response
         .headers_mut()
         .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-cache"));
+
+    // §3 — what quota is left, in the headers this client reads it from. Set
+    // here because headers are gone once the body starts, which is why the
+    // snapshot had to be taken from the stream's preamble rather than during
+    // it.
+    for (name, value) in rate_limit_headers {
+        if let (Ok(name), Ok(value)) = (
+            header::HeaderName::from_bytes(name.as_bytes()),
+            HeaderValue::from_str(&value),
+        ) {
+            response.headers_mut().insert(name, value);
+        }
+    }
     *response.status_mut() = StatusCode::OK;
     response
 }
@@ -547,15 +579,51 @@ impl StreamState {
     }
 }
 
-/// Read the first event without consuming the rest.
-async fn peek(
+/// Read the opening events without consuming the rest.
+///
+/// Bounded, because this runs before a single byte reaches the client: reading
+/// until the response starts would let a slow backend hold the status open
+/// indefinitely. Four is past the preamble the backend actually sends and stops
+/// well short of any response body.
+const PREAMBLE: usize = 4;
+
+async fn peek_preamble(
     mut events: crate::upstream::EventStream,
 ) -> (
-    Option<Result<String, ProxyError>>,
+    Vec<Result<String, ProxyError>>,
     crate::upstream::EventStream,
 ) {
-    let first = events.next().await;
-    (first, events)
+    let mut seen = Vec::new();
+    while seen.len() < PREAMBLE {
+        let Some(event) = events.next().await else {
+            break;
+        };
+        let ends_preamble = event
+            .as_ref()
+            .ok()
+            .is_some_and(|payload| !is_preamble_event(payload));
+        seen.push(event);
+        if ends_preamble {
+            break;
+        }
+    }
+    (seen, events)
+}
+
+/// Whether an event precedes the response rather than being part of it.
+///
+/// Everything the backend namespaces to itself: the quota snapshot and the
+/// response metadata. A `response.*` event is the response starting.
+fn is_preamble_event(payload: &str) -> bool {
+    serde_json::from_str::<Value>(payload)
+        .ok()
+        .and_then(|event| {
+            event
+                .get("type")
+                .and_then(Value::as_str)
+                .map(|kind| kind.starts_with("codex."))
+        })
+        .unwrap_or(false)
 }
 
 /// An upstream event that is a refusal rather than content.

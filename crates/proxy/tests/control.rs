@@ -55,6 +55,7 @@ impl Harness {
         let path = dir.path().join("control.sock");
         let store = Arc::new(FileStore::new(dir.path().join("credentials.json")));
         let switches = Arc::new(codex_cc_proxy::recorder::Switches::default());
+        let usage = Arc::new(codex_cc_proxy::usage::UsageStore::default());
 
         let state = ControlState {
             port: 8787,
@@ -68,6 +69,7 @@ impl Harness {
             ),
             credentials: Arc::clone(&store) as Arc<dyn CredentialStore>,
             capture: Arc::clone(&switches),
+            usage: Arc::clone(&usage),
         };
 
         let socket = path.clone();
@@ -270,6 +272,7 @@ async fn an_unknown_window_is_reported_as_null() {
         catalog: Arc::new(Catalog::fallback()),
         credentials: Arc::new(FileStore::new(dir.path().join("c.json"))),
         capture: Arc::new(codex_cc_proxy::recorder::Switches::default()),
+        usage: Arc::new(codex_cc_proxy::usage::UsageStore::default()),
     };
 
     let response = control::answer(
@@ -385,6 +388,7 @@ async fn a_malformed_request_is_reported_without_closing_the_socket() {
         catalog: Arc::new(Catalog::fallback()),
         credentials: Arc::new(FileStore::new(dir.path().join("c.json"))),
         capture: Arc::new(codex_cc_proxy::recorder::Switches::default()),
+        usage: Arc::new(codex_cc_proxy::usage::UsageStore::default()),
     };
 
     let response = control::answer(&state, "{ not json");
@@ -459,6 +463,7 @@ async fn status_says_when_the_catalog_was_unavailable() {
         catalog: Arc::new(Catalog::fallback()),
         credentials: Arc::new(FileStore::new(dir.path().join("c.json"))),
         capture: Arc::new(codex_cc_proxy::recorder::Switches::default()),
+        usage: Arc::new(codex_cc_proxy::usage::UsageStore::default()),
     };
 
     let response = control::answer(
@@ -481,6 +486,7 @@ async fn models_prints_unknown_rather_than_a_number() {
         catalog: Arc::new(Catalog::fallback()),
         credentials: Arc::new(FileStore::new(dir.path().join("c.json"))),
         capture: Arc::new(codex_cc_proxy::recorder::Switches::default()),
+        usage: Arc::new(codex_cc_proxy::usage::UsageStore::default()),
     };
 
     let response = control::answer(
@@ -543,6 +549,7 @@ async fn env_states_no_window_when_the_catalog_is_unavailable() {
         catalog: Arc::new(Catalog::fallback()),
         credentials: Arc::new(FileStore::new(dir.path().join("c.json"))),
         capture: Arc::new(codex_cc_proxy::recorder::Switches::default()),
+        usage: Arc::new(codex_cc_proxy::usage::UsageStore::default()),
     };
 
     let response = control::answer(

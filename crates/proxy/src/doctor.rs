@@ -231,6 +231,7 @@ async fn run_one(probe: &probe::Probe, fixture: &Fixture, backend: &Backend) -> 
         // A probe measures the translation, not the operator's prompt policy.
         // Injecting here would make a probe's request differ from the fixture
         // it is derived from, for no gain in what the probe establishes.
+        usage: Arc::new(crate::usage::UsageStore::default()),
         instructions: Arc::new(crate::config::InstructionsConfig {
             identity: false,
             append: None,

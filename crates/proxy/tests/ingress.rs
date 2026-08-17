@@ -76,6 +76,7 @@ impl Harness {
             }]),
             recorder: recorder.clone(),
             capture: Arc::clone(&switches),
+            usage: Arc::new(codex_cc_proxy::usage::UsageStore::default()),
             instructions: Arc::new(codex_cc_proxy::config::InstructionsConfig {
                 identity: false,
                 append: None,
@@ -755,6 +756,46 @@ async fn upstream_capture_records_a_turn_that_produced_content() {
     assert_eq!(capture["upstream"].as_array().unwrap().len(), 3);
 }
 
+/// A refusal is still a status when the backend led with a preamble event.
+///
+/// The backend opens every stream with a quota snapshot before anything about
+/// the response itself, so a refusal is not the first event — it is the first
+/// event that *says* anything about the outcome. Checking only position zero
+/// meant a refused turn became a 200 whose body was one error frame and no
+/// `message_start`, which the client reports as an empty or malformed response
+/// rather than as the refusal it is.
+#[tokio::test]
+async fn a_refusal_behind_a_preamble_is_still_a_status() {
+    let harness = Harness::start(Behavior::Events(vec![
+        json!({
+            "type": "codex.rate_limits",
+            "rate_limits": { "primary": { "used_percent": 6 } },
+        }),
+        json!({ "type": "codex.response.metadata", "metadata": {} }),
+        json!({
+            "type": "error",
+            "status": 429,
+            "error": { "message": "quota exhausted" },
+        }),
+    ]))
+    .await;
+
+    let response = harness
+        .post(
+            "/v1/messages",
+            json!({
+                "model": "claude-sonnet-4",
+                "max_tokens": 64,
+                "messages": [{ "role": "user", "content": "hello" }],
+            }),
+        )
+        .await;
+
+    assert_eq!(response.status(), 429, "nothing had been written yet");
+    let body: Value = serde_json::from_str(&response.text().await.unwrap()).unwrap();
+    assert_eq!(body["error"]["type"], json!("rate_limit_error"));
+}
+
 /// §2.1 — the configured lead and trailer reach the backend, around the
 /// client's own prompt.
 ///
@@ -779,6 +820,7 @@ async fn the_configured_instructions_reach_the_backend() {
         }]),
         recorder: None,
         capture: Arc::new(codex_cc_proxy::recorder::Switches::default()),
+        usage: Arc::new(codex_cc_proxy::usage::UsageStore::default()),
         instructions: Arc::new(codex_cc_proxy::config::InstructionsConfig {
             identity: true,
             append: Some("  Answer briefly.  ".to_owned()),
@@ -1251,6 +1293,7 @@ async fn ingress_sends_through_a_conduit_and_uploads_incrementally() {
         }]),
         recorder: None,
         capture: Arc::new(codex_cc_proxy::recorder::Switches::default()),
+        usage: Arc::new(codex_cc_proxy::usage::UsageStore::default()),
         instructions: Arc::new(codex_cc_proxy::config::InstructionsConfig {
             identity: false,
             append: None,
@@ -1368,6 +1411,7 @@ async fn a_second_turn_uploads_the_new_items_and_not_nothing() {
         }]),
         recorder: None,
         capture: Arc::new(codex_cc_proxy::recorder::Switches::default()),
+        usage: Arc::new(codex_cc_proxy::usage::UsageStore::default()),
         instructions: Arc::new(codex_cc_proxy::config::InstructionsConfig {
             identity: false,
             append: None,
@@ -1549,6 +1593,7 @@ async fn a_reasoning_turn_does_not_end_the_session() {
         }]),
         recorder: None,
         capture: Arc::new(codex_cc_proxy::recorder::Switches::default()),
+        usage: Arc::new(codex_cc_proxy::usage::UsageStore::default()),
         instructions: Arc::new(codex_cc_proxy::config::InstructionsConfig {
             identity: false,
             append: None,
@@ -1664,6 +1709,7 @@ async fn a_failed_turn_does_not_advance_the_baseline() {
         }]),
         recorder: None,
         capture: Arc::new(codex_cc_proxy::recorder::Switches::default()),
+        usage: Arc::new(codex_cc_proxy::usage::UsageStore::default()),
         instructions: Arc::new(codex_cc_proxy::config::InstructionsConfig {
             identity: false,
             append: None,
@@ -1767,6 +1813,7 @@ async fn a_request_larger_than_the_window_is_refused() {
         }]),
         recorder: None,
         capture: Arc::new(codex_cc_proxy::recorder::Switches::default()),
+        usage: Arc::new(codex_cc_proxy::usage::UsageStore::default()),
         instructions: Arc::new(codex_cc_proxy::config::InstructionsConfig {
             identity: false,
             append: None,
@@ -1834,6 +1881,7 @@ async fn an_unknown_window_does_not_refuse_anything() {
         }]),
         recorder: None,
         capture: Arc::new(codex_cc_proxy::recorder::Switches::default()),
+        usage: Arc::new(codex_cc_proxy::usage::UsageStore::default()),
         instructions: Arc::new(codex_cc_proxy::config::InstructionsConfig {
             identity: false,
             append: None,
@@ -1900,6 +1948,7 @@ async fn effort_is_capped_by_what_the_model_supports() {
         }]),
         recorder: None,
         capture: Arc::new(codex_cc_proxy::recorder::Switches::default()),
+        usage: Arc::new(codex_cc_proxy::usage::UsageStore::default()),
         instructions: Arc::new(codex_cc_proxy::config::InstructionsConfig {
             identity: false,
             append: None,
@@ -1958,6 +2007,7 @@ async fn an_unlisted_model_does_not_cap_effort() {
         }]),
         recorder: None,
         capture: Arc::new(codex_cc_proxy::recorder::Switches::default()),
+        usage: Arc::new(codex_cc_proxy::usage::UsageStore::default()),
         instructions: Arc::new(codex_cc_proxy::config::InstructionsConfig {
             identity: false,
             append: None,

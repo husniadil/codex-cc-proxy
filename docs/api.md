@@ -71,6 +71,7 @@ codex-cc-proxy status     connection, tier mapping, model catalog
 codex-cc-proxy models     available models
 codex-cc-proxy env        environment for Claude Code
 codex-cc-proxy doctor     probe live backend capabilities
+codex-cc-proxy usage      what quota is left
 codex-cc-proxy record     capture exchanges as fixtures
 ```
 
@@ -109,6 +110,21 @@ reporting success is the same failure in miniature.
 
 `--probe <name>` runs one at a time, and naming an unknown one lists the
 known ones.
+
+`usage` reports the account's quota as of the last turn. It costs nothing to
+ask: the backend opens every stream with a snapshot, before it says anything
+about the response, so the figure rides along with a turn already being made and
+is never polled. Before any turn has been made it says so rather than answering
+with zeroes. `--json` emits the snapshot as it stands, for a status line.
+
+The same snapshot is put on the response as `anthropic-ratelimit-unified-*`
+headers, which is where this client reads a quota from — so the built-in status
+line shows it with no script at all. **Only where a window genuinely matches.**
+Those headers name two fixed windows, five hours and seven days, and the
+backend's windows are not fixed: it has reported a five-hour window in the past,
+does not currently, and may again. Windows are matched to header slots by
+duration, and one matching neither is reported by `usage` — where it can state
+its real length — rather than announced as a window it is not.
 
 `record` has two modes, and the distinction matters because only one of them
 costs anything:
@@ -177,7 +193,7 @@ A Unix domain socket, or a named pipe on Windows, carrying JSON-RPC:
 | `disconnect` | clears credentials | yes |
 | `models` | catalog, and whether it is the fallback list | yes |
 | `tiers.get` | tier mapping | yes |
-| `usage` | quota snapshot, or that none has been seen | yes |
+| `usage` | quota snapshot as of the last turn, or that no turn has been made | yes |
 | `env` | the §2.1 block | yes |
 | `record.start` / `record.stop` | fixture capture | yes — `{"mode": "ingress"}` by default, `"upstream"` must be named because it bills every turn that follows |
 | `login` | authorization URL, then completion | no — `login` runs in the CLI, which owns the callback port |

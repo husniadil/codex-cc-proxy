@@ -130,3 +130,55 @@ pub fn models(result: &Value) -> String {
 
     lines.join("\n")
 }
+
+/// `docs/api.md` §3 — the quota snapshot, in one line per window.
+///
+/// Written to be read by a person and parsed by a status line, which is what a
+/// caller wanting this every few seconds is building. `--json` is there for the
+/// second case; this is the first.
+pub fn usage(result: &Value) -> String {
+    if field(result, "known").and_then(Value::as_bool) != Some(true) {
+        return field(result, "detail")
+            .and_then(Value::as_str)
+            .unwrap_or("no quota has been reported")
+            .to_owned();
+    }
+
+    let mut lines = Vec::new();
+    if let Some(plan) = field(result, "plan").and_then(Value::as_str) {
+        lines.push(format!("plan       {plan}"));
+    }
+    if field(result, "limit_reached").and_then(Value::as_bool) == Some(true) {
+        lines.push("limit      reached".to_owned());
+    }
+
+    let windows = field(result, "windows")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    if windows.is_empty() {
+        lines.push("windows    none reported".to_owned());
+    }
+
+    for window in &windows {
+        let used = field(window, "used_percent")
+            .and_then(Value::as_f64)
+            .unwrap_or_default();
+        let span = field(window, "window_minutes")
+            .and_then(Value::as_u64)
+            .map(describe_window)
+            .unwrap_or_else(|| "unknown window".to_owned());
+        lines.push(format!("{span:<10} {used:.0}% used"));
+    }
+
+    lines.join("\n")
+}
+
+/// A window length in the units a person would say it in.
+fn describe_window(minutes: u64) -> String {
+    match minutes {
+        m if m % (24 * 60) == 0 => format!("{}d", m / (24 * 60)),
+        m if m % 60 == 0 => format!("{}h", m / 60),
+        m => format!("{m}m"),
+    }
+}

@@ -19,3 +19,4 @@ pub mod recorder;
 pub mod render;
 pub mod session;
 pub mod upstream;
+pub mod usage;

@@ -22,6 +22,9 @@ pub struct ControlState {
     /// The same switches the ingress path reads, so starting a capture here
     /// changes what the next turn does.
     pub capture: Arc<crate::recorder::Switches>,
+    /// The same store the ingress path writes to, so this reports the quota as
+    /// of the last turn rather than a figure of its own.
+    pub usage: Arc<crate::usage::UsageStore>,
 }
 
 /// Dispatch one method.
@@ -129,11 +132,20 @@ fn tier_map(state: &ControlState) -> Value {
 /// Quota is reported by the backend on live responses. Until one has been seen,
 /// saying so is the honest answer — a zeroed window would read as "no quota
 /// used" rather than "not yet known".
-fn usage(_state: &ControlState) -> Value {
-    json!({
-        "known": false,
-        "detail": "quota is reported by the backend on a completed response; none has been seen yet",
-    })
+/// What quota is left, as of the last turn.
+///
+/// Read from the snapshot the backend opens each stream with, never polled and
+/// never computed. Before a turn has been made there is nothing to report, and
+/// that is said rather than answered with zeroes — an invented quota figure
+/// reads as headroom that may not be there.
+fn usage(state: &ControlState) -> Value {
+    match state.usage.latest() {
+        Some(snapshot) => snapshot.to_json(),
+        None => json!({
+            "known": false,
+            "detail": "the backend reports quota when a turn is made; none has been made yet",
+        }),
+    }
 }
 
 /// `docs/api.md` §2.1 — the environment Claude Code needs.

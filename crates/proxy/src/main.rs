@@ -41,6 +41,7 @@ async fn main() -> Result<()> {
         Command::Models => print_models().await,
         Command::Env(args) => print_env(args).await,
         Command::Doctor(args) => doctor(args).await,
+        Command::Usage(args) => print_usage(args).await,
         Command::Record(args) => record(args).await,
     }
 }
@@ -189,6 +190,21 @@ async fn print_models() -> Result<()> {
     Ok(())
 }
 
+/// What quota is left. Reported from the snapshot the backend volunteers on
+/// each turn, so it costs nothing to ask and is as of the last turn made.
+async fn print_usage(args: cli::UsageArgs) -> Result<()> {
+    let result = control::call(&control::default_path(), "usage", None).await?;
+    println!(
+        "{}",
+        if args.json {
+            serde_json::to_string_pretty(&result)?
+        } else {
+            render::usage(&result)
+        }
+    );
+    Ok(())
+}
+
 async fn print_env(args: cli::EnvArgs) -> Result<()> {
     let result = control::call(&control::default_path(), "env", None).await?;
     println!(
@@ -239,6 +255,7 @@ async fn run(args: RunArgs) -> Result<()> {
 }
 
 async fn run_with(args: RunArgs, capture: Capture) -> Result<()> {
+    let usage = Arc::new(codex_cc_proxy::usage::UsageStore::default());
     let switches = Arc::new(codex_cc_proxy::recorder::Switches::new(match capture {
         Capture::Nothing => None,
         Capture::Ingress => Some(codex_cc_proxy::recorder::Mode::Ingress),
@@ -309,6 +326,7 @@ async fn run_with(args: RunArgs, capture: Capture) -> Result<()> {
         catalog: Arc::clone(&catalog),
         credentials: Arc::clone(&credentials),
         capture: Arc::clone(&switches),
+        usage: Arc::clone(&usage),
     };
     let socket_path = control::default_path();
     tokio::spawn(async move {
@@ -367,6 +385,7 @@ async fn run_with(args: RunArgs, capture: Capture) -> Result<()> {
             codex_cc_proxy::recorder::Recorder::default_directory(),
         )),
         capture: Arc::clone(&switches),
+        usage: Arc::clone(&usage),
         instructions: Arc::new(config.instructions.clone()),
         sessions: Arc::new(codex_cc_proxy::session::SessionStore::new()),
     };
