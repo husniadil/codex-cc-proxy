@@ -46,6 +46,9 @@ doctor *ARGS:
 # Install development tooling
 setup:
     mise install
+    # `.tool-versions` pins the version but cannot carry components, and
+    # `just check` is mostly rustfmt and clippy.
+    rustup component add rustfmt clippy
     cargo install cargo-nextest --locked
     cargo install cargo-insta --locked
     git config core.hooksPath .githooks

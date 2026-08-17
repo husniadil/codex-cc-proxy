@@ -25,6 +25,11 @@ jobs:
           install: true
           cache: true
       - uses: Swatinem/rust-cache@v2
+      # `.tool-versions` pins the toolchain version but cannot express
+      # components, so a freshly installed toolchain has neither rustfmt nor
+      # clippy — and `just check` is two thirds those. `just setup` adds the
+      # same two locally, so the gate stays identical on both sides.
+      - run: rustup component add rustfmt clippy
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-nextest
