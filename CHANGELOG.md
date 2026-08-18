@@ -4,7 +4,10 @@ All notable changes to this project are recorded here. This project follows
 [semantic versioning](https://semver.org). The semver-bound surfaces are listed
 in [`docs/api.md`](docs/api.md) §6.
 
-## [Unreleased]
+## [0.2.0]
+
+A daemon a front-end can drive. Every capability below was reachable only by
+restarting with a hand-edited configuration file, or not reachable at all.
 
 ### Added
 

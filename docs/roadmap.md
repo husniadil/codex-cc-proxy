@@ -251,7 +251,27 @@ done, in the same terms as the phases above — an entry nobody can tell is
 finished is an entry that never finishes. Order within a version is not fixed;
 between versions it is.
 
-### v0.2.0
+### v0.2.0 — shipped
+
+**Editing configuration without hand-writing TOML.** `tiers.set` was reserved
+for this and answered that it was unimplemented. The hard part was never writing
+the file: configuration is read once at startup, so a written change and a
+running daemon disagree until the next `run`.
+
+**Done.** `tiers.set` and `effort.set` move what routes turns, not only what
+`status` reports, and each answers whether it was persisted. Validation runs
+before the write and the write before the apply, so a failed write cannot leave
+a daemon running a policy nobody chose.
+
+Two things arrived with it that this section had not anticipated, both because a
+front-end that is not a terminal needs them. **`login` over the control socket**
+returns the authorization URL and completes in the background, sharing one
+callback port rather than handing out a URL whose callback would be refused. And
+**`usage.refresh`** asks the backend for a quota figure, covering the one case
+the volunteered snapshot cannot — a front-end with a figure to show on a daemon
+that has served no turn yet.
+
+### v0.3.0
 
 **A launcher.** Starting the client currently means evaluating the output of
 `env` in a shell first, which is one manual step that a reader can get wrong and
@@ -295,17 +315,7 @@ credential kinds are selectable per tier or per account rather than globally,
 and no code path can send one kind of credential to the endpoint that expects
 the other.
 
-**Editing configuration without hand-writing TOML.** `tiers.set` is already
-reserved for this and already answers that it is unimplemented. The hard part is
-not writing the file: it is that configuration is read once at startup, so a
-written change and a running daemon disagree until the next `run`.
-
-**Done when** a change made through the interface is either applied to the
-running daemon or reported as pending with the reason, never written and left to
-look applied. An unreadable or invalid edit must leave the previous
-configuration in place.
-
-### v0.3.0
+### v0.4.0
 
 **A graphical front-end.** The control socket was built for exactly this: the
 daemon holds authoritative state, the CLI has no privileged path of its own, and
