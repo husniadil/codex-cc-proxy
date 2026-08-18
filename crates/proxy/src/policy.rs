@@ -128,8 +128,13 @@ impl Policy {
     /// Each setter changes one field and has to carry the other across. Reading
     /// it through `get()` and writing through a second call leaves a window
     /// where the other field moves in between, and the write puts the stale
-    /// value back — measured, not theorised: two threads setting different
-    /// fields reverted each other within a few hundred thousand iterations.
+    /// value back.
+    ///
+    /// `tests/policy.rs` demonstrates it: one thread changes the ceiling
+    /// exactly once while another spins on the mapping, and the ceiling that
+    /// was set comes back absent. Two threads writing the *same* value do not
+    /// show it — a stale read is indistinguishable from a fresh one there —
+    /// which is why the detector changes a field once rather than in a loop.
     fn update(&self, next: impl FnOnce(&Snapshot) -> Snapshot) {
         match self.current.write() {
             Ok(mut current) => *current = Arc::new(next(&current)),
