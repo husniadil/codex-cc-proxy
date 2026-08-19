@@ -1570,7 +1570,45 @@ async fn refusing_token_endpoint() -> String {
 
     tokio::spawn(async move {
         while let Ok((mut stream, _)) = listener.accept().await {
+            use tokio::io::AsyncReadExt;
             use tokio::io::AsyncWriteExt;
+
+            // Consume the whole request before answering. Replying first races
+            // the reply against the client still writing its request, and
+            // closing a socket with unread inbound data resets the connection
+            // instead of finishing it — a race the client loses only when the
+            // machine is busy, which made this stub the suite's one flaky
+            // dependency.
+            let mut request = Vec::new();
+            let mut buffer = [0u8; 4096];
+            while let Ok(read) = stream.read(&mut buffer).await {
+                if read == 0 {
+                    break;
+                }
+                request.extend_from_slice(&buffer[..read]);
+                let Some(headers_end) = request
+                    .windows(4)
+                    .position(|window| window == b"\r\n\r\n")
+                    .map(|position| position + 4)
+                else {
+                    continue;
+                };
+                let headers = String::from_utf8_lossy(&request[..headers_end]);
+                let content_length: usize = headers
+                    .lines()
+                    .find_map(|line| {
+                        line.to_ascii_lowercase()
+                            .strip_prefix("content-length:")
+                            .map(str::trim)
+                            .map(str::to_owned)
+                    })
+                    .and_then(|value| value.parse().ok())
+                    .unwrap_or(0);
+                if request.len() >= headers_end + content_length {
+                    break;
+                }
+            }
+
             let body = r#"{"error":"refresh_token_expired"}"#;
             let reply = format!(
                 "HTTP/1.1 400 Bad Request\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
@@ -1620,11 +1658,14 @@ async fn status_reports_a_grant_the_backend_refused() {
         json!(false)
     );
 
-    tokens
+    let refusal = tokens
         .access_token()
         .await
         .expect_err("the grant should have been refused");
-    assert!(tokens.is_dead());
+    assert!(
+        tokens.is_dead(),
+        "the refusal was not treated as terminal: {refusal:?}"
+    );
 
     let status = harness.call("status").await.unwrap();
     assert_eq!(status["auth"]["connected"], json!(true));
