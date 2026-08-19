@@ -490,7 +490,16 @@ async fn print_settings() -> Result<()> {
 /// involved at the point of capture.
 async fn record(args: cli::RecordArgs) -> Result<()> {
     match args.mode {
-        cli::RecordMode::Ingress => run_with(RunArgs { port: None }, Capture::Ingress).await,
+        cli::RecordMode::Ingress => {
+            run_with(
+                RunArgs {
+                    port: None,
+                    detach: false,
+                },
+                Capture::Ingress,
+            )
+            .await
+        }
         cli::RecordMode::Upstream => {
             // Says so before it starts, because the cost is the difference
             // between the two modes and it is not recoverable afterwards.
@@ -498,7 +507,14 @@ async fn record(args: cli::RecordArgs) -> Result<()> {
                 "recording upstream: every turn through this daemon spends quota \
                  and is written to disk with its content"
             );
-            run_with(RunArgs { port: None }, Capture::Upstream).await
+            run_with(
+                RunArgs {
+                    port: None,
+                    detach: false,
+                },
+                Capture::Upstream,
+            )
+            .await
         }
     }
 }
@@ -516,7 +532,104 @@ enum Capture {
 }
 
 async fn run(args: RunArgs) -> Result<()> {
+    if args.detach {
+        return detach(&args).await;
+    }
     run_with(args, Capture::Nothing).await
+}
+
+/// Start the daemon as its own process and return once it answers.
+///
+/// The child is a plain `run` of this same binary in its own process group,
+/// its output appended to a log file, because a detached process's terminal is
+/// gone the moment this command returns. Success is observed, not assumed:
+/// this returns 0 only once the daemon answers the control socket, and a child
+/// that dies first has its log quoted rather than summarized.
+async fn detach(args: &RunArgs) -> Result<()> {
+    use anyhow::Context;
+
+    let socket = control::default_path();
+    if control::call(&socket, "status", None).await.is_ok() {
+        bail!(
+            "a daemon is already answering on the control socket. Stop it with \
+             `codex-cc-proxy stop` first."
+        );
+    }
+
+    let log_path = codex_cc_proxy::config::config_dir().join("daemon.log");
+    if let Some(parent) = log_path.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("could not create {}", parent.display()))?;
+    }
+    let log = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path)
+        .with_context(|| format!("could not open the log at {}", log_path.display()))?;
+    let stderr_log = log.try_clone().context("could not clone the log handle")?;
+
+    let own = std::env::current_exe().context("could not find this binary's own path")?;
+    let mut command = std::process::Command::new(own);
+    command.arg("run");
+    if let Some(port) = args.port {
+        command.args(["--port", &port.to_string()]);
+    }
+    command
+        .stdin(std::process::Stdio::null())
+        .stdout(log)
+        .stderr(stderr_log);
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        // DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP: no console window, and
+        // the terminal's Ctrl-C no longer reaches it.
+        command.creation_flags(0x0000_0008 | 0x0000_0200);
+    }
+    let mut child = command.spawn().context("could not start the daemon")?;
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        // Exit first: a child that died must be reported from its log, and
+        // checking the socket first would race an unrelated answerer.
+        if let Ok(Some(status)) = child.try_wait() {
+            bail!(
+                "the daemon exited before it started answering ({status}). Its log ends with:\n{}",
+                log_tail(&log_path)
+            );
+        }
+        if control::call(&socket, "status", None).await.is_ok() {
+            println!(
+                "daemon running (pid {}), logging to {}\nstop it with `codex-cc-proxy stop`",
+                child.id(),
+                log_path.display()
+            );
+            return Ok(());
+        }
+        if std::time::Instant::now() >= deadline {
+            bail!(
+                "the daemon has not started answering after 10s. Its log ends with:\n{}",
+                log_tail(&log_path)
+            );
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+}
+
+/// The last few lines of the daemon's log, for an error message that shows the
+/// failure instead of describing it.
+fn log_tail(path: &std::path::Path) -> String {
+    let content = std::fs::read_to_string(path).unwrap_or_default();
+    let count = content.lines().count();
+    content
+        .lines()
+        .skip(count.saturating_sub(12))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 async fn run_with(args: RunArgs, capture: Capture) -> Result<()> {

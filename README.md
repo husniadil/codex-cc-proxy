@@ -179,7 +179,7 @@ Then:
 
 ```sh
 codex-cc-proxy login             # authenticate
-codex-cc-proxy run               # start the daemon on loopback
+codex-cc-proxy run --detach      # start the daemon on loopback, in the background
 codex-cc-proxy exec claude       # start the client against it
 ```
 

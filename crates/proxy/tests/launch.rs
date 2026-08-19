@@ -447,3 +447,135 @@ fn stop_names_the_upgrade_problem_when_the_daemon_predates_it() {
         "the raw error is what this replaces: {stderr}"
     );
 }
+
+/// `run --detach` hands the terminal back and leaves a daemon behind.
+///
+/// The command's own exit is the observable: after it returns, the daemon it
+/// started still answers the control socket, its output lands in a log file
+/// rather than a terminal that no longer exists, and `stop` still ends it.
+#[cfg(unix)]
+#[test]
+fn a_detached_run_outlives_the_command_that_started_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    let binary = env!("CARGO_BIN_EXE_codex-cc-proxy");
+
+    let started = std::process::Command::new(binary)
+        .args(["run", "--detach", "--port", "0"])
+        .env("CODEX_CC_PROXY_HOME", &home)
+        .env("TMPDIR", dir.path())
+        .output()
+        .expect("the detach command should run");
+
+    assert!(
+        started.status.success(),
+        "detach failed: {}{}",
+        String::from_utf8_lossy(&started.stdout),
+        String::from_utf8_lossy(&started.stderr)
+    );
+    let said = String::from_utf8_lossy(&started.stdout);
+    assert!(
+        said.contains("codex-cc-proxy stop"),
+        "it should say how to stop what it started: {said}"
+    );
+
+    // The command has exited; what it left behind is answering, and its
+    // output went to the log.
+    let log = home.join("daemon.log");
+    assert!(log.exists(), "the daemon's output needs somewhere to go");
+    assert!(
+        std::fs::read_to_string(&log).unwrap().contains("listening"),
+        "the log should carry what the terminal no longer can"
+    );
+
+    let stopped = std::process::Command::new(binary)
+        .arg("stop")
+        .env("CODEX_CC_PROXY_HOME", &home)
+        .env("TMPDIR", dir.path())
+        .output()
+        .expect("the stop verb should run");
+    assert!(
+        stopped.status.success(),
+        "the detached daemon should have been answering: {}",
+        String::from_utf8_lossy(&stopped.stderr)
+    );
+}
+
+/// A child that dies at startup is reported from its own log, not summarized.
+///
+/// The port is held by a plain listener, so the spawned daemon fails at bind.
+/// The command must exit nonzero and quote the reason the daemon itself gave.
+#[cfg(unix)]
+#[test]
+fn a_detached_daemon_that_dies_at_startup_is_reported_from_its_log() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    let binary = env!("CARGO_BIN_EXE_codex-cc-proxy");
+
+    let holder = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = holder.local_addr().unwrap().port().to_string();
+
+    let started = std::process::Command::new(binary)
+        .args(["run", "--detach", "--port", &port])
+        .env("CODEX_CC_PROXY_HOME", &home)
+        .env("TMPDIR", dir.path())
+        .output()
+        .expect("the detach command should run");
+
+    assert!(
+        !started.status.success(),
+        "a daemon that never came up must not be reported as running"
+    );
+    let said = String::from_utf8_lossy(&started.stderr);
+    assert!(
+        said.contains("already in use"),
+        "the daemon's own reason should be quoted: {said}"
+    );
+}
+
+/// One daemon per control socket. A second detach is refused before it can
+/// spawn a child that would steal the first one's socket file.
+#[cfg(unix)]
+#[test]
+fn a_second_detach_is_refused_while_the_first_still_answers() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    let binary = env!("CARGO_BIN_EXE_codex-cc-proxy");
+
+    let first = std::process::Command::new(binary)
+        .args(["run", "--detach", "--port", "0"])
+        .env("CODEX_CC_PROXY_HOME", &home)
+        .env("TMPDIR", dir.path())
+        .output()
+        .expect("the first detach should run");
+    assert!(
+        first.status.success(),
+        "the first detach should have worked: {}",
+        String::from_utf8_lossy(&first.stderr)
+    );
+
+    let second = std::process::Command::new(binary)
+        .args(["run", "--detach", "--port", "0"])
+        .env("CODEX_CC_PROXY_HOME", &home)
+        .env("TMPDIR", dir.path())
+        .output()
+        .expect("the second detach should run");
+    assert!(
+        !second.status.success(),
+        "the second detach must be refused while the first answers"
+    );
+    assert!(
+        String::from_utf8_lossy(&second.stderr).contains("already answering"),
+        "it should say why: {}",
+        String::from_utf8_lossy(&second.stderr)
+    );
+
+    let _ = std::process::Command::new(binary)
+        .arg("stop")
+        .env("CODEX_CC_PROXY_HOME", &home)
+        .env("TMPDIR", dir.path())
+        .output();
+}

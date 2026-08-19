@@ -65,7 +65,7 @@ changing an already-sent status.
 ## 2. Command line
 
 ```
-codex-cc-proxy run        start the daemon
+codex-cc-proxy run        start the daemon (--detach: in the background)
 codex-cc-proxy login      authenticate
 codex-cc-proxy status     connection, tier mapping, model catalog
 codex-cc-proxy models     available models
@@ -395,6 +395,31 @@ no method to ask — so the first upgrade past this version still has to be ende
 by whatever supervises it. Nothing here can fix that; what it does is say which
 situation it is rather than surface `unknown method` and leave the reader to
 work out that a protocol error is really an upgrade problem.
+
+### 2.5 `run --detach`
+
+Starts the daemon in the background and returns once it answers.
+
+```
+$ codex-cc-proxy run --detach
+daemon running (pid 4711), logging to ~/.config/codex-cc-proxy/daemon.log
+stop it with `codex-cc-proxy stop`
+```
+
+The child is a plain `run` of the same binary in its own process group, with
+stdout and stderr appended to `daemon.log` in the configuration directory —
+a detached process's terminal is gone the moment the command returns, so its
+output needs somewhere durable to go. `stop` (§2.4) is the counterpart.
+
+**Success is observed, not assumed.** The command exits 0 only once the daemon
+answers the control socket. A child that dies first — a held port, a broken
+configuration — is reported with the tail of its own log quoted, and the
+command exits nonzero. Ten seconds without either is reported the same way.
+
+**A second detach is refused while the first still answers.** The control
+socket is one per socket path, and a second daemon would take over the socket
+file of the first, leaving the CLI answering for one daemon while another holds
+the port. The refusal names `stop` as the way forward.
 
 ---
 

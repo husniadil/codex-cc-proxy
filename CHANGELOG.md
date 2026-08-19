@@ -8,6 +8,12 @@ in [`docs/api.md`](docs/api.md) §6.
 
 ### Added
 
+- **`run --detach` starts the daemon in the background.** The command returns
+  once the daemon answers the control socket, printing the pid, the log path,
+  and `stop` as the counterpart. A child that dies at startup is reported with
+  its own log quoted and a nonzero exit; a second detach is refused while a
+  daemon still answers, because it would take over the first one's socket file.
+
 - **The proxy publishes the policy a client cannot be told by environment
   variable.** Two of the things a client has to be told live in its settings
   file, and no export reaches them — checked against the whole settings schema,

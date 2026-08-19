@@ -57,6 +57,9 @@ pub struct RunArgs {
     /// Port to bind on loopback. Overrides the configured value.
     #[arg(long, env = "CODEX_CC_PROXY_PORT")]
     pub port: Option<u16>,
+    /// Start the daemon in the background and return once it answers.
+    #[arg(long)]
+    pub detach: bool,
 }
 
 #[derive(Debug, clap::Args)]
@@ -143,6 +146,23 @@ mod tests {
     fn stop_parses_as_a_verb_of_its_own() {
         let cli = Cli::try_parse_from(["codex-cc-proxy", "stop"]).unwrap();
         assert!(matches!(cli.command, Command::Stop));
+    }
+
+    /// The flag belongs to `run` alone; without it the daemon owns the
+    /// terminal, which is the right default for watching it work.
+    #[test]
+    fn run_can_be_asked_to_detach() {
+        let cli = Cli::try_parse_from(["codex-cc-proxy", "run", "--detach"]).unwrap();
+        let Command::Run(args) = cli.command else {
+            panic!("run should parse");
+        };
+        assert!(args.detach);
+
+        let cli = Cli::try_parse_from(["codex-cc-proxy", "run"]).unwrap();
+        let Command::Run(args) = cli.command else {
+            panic!("run should parse");
+        };
+        assert!(!args.detach);
     }
 
     /// `env --json` and `settings` are one document under two names, so a
