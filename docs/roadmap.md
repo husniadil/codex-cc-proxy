@@ -286,7 +286,21 @@ a replacement for it.
 
 **Done when** a client started this way is indistinguishable from one started
 after `eval "$(codex-cc-proxy env)"`, unknown arguments reach the child
-untouched, and the child's exit status is the launcher's.
+untouched, the child's exit status is the launcher's, and a client given its own
+`--settings` fails visibly rather than losing one of the two.
+
+**Done**, as `exec`. It is more than a convenience over `env`, which is a change
+from what this entry assumed: client policy has no environment variable
+(`proxy-behavior.md` §7.3), so the shell path cannot carry it and this one can.
+Each of the three paths now has exactly one limit. Writing the settings document
+into a file is complete but touches a file the proxy does not own. `env` leaves
+no trace but carries routing only. `exec` is complete and leaves no trace, and
+is per invocation.
+
+The last clause of the done-when exists because of a measurement taken while
+building it: two `--settings` on one argument list and the client keeps the last
+and drops the first, at exit 0 with an empty stderr. Either placement loses a
+permission rule silently, so the launcher refuses instead.
 
 **More than one upstream account.** One credential file means one account, and
 an account that has run out of quota stops all work rather than some of it.

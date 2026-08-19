@@ -180,8 +180,16 @@ Then:
 ```sh
 codex-cc-proxy login             # authenticate
 codex-cc-proxy run               # start the daemon on loopback
-eval "$(codex-cc-proxy env)"     # point Claude Code at it
-claude
+codex-cc-proxy exec claude       # start the client against it
+```
+
+That last line is one step because it has to be: part of what the client needs
+lives in its settings file rather than its environment, so `eval` alone cannot
+deliver all of it. Two other ways to hand it over, each with a different limit:
+
+```sh
+eval "$(codex-cc-proxy env)"     # this shell, routing only
+codex-cc-proxy settings          # the whole thing, for a settings file you merge it into
 ```
 
 `login` prints a URL rather than opening one. Whichever ChatGPT account that
@@ -190,7 +198,9 @@ make on someone's behalf — open it in a private window to pick a different one
 
 | | |
 |---|---|
-| `status`, `models`, `env` | connection, catalog, and the environment to export |
+| `status`, `models` | connection, catalog, and the client policy in effect |
+| `env`, `settings` | what a client needs, as shell exports or as one settings document |
+| `exec <command>` | runs a command with both of those applied |
 | `usage` | what quota is left, as of the last turn |
 | `statusline -- <script>` | wraps your own status-line script and merges that quota into what it reads |
 | `record ingress` / `record upstream` | capture exchanges as fixtures |

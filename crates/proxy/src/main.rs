@@ -31,6 +31,7 @@ async fn main() -> Result<()> {
         Command::Models => print_models().await,
         Command::Env(args) => print_env(args).await,
         Command::Settings => print_settings().await,
+        Command::Exec(args) => exec(args).await,
         Command::Doctor(args) => doctor(args).await,
         Command::Usage(args) => print_usage(args).await,
         Command::Statusline(args) => statusline(args).await,
@@ -273,6 +274,60 @@ async fn print_env(args: cli::EnvArgs) -> Result<()> {
         }
     );
     Ok(())
+}
+
+/// Start a program with this proxy's configuration applied.
+///
+/// The environment half is set on the child, which is the launcher's whole job.
+/// The policy half has no environment variable (`proxy-behavior.md` §7.3), so it
+/// rides on the client's own settings flag and nothing is written to disk: no
+/// file to go stale, and none to clean up. The document holds no secret — the
+/// auth token's value is ignored by design — so argv is a fine place for it.
+///
+/// **It refuses before starting anything when the daemon is not answering.**
+/// Launching regardless would hand the operator a connection refused from a
+/// client that cannot explain it.
+async fn exec(args: cli::ExecArgs) -> Result<()> {
+    let result = control::call(&control::default_path(), "env", None)
+        .await
+        .map_err(|error| {
+            anyhow::anyhow!(
+                "the daemon is not answering ({error}), so there is no configuration to start \
+                 this with. Start it with `codex-cc-proxy run`."
+            )
+        })?;
+
+    // Compact rather than pretty: this goes on a command line, and a document
+    // full of newlines is one that a person reading `ps` has to reassemble.
+    let policy = result
+        .get("settings")
+        .filter(|policy| !policy.is_null())
+        .map(serde_json::to_string)
+        .transpose()?;
+
+    let plan = codex_cc_proxy::launch::plan(&args.command, policy.as_deref())?;
+
+    let mut child = std::process::Command::new(&plan.program);
+    child.args(&plan.arguments);
+    for (name, value) in render::variables(&result) {
+        child.env(name, value);
+    }
+
+    // A real exec on Unix, so signals, job control, the terminal, and the exit
+    // status all pass through untouched. A wrapper sitting in the middle would
+    // orphan the child on a Ctrl-C.
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        // Only returns if the exec itself failed.
+        let error = child.exec();
+        Err(anyhow::Error::new(error).context(format!("could not start `{}`", plan.program)))
+    }
+    #[cfg(not(unix))]
+    {
+        let status = child.status()?;
+        std::process::exit(status.code().unwrap_or(1));
+    }
 }
 
 /// One complete client settings document, for a file or a launcher.

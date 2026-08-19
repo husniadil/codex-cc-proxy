@@ -71,6 +71,7 @@ codex-cc-proxy status     connection, tier mapping, model catalog
 codex-cc-proxy models     available models
 codex-cc-proxy env        environment for Claude Code, as shell exports
 codex-cc-proxy settings   the same configuration, as one settings document
+codex-cc-proxy exec       run a command with that configuration applied
 codex-cc-proxy doctor     probe live backend capabilities
 codex-cc-proxy usage      what quota is left
 codex-cc-proxy statusline wrap a status-line script, adding that quota
@@ -292,6 +293,45 @@ extended.
 The proxy publishes this document and never installs it. Applying it is the job
 of whoever starts the client.
 
+### 2.3 `exec`
+
+Runs a command with the configuration of §2.2 applied, so starting a client is
+one step rather than two.
+
+```
+codex-cc-proxy exec claude --resume abc
+codex-cc-proxy exec -- claude --help
+```
+
+The environment half is set on the child. The policy half rides on the client's
+own settings flag, passed inline: **nothing is written to disk**, so there is no
+file to go stale and none to clean up. The document holds no secret — the auth
+token's value is ignored by design — so a command line is a fine place for it.
+
+Everything from the program name onward is opaque and forwarded in order, so the
+client's own flags keep working unchanged. `--` is accepted for a command whose
+first argument would otherwise be read as this verb's. On Unix the child is
+`exec`d, so signals, job control, the terminal, and the exit status pass through
+untouched.
+
+**It refuses, before starting anything, in two cases.**
+
+When the daemon is not answering: launching anyway hands the operator a
+connection refused from a client that cannot explain it.
+
+When the forwarded arguments already carry `--settings`. Measured: given two
+settings flags on one argument list, the client keeps the last, drops the first,
+exits 0, and writes nothing to stderr. So leading with this proxy's document
+loses the policy and trailing loses the caller's, both without a word. The
+refusal names the collision and the way out; `codex-cc-proxy settings` prints
+this proxy's half to merge. A program that does not read the flag is never given
+one, so its own `--settings` is not a collision.
+
+**The policy half does not reach a grandchild.** A session started this way
+inherits the environment into anything it spawns, but not the argument list, so
+a client started from inside it carries the routing and not the policy. Anything
+that spawns a client composes its own `--settings`.
+
 ---
 
 ## 3. Control socket
@@ -359,6 +399,13 @@ already being made, and is what `usage` reports. This exists for the case that
 path cannot cover — a front-end with a figure to show on a daemon that has served
 no turn yet — and its answer is recorded where the stream path records its own,
 so everything reading a quota reads one value.
+
+**`env` keeps its name although its payload now carries more than an
+environment.** The two halves are named inside it — `variables` and `settings` —
+and a caller reading only the first is untouched by the second. Renaming the
+method would cost a shim in a caller that already speaks it and buy no
+capability, so the honesty went into the field names and the CLI verb: `settings`
+is the name for the document, and `env` stays the name for the exports.
 
 The names are reserved whether or not v0.1 answers them: they are semver-bound
 (§6), and a method that appears later must mean what its name said all along. A

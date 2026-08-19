@@ -25,9 +25,10 @@ pub fn env_shell(result: &Value) -> String {
         );
         lines.push(
             "# settings file and has no environment variable. `codex-cc-proxy settings` \
-             carries it."
+             carries it,"
                 .to_owned(),
         );
+        lines.push("# and `codex-cc-proxy exec` applies it for one run.".to_owned());
     }
 
     lines.extend(
@@ -67,7 +68,9 @@ pub fn settings_json(result: &Value) -> String {
     serde_json::to_string_pretty(&Value::Object(document)).unwrap_or_default()
 }
 
-fn variables(result: &Value) -> Vec<(String, String)> {
+/// The environment half of the payload, for a caller that sets it rather than
+/// prints it.
+pub fn variables(result: &Value) -> Vec<(String, String)> {
     result
         .get("variables")
         .and_then(Value::as_array)

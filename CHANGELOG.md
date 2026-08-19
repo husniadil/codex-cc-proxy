@@ -4,6 +4,35 @@ All notable changes to this project are recorded here. This project follows
 [semantic versioning](https://semver.org). The semver-bound surfaces are listed
 in [`docs/api.md`](docs/api.md) §6.
 
+## [Unreleased]
+
+### Added
+
+- **The proxy publishes the policy a client cannot be told by environment
+  variable.** Two of the things a client has to be told live in its settings
+  file, and no export reaches them — checked against the whole settings schema,
+  there is no per-skill variable and nothing that points at an extra settings
+  file. `[client]` now carries `deny_skills` and `disable_connectors`, the `env`
+  control method carries a `settings` half beside `variables`, and a new
+  `settings` verb prints one complete client settings document. That document is
+  complete on its own: measured, a client reading only its `env` block, with no
+  `ANTHROPIC_*` in its environment, still reached the proxy.
+- **The bundled `claude-api` skill is denied by default.** Measured against a
+  local capture stub: one invocation lands 92,601 bytes — roughly 23,000 tokens
+  — in the conversation as a user item, where it sits for the rest of the
+  session and is charged every turn, while a refused invocation costs a 43-byte
+  error. Denying does not remove it from the listing the client sends; what it
+  stops is the load. It is also the wrong reference for a session served here,
+  documenting another provider's model ids, prices, and parameters. Switchable
+  in `[client]`, and `status` names it so the person holding "Skill execution
+  blocked by permission rules" can find the key that undoes it.
+- **`exec`**, a launcher: it applies both halves and runs the command, so
+  starting a client is one step. Nothing is written to disk — the policy rides
+  inline on the client's own settings flag. It refuses before starting anything
+  when the daemon is not answering, and when the forwarded arguments already
+  carry `--settings`, because the client keeps only the last such flag and drops
+  the first without a word.
+
 ## [0.2.0]
 
 A daemon a front-end can drive. Every capability below was reachable only by

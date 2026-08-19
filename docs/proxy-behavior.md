@@ -762,8 +762,20 @@ this buys anything worth.
 
 So the proxy **publishes** this policy and never installs it. It is emitted
 beside the environment (`docs/api.md` §2.2) and applied by whoever starts the
-client: a person writing it into a settings file, or a launcher splicing it into
-the argument list. Nothing here writes into a file the proxy does not own.
+client: a person writing it into a settings file, `exec` splicing it into one
+launch (§2.3), or a supervisor merging it into the argument list it already
+builds. Nothing here writes into a file the proxy does not own.
+
+Settings layers union, measured: a rule in a project settings file and a rule on
+the command line were both enforced in the same session, while a control skill
+denied by neither still launched. A deny rule also survives an untrusted
+workspace, where an allow rule is dropped. So the policy can be delivered
+through any layer without displacing what is already there — with one exception,
+which is that **two `--settings` flags on one argument list are not two layers**:
+the client keeps the last and drops the first, silently. That is why `exec`
+refuses a collision rather than choosing a side, and why a supervisor that
+already passes the flag merges into its own document rather than adding a
+second.
 
 **A bundled skill is denied by default.** `claude-api` is a reference for another
 provider's API. A session served here is not talking to that API, so the
