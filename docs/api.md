@@ -345,7 +345,9 @@ exits 0, and writes nothing to stderr. So leading with this proxy's document
 loses the policy and trailing loses the caller's, both without a word. The
 refusal names the collision and the way out; `codex-cc-proxy settings` prints
 this proxy's half to merge. A program that does not read the flag is never given
-one, so its own `--settings` is not a collision.
+one, so its own `--settings` is not a collision — and because that launch drops
+a rule the operator configured, it is named on stderr rather than left silent:
+the launch carries the environment only.
 
 **The policy half does not reach a grandchild.** A session started this way
 inherits the environment into anything it spawns, but not the argument list, so
@@ -413,8 +415,10 @@ output needs somewhere durable to go. `stop` (§2.4) is the counterpart.
 
 **Success is observed, not assumed.** The command exits 0 only once the daemon
 answers the control socket. A child that dies first — a held port, a broken
-configuration — is reported with the tail of its own log quoted, and the
-command exits nonzero. Ten seconds without either is reported the same way.
+configuration — is reported with the tail of what it wrote this start quoted,
+and the command exits nonzero. Ten seconds without either is reported the same
+way, and the child is ended rather than left to finish coming up after the
+command has already called it a failure.
 
 **A second detach is refused while the first still answers.** The control
 socket is one per socket path, and a second daemon would take over the socket

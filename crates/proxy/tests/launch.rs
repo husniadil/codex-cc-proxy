@@ -517,6 +517,10 @@ fn a_detached_daemon_that_dies_at_startup_is_reported_from_its_log() {
     let holder = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let port = holder.local_addr().unwrap().port().to_string();
 
+    // The log survives across starts. A line from an earlier run must not be
+    // quoted as the reason this one died.
+    std::fs::write(home.join("daemon.log"), "STALE LINE FROM AN EARLIER RUN\n").unwrap();
+
     let started = std::process::Command::new(binary)
         .args(["run", "--detach", "--port", &port])
         .env("CODEX_CC_PROXY_HOME", &home)
@@ -532,6 +536,10 @@ fn a_detached_daemon_that_dies_at_startup_is_reported_from_its_log() {
     assert!(
         said.contains("already in use"),
         "the daemon's own reason should be quoted: {said}"
+    );
+    assert!(
+        !said.contains("STALE LINE"),
+        "only this start's writes may be quoted: {said}"
     );
 }
 
@@ -578,4 +586,76 @@ fn a_second_detach_is_refused_while_the_first_still_answers() {
         .env("CODEX_CC_PROXY_HOME", &home)
         .env("TMPDIR", dir.path())
         .output();
+}
+
+/// A launch that cannot carry the policy says so instead of dropping it quietly.
+///
+/// Only programs that take `--settings` are given the policy document. That is
+/// by design — but a silent by-design is indistinguishable from a bug to the
+/// person whose deny rule just vanished, so the launcher names what this launch
+/// does not carry.
+#[cfg(unix)]
+#[test]
+fn a_launch_that_cannot_carry_the_policy_names_the_loss() {
+    use std::io::Write;
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().join("home");
+    let bin = dir.path().join("bin");
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::create_dir_all(&bin).unwrap();
+
+    let stub = bin.join("tool");
+    let mut file = std::fs::File::create(&stub).unwrap();
+    file.write_all(b"#!/bin/sh\necho \"ARGV: $*\"\n").unwrap();
+    drop(file);
+    std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    let binary = env!("CARGO_BIN_EXE_codex-cc-proxy");
+    let mut daemon = std::process::Command::new(binary)
+        .args(["run", "--port", "0"])
+        .env("CODEX_CC_PROXY_HOME", &home)
+        .env("TMPDIR", dir.path())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("the daemon should start");
+
+    let socket = dir.path().join("codex-cc-proxy.sock");
+    for _ in 0..200 {
+        if socket.exists() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+
+    let launched = std::process::Command::new(binary)
+        .args(["exec", "tool"])
+        .env("CODEX_CC_PROXY_HOME", &home)
+        .env("TMPDIR", dir.path())
+        .env(
+            "PATH",
+            format!(
+                "{}:{}",
+                bin.display(),
+                std::env::var("PATH").unwrap_or_default()
+            ),
+        )
+        .output()
+        .expect("the launcher should run");
+
+    let _ = daemon.kill();
+    let _ = daemon.wait();
+
+    let stdout = String::from_utf8_lossy(&launched.stdout);
+    let stderr = String::from_utf8_lossy(&launched.stderr);
+    assert!(
+        !stdout.contains("--settings"),
+        "a program that does not take the flag must not be handed it: {stdout}"
+    );
+    assert!(
+        stderr.contains("policy"),
+        "the loss has to be named, not silent: {stderr}"
+    );
 }

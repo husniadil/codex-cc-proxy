@@ -16,6 +16,11 @@ const SETTINGS_FLAG: &str = "--settings";
 pub struct Launch {
     pub program: String,
     pub arguments: Vec<String>,
+    /// Whether the policy document rides in these arguments. False either
+    /// because there was no policy to carry, or because this program does not
+    /// take the flag it rides on — and the caller can tell those apart,
+    /// because it supplied the policy.
+    pub carries_policy: bool,
 }
 
 /// Whether this program reads the client's settings flag.
@@ -88,5 +93,6 @@ pub fn plan(command: &[String], policy: Option<&str>) -> Result<Launch, ProxyErr
     Ok(Launch {
         program: program.clone(),
         arguments,
+        carries_policy: injecting,
     })
 }

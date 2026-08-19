@@ -447,6 +447,16 @@ async fn exec(args: cli::ExecArgs) -> Result<()> {
 
     let plan = codex_cc_proxy::launch::plan(&args.command, policy.as_deref())?;
 
+    // By design, and said out loud: to the person whose deny rule just
+    // vanished, a silent by-design is indistinguishable from a bug.
+    if policy.is_some() && !plan.carries_policy {
+        eprintln!(
+            "note: the client policy rides `--settings`, which `{}` does not take. \
+             This launch carries the environment only.",
+            plan.program
+        );
+    }
+
     let mut child = std::process::Command::new(&plan.program);
     child.args(&plan.arguments);
     for (name, value) in render::variables(&result) {
@@ -568,6 +578,11 @@ async fn detach(args: &RunArgs) -> Result<()> {
         .with_context(|| format!("could not open the log at {}", log_path.display()))?;
     let stderr_log = log.try_clone().context("could not clone the log handle")?;
 
+    // Where this start's writes begin. The log is appended across starts, so a
+    // failure must quote only what this child wrote — the tail of an earlier
+    // run presented as the reason this one died would be a lie with evidence.
+    let baseline = log.metadata().map(|meta| meta.len()).unwrap_or(0);
+
     let own = std::env::current_exe().context("could not find this binary's own path")?;
     let mut command = std::process::Command::new(own);
     command.arg("run");
@@ -599,7 +614,7 @@ async fn detach(args: &RunArgs) -> Result<()> {
         if let Ok(Some(status)) = child.try_wait() {
             bail!(
                 "the daemon exited before it started answering ({status}). Its log ends with:\n{}",
-                log_tail(&log_path)
+                log_tail(&log_path, baseline)
             );
         }
         if control::call(&socket, "status", None).await.is_ok() {
@@ -611,22 +626,33 @@ async fn detach(args: &RunArgs) -> Result<()> {
             return Ok(());
         }
         if std::time::Instant::now() >= deadline {
+            // Ended rather than left behind: exiting nonzero while the daemon
+            // quietly finishes coming up would leave the report and the
+            // machine disagreeing about whether anything is running.
+            let _ = child.kill();
+            let _ = child.wait();
             bail!(
-                "the daemon has not started answering after 10s. Its log ends with:\n{}",
-                log_tail(&log_path)
+                "the daemon did not start answering within 10s and was ended. Its log ends with:\n{}",
+                log_tail(&log_path, baseline)
             );
         }
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     }
 }
 
-/// The last few lines of the daemon's log, for an error message that shows the
-/// failure instead of describing it.
-fn log_tail(path: &std::path::Path) -> String {
-    let content = std::fs::read_to_string(path).unwrap_or_default();
-    let count = content.lines().count();
-    content
-        .lines()
+/// The last few lines the daemon wrote after `since`, for an error message
+/// that shows the failure instead of describing it.
+fn log_tail(path: &std::path::Path, since: u64) -> String {
+    let content = std::fs::read(path).unwrap_or_default();
+    let start = usize::try_from(since)
+        .unwrap_or(usize::MAX)
+        .min(content.len());
+    let text = String::from_utf8_lossy(content.get(start..).unwrap_or(&[]));
+    let count = text.lines().count();
+    if count == 0 {
+        return "(nothing was written this start)".to_owned();
+    }
+    text.lines()
         .skip(count.saturating_sub(12))
         .collect::<Vec<_>>()
         .join("\n")
