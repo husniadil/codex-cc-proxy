@@ -286,7 +286,21 @@ a replacement for it.
 
 **Done when** a client started this way is indistinguishable from one started
 after `eval "$(codex-cc-proxy env)"`, unknown arguments reach the child
-untouched, and the child's exit status is the launcher's.
+untouched, the child's exit status is the launcher's, and a client given its own
+`--settings` fails visibly rather than losing one of the two.
+
+**Done**, as `exec`. It is more than a convenience over `env`, which is a change
+from what this entry assumed: client policy has no environment variable
+(`proxy-behavior.md` §7.3), so the shell path cannot carry it and this one can.
+Each of the three paths now has exactly one limit. Writing the settings document
+into a file is complete but touches a file the proxy does not own. `env` leaves
+no trace but carries routing only. `exec` is complete and leaves no trace, and
+is per invocation.
+
+The last clause of the done-when exists because of a measurement taken while
+building it: two `--settings` on one argument list and the client keeps the last
+and drops the first, at exit 0 with an empty stderr. Either placement loses a
+permission rule silently, so the launcher refuses instead.
 
 **More than one upstream account.** One credential file means one account, and
 an account that has run out of quota stops all work rather than some of it.
@@ -357,6 +371,7 @@ alongside what they cost to learn.
 | ~~Does it reject system and developer roles inside `input`, as assumed?~~ | **Answered: yes** — `400 System messages are not allowed`. §2.1 rests on this, and it is now measured rather than assumed. |
 | ~~Does it accept an `input_file` part, the one shape with no upstream precedent?~~ | **Answered: yes.** Claude Code rasterises PDFs into `image` blocks, so no turn from that client reaches `input_file` — the path was closed by posting a `document` block to the ingress surface directly. The backend accepted the part and read the file: a generated PDF containing one random code returned exactly that code. The image path is separately confirmed. |
 | ~~Does it accept a `tool_choice` other than `auto`?~~ | **Answered: yes.** `any` → `required` produced a `tool_use` for the named tool. |
+| Does `client.disable_connectors` still suppress the connector notice on the current client version? | **Open, and carried in rather than measured here.** The setting is documented to be the only thing that silences it, and an environment variable of similar meaning does not — but that was established against an earlier client build, and this repo has not put it through a probe of its own. Low stakes: the failure mode is a banner, not a wrong answer. Method: start the client through the launcher with the setting on and off and read stderr on the first frame. |
 | ~~Does `WebFetch` route through the haiku tier?~~ | **Answered: yes, both of them.** With haiku on a distinguishable model, `WebSearch` reported `query_source: web_search_tool` and `WebFetch` reported `query_source: web_fetch_apply`, both against the haiku model, while the main turns used sonnet's. An unmapped haiku breaks both in a way that looks unrelated to tier mapping. |
 | ~~Does the backend emit `url_citation` annotations, or is `WebSearch` limited to opened pages?~~ | **Answered: it emits them.** A captured live search carried two `response.output_text.annotation.added` events, each a `url_citation` with a title, a URL, and the span of the reply it supports. Both reached the client as `web_search_result` entries, so the reconstruction is built on citations rather than on opened pages. |
 | ~~Does incremental upload produce the same conversation live as on replay?~~ | **Answered, and it did not — twice.** The delta was empty on every continuing turn, so the backend answered from the previous response and the turn repeated itself. With that fixed, the session stopped matching as soon as the model returned a reasoning item, and every turn from the third on uploaded the whole conversation. Both fixed; a live four-turn conversation now uploads one item per turn. |

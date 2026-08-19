@@ -65,11 +65,14 @@ changing an already-sent status.
 ## 2. Command line
 
 ```
-codex-cc-proxy run        start the daemon
+codex-cc-proxy run        start the daemon (--detach: in the background)
 codex-cc-proxy login      authenticate
 codex-cc-proxy status     connection, tier mapping, model catalog
 codex-cc-proxy models     available models
-codex-cc-proxy env        environment for Claude Code
+codex-cc-proxy env        environment for Claude Code, as shell exports
+codex-cc-proxy settings   the same configuration, as one settings document
+codex-cc-proxy exec       run a command with that configuration applied
+codex-cc-proxy stop       ask the running daemon to stop
 codex-cc-proxy doctor     probe live backend capabilities
 codex-cc-proxy usage      what quota is left
 codex-cc-proxy statusline wrap a status-line script, adding that quota
@@ -222,10 +225,13 @@ messages, and whatever the tools read.
 
 Logging is controlled by `RUST_LOG`. Credentials never appear at any level.
 
-### 2.2 `env`
+### 2.2 `env` and `settings`
 
-Emits the configuration Claude Code needs, as shell exports or as a settings
-fragment:
+The configuration Claude Code needs, in two renderings. Neither is a degraded
+version of the other; they carry different amounts because the client has two
+configuration surfaces and only one of them is the environment.
+
+`env` emits shell exports, for a shell:
 
 ```
 ANTHROPIC_BASE_URL=http://127.0.0.1:8787
@@ -251,6 +257,174 @@ an unmapped haiku breaks it in a way that looks unrelated to tier mapping.
 `[1m]` to an unrecognized id and assumes a million tokens — see
 `proxy-behavior.md` §7.2.
 
+**Shell exports carry routing only.** Client policy (§7.3 of
+`proxy-behavior.md`) lives in the client's settings file and has no environment
+variable of any kind, so this rendering cannot deliver it. It says so in a
+comment, which `eval` steps over, and the comment appears only when there is a
+policy being left out.
+
+`settings` emits one complete client settings document. `env --json` is the same
+verb under the older name and prints the same bytes by running it, rather than
+rendering the document a second time — two renderings of one thing is how the
+older name kept a behaviour the newer one had dropped.
+
+```json
+{
+  "env": { "ANTHROPIC_BASE_URL": "http://127.0.0.1:8787", "...": "..." },
+  "permissions": { "deny": ["Skill(claude-api)"] },
+  "disableClaudeAiConnectors": true
+}
+```
+
+**This document is complete on its own.** Measured: a client started with no
+`ANTHROPIC_*` in its environment, reading only a settings file holding this
+document's `env` block, still reached the proxy. It needs no `eval`.
+
+The `permissions` and `disableClaudeAiConnectors` keys are absent from the
+*document* when nothing is configured, rather than present and empty. An empty
+deny list merged over a real one is how a rule disappears.
+
+**The payload behind it is the other way round.** The `env` method's `settings`
+field is always present, an empty object when there is no policy, because
+absence there is reserved for one thing only: a daemon that predates client
+policy. One file is both the daemon and the CLI, and replacing it on disk does
+not restart what is already running, so a newer CLI against an older daemon is
+what an ordinary upgrade leaves behind. If "no policy" and "cannot answer" looked
+alike, nothing could tell the operator which one they had.
+
+`settings` and `exec` **refuse** against such a daemon rather than producing a
+document that looks complete and lacks a permission rule. `env` continues,
+because routing is all it ever carried and an older daemon has all of it — with
+a comment naming the daemon it is talking to. `status` (§3) names the version
+actually running.
+
+**Redirecting this into a settings file overwrites that file.** `>` truncates;
+it does not merge. `.claude/settings.local.json` in particular is where the
+client itself records the permissions a user has accepted, so an existing file
+with real content in it is the common case, not the corner case. Merge, or write
+somewhere nothing else owns. Deep-merging with `jq -s '.[0] * .[1]'` is the
+obvious one-liner and is wrong: it recurses into objects but takes arrays from
+the right-hand side, so the existing `permissions.deny` is replaced rather than
+extended.
+
+The proxy publishes this document and never installs it. Applying it is the job
+of whoever starts the client.
+
+### 2.3 `exec`
+
+Runs a command with the configuration of §2.2 applied, so starting a client is
+one step rather than two.
+
+```
+codex-cc-proxy exec claude --resume abc
+codex-cc-proxy exec -- claude --help
+```
+
+The environment half is set on the child. The policy half rides on the client's
+own settings flag, passed inline: **nothing is written to disk**, so there is no
+file to go stale and none to clean up. The document holds no secret — the auth
+token's value is ignored by design — so a command line is a fine place for it.
+
+Everything from the program name onward is opaque and forwarded in order, so the
+client's own flags keep working unchanged. `--` is accepted for a command whose
+first argument would otherwise be read as this verb's. On Unix the child is
+`exec`d, so signals, job control, the terminal, and the exit status pass through
+untouched.
+
+**It refuses, before starting anything, in three cases.**
+
+When the daemon is not answering: launching anyway hands the operator a
+connection refused from a client that cannot explain it.
+
+When the daemon predates client policy (§2.2): the session would start with a
+permission rule missing and nothing about it would ever say so.
+
+When the forwarded arguments already carry `--settings`. Measured: given two
+settings flags on one argument list, the client keeps the last, drops the first,
+exits 0, and writes nothing to stderr. So leading with this proxy's document
+loses the policy and trailing loses the caller's, both without a word. The
+refusal names the collision and the way out; `codex-cc-proxy settings` prints
+this proxy's half to merge. A program that does not read the flag is never given
+one, so its own `--settings` is not a collision — and because that launch drops
+a rule the operator configured, it is named on stderr rather than left silent:
+the launch carries the environment only.
+
+**The policy half does not reach a grandchild.** A session started this way
+inherits the environment into anything it spawns, but not the argument list, so
+a client started from inside it carries the routing and not the policy. Anything
+that spawns a client composes its own `--settings`.
+
+### 2.4 `stop`
+
+Asks the running daemon to stop, then reports what it observed afterwards.
+
+```
+$ codex-cc-proxy stop
+stopped 0.2.0; something started it again as 0.3.0
+```
+
+The observation is the useful half. Under a supervisor a stop is how a running
+daemon is replaced by the build on disk, which is the answer to "the binary is
+new and nothing changed" — one file is both the daemon and the CLI, and
+replacing it does not restart what is already running (§2.2). Whether anything
+restarts it belongs to the supervisor, so this reports what it saw rather than
+claiming to have done it.
+
+**It watches the `instance`, not the silence.** A socket falling quiet is a
+statement about timing rather than about the daemon: a supervisor quick enough
+leaves no gap to observe, and one that throttles a respawn leaves a gap longer
+than any sensible wait. `status` therefore carries an id minted when the process
+started, and a different id is a different process however the two overlapped.
+
+The windows are three seconds for the daemon to go and twelve for anything to
+bring it back, and it returns as soon as it sees the answer. Twelve because
+launchd holds a respawn for ten seconds after the last start, and a shorter
+window would report "nothing started it again" moments before something did,
+sending the reader to `run` straight into the port the supervisor is about to
+take.
+
+**The answer arrives before the process goes.** A caller reading a closed
+connection with no reply cannot tell a clean stop from a crash, and learning what
+happened is the reason to ask over the socket rather than send a signal. The run
+loop is released only once the response has been written.
+
+**An in-flight turn is cut.** Someone typing `stop` means it, and a dropped
+connection is something the client's own retry already handles.
+
+**It cannot stop a daemon older than itself.** The verb exists to replace a
+running daemon with the build on disk, and a daemon that predates the verb has
+no method to ask — so the first upgrade past this version still has to be ended
+by whatever supervises it. Nothing here can fix that; what it does is say which
+situation it is rather than surface `unknown method` and leave the reader to
+work out that a protocol error is really an upgrade problem.
+
+### 2.5 `run --detach`
+
+Starts the daemon in the background and returns once it answers.
+
+```
+$ codex-cc-proxy run --detach
+daemon running (pid 4711), logging to ~/.config/codex-cc-proxy/daemon.log
+stop it with `codex-cc-proxy stop`
+```
+
+The child is a plain `run` of the same binary in its own process group, with
+stdout and stderr appended to `daemon.log` in the configuration directory —
+a detached process's terminal is gone the moment the command returns, so its
+output needs somewhere durable to go. `stop` (§2.4) is the counterpart.
+
+**Success is observed, not assumed.** The command exits 0 only once the daemon
+answers the control socket. A child that dies first — a held port, a broken
+configuration — is reported with the tail of what it wrote this start quoted,
+and the command exits nonzero. Ten seconds without either is reported the same
+way, and the child is ended rather than left to finish coming up after the
+command has already called it a failure.
+
+**A second detach is refused while the first still answers.** The control
+socket is one per socket path, and a second daemon would take over the socket
+file of the first, leaving the CLI answering for one daemon while another holds
+the port. The refusal names `stop` as the way forward.
+
 ---
 
 ## 3. Control socket
@@ -259,13 +433,14 @@ A Unix domain socket, or a named pipe on Windows, carrying JSON-RPC:
 
 | Method | Returns | v0.1 |
 |---|---|---|
-| `status` | connection state, whether the grant has been **refused**, plan and which source reported it, the tier mapping and the effort ceiling, any mapped model the catalog withholds, whether the catalog was authoritative | yes |
+| `status` | connection state, whether the grant has been **refused**, plan and which source reported it, the tier mapping and the effort ceiling, any mapped model the catalog withholds, whether the catalog was authoritative, the client policy in effect, and the build and `instance` serving the socket | yes |
 | `disconnect` | clears credentials | yes |
 | `models` | catalog, and whether it is the fallback list | yes |
 | `tiers.get` | tier mapping | yes |
 | `usage` | quota snapshot as of the last turn, or that no turn has been made, plus `models` — the ids this daemon serves | yes |
 | `usage.refresh` | asks the backend for a figure now, for a front-end with nothing to show on a daemon that has served no turn | yes |
-| `env` | the §2.2 block | yes |
+| `env` | the §2.2 block: `variables`, and `settings` always present | yes |
+| `shutdown` | `{"stopping": true, "version": ...}`, then the process goes once the answer is written | yes |
 | `record.start` / `record.stop` | fixture capture | yes — `{"mode": "ingress"}` by default, `"upstream"` must be named because it bills every turn that follows |
 | `login` | authorization URL, then completion in the background; `status` reports when it landed | yes |
 | `login.cancel` | abandons a flow and releases the callback port | yes |
@@ -319,6 +494,18 @@ path cannot cover — a front-end with a figure to show on a daemon that has ser
 no turn yet — and its answer is recorded where the stream path records its own,
 so everything reading a quota reads one value.
 
+**`status` reports the version of the build serving the socket.** It is not
+necessarily the build that asked: one file is both, and replacing it does not
+restart a running daemon. The CLI says so only when the two differ, because a
+line printed on every run is one nobody reads on the run that matters.
+
+**`env` keeps its name although its payload now carries more than an
+environment.** The two halves are named inside it — `variables` and `settings` —
+and a caller reading only the first is untouched by the second. Renaming the
+method would cost a shim in a caller that already speaks it and buy no
+capability, so the honesty went into the field names and the CLI verb: `settings`
+is the name for the document, and `env` stays the name for the exports.
+
 The names are reserved whether or not v0.1 answers them: they are semver-bound
 (§6), and a method that appears later must mean what its name said all along. A
 reserved method reports that it is unimplemented rather than failing as though
@@ -357,6 +544,10 @@ identity       = true
 working_budget = true
 append         = "..."
 
+[client]
+deny_skills        = ["claude-api"]
+disable_connectors = true
+
 [upstream]
 client_version           = "2.0.0"
 effective_window_percent = 95.0
@@ -393,6 +584,14 @@ tier written blank is refused, because an omission accepts the shipped answer
 while a blank is a mistake. Each mapped model is validated against the live
 catalog when one is reachable. That validation happens once, at startup: the
 catalog is not refetched, so a mapping cannot go stale while the daemon runs.
+
+`[client]` is policy the client applies to itself, which no environment variable
+can carry — see `proxy-behavior.md` §7.3 for why each default is what it is.
+`deny_skills` names skills refused for a session served here; the proxy writes
+the `Skill(...)` rule the client understands, because a rule built by hand and
+built wrong denies nothing and reports nothing. An empty list allows everything.
+`disable_connectors` suppresses the connector notice the client prints whenever
+an auth token is set, which here is always.
 
 `effort` caps reasoning effort on every request, whatever the client asks for —
 one of `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, `ultra`
@@ -491,6 +690,22 @@ pending work.
 The CLI verb set, the control-socket method names, the configuration keys, and
 the error-type vocabulary are semver-bound. A shipped name is never repurposed or
 removed within a major version; only new ones are added.
+
+**An unknown method reaches the caller as an unknown method.** The error code
+survives the round trip rather than being flattened into one kind, because
+"this daemon does not have that method" and "that method refused what you asked"
+are different situations and only the first is answered by replacing the daemon.
+
+**A field added to a response is a capability, and a caller that needs it checks
+for it.** Adding one is not a breaking change: an older caller ignores what it
+does not know, and must not be "fixed" into a strict check, because that would
+make every upgrade have to be simultaneous. The obligation runs the other way. A
+newer caller that requires a field has to establish it is there rather than infer
+it from a version string — comparing versions forces a policy about which
+differences matter and gets it wrong for a patched build or a forgotten bump.
+Where a field's absence would otherwise be ambiguous, it is emitted empty rather
+than omitted, so that absence keeps meaning "this daemon predates it" and nothing
+else.
 
 The ingress shape is not ours — it tracks the Anthropic Messages API, and
 changes there are not breaking changes in this project's versioning.

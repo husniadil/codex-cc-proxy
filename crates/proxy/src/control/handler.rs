@@ -40,6 +40,15 @@ pub struct ControlState {
     /// The authorization flow, if one is running. Held here because there is
     /// exactly one callback port and every front-end shares it.
     pub login: Arc<crate::auth::daemon_login::LoginFlow>,
+    /// Policy the client applies to itself, published for whoever starts it.
+    ///
+    /// Read once at startup, like the instructions: nothing routes a turn from
+    /// it, so a change that outlives the process belongs in the file where the
+    /// comments explaining it live.
+    pub client: Arc<crate::config::ClientConfig>,
+    /// The stop signal the daemon's own run loop waits on. Shared, so asking
+    /// here moves the process rather than only answering about it.
+    pub shutdown: Arc<crate::daemon::Shutdown>,
     /// The grant, for the two things this socket reports about it: whether it
     /// has been refused, and the token a quota request is made with. `None`
     /// where the daemon holds no credentials at all.
@@ -60,7 +69,16 @@ pub async fn dispatch(
         "status" => Ok(status(state)),
         "models" => Ok(models(state)),
         "tiers.get" => Ok(tiers(state)),
-        "env" => Ok(json!({ "variables": environment(state) })),
+        // Two halves, because the client has two configuration surfaces and
+        // only one of them is the environment. `variables` keeps the shape it
+        // has always had; `settings` is additive, and **always present** — an
+        // empty object where there is no policy. Absence is reserved for a
+        // daemon that predates this, which is the ordinary state after an
+        // upgrade that has not restarted anything.
+        "env" => Ok(json!({
+            "variables": environment(state),
+            "settings": state.client.settings(),
+        })),
         "usage" => Ok(usage(state)),
         "disconnect" => {
             state.credentials.clear()?;
@@ -87,6 +105,13 @@ pub async fn dispatch(
             state.capture.start(mode);
             Ok(json!({ "recording": true, "mode": requested }))
         }
+        // Answers, then goes. The release happens after this response is
+        // written — see `Shutdown`. Under a supervisor this is how a running
+        // daemon is replaced by the build on disk.
+        "shutdown" => {
+            state.shutdown.request();
+            Ok(json!({ "stopping": true, "version": VERSION }))
+        }
         "record.stop" => {
             state.capture.stop();
             Ok(json!({ "recording": false }))
@@ -102,6 +127,22 @@ pub async fn dispatch(
         other => Err(ProxyError::not_found(format!("unknown method `{other}`"))),
     }
 }
+
+/// This binary's version, reported so a caller can see whether the daemon
+/// answering it is the same build it was invoked from. One file is both, and
+/// replacing it on disk does not restart what is already running.
+const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// Minted once, when this process starts.
+///
+/// A stop is observed by watching what answers afterwards, and "it went" cannot
+/// be read from a socket falling silent: a supervisor that restarts inside the
+/// first poll never leaves a gap, and one that throttles respawns leaves a gap
+/// far longer than anything worth waiting for. Both make absence a statement
+/// about timing rather than about the daemon. This changes exactly when the
+/// process does, so the same observation holds either way.
+static INSTANCE: std::sync::LazyLock<String> =
+    std::sync::LazyLock::new(|| uuid::Uuid::new_v4().to_string());
 
 fn status(state: &ControlState) -> Value {
     let authenticated = state
@@ -166,6 +207,20 @@ fn status(state: &ControlState) -> Value {
         // that cannot tell would report an unvalidated mapping as a validated
         // one.
         "catalog_authoritative": state.catalog.authoritative,
+        // The build actually serving this socket, which is not necessarily the
+        // build the caller was invoked from.
+        "version": VERSION,
+        // This process, as distinct from any other that serves the same socket.
+        "instance": &*INSTANCE,
+        // Policy this daemon publishes for whoever starts the client. Reported
+        // under the configuration's own key names, because the person reading
+        // this arrived holding "Skill execution blocked by permission rules" —
+        // a message that names nobody — and what they need next is the key that
+        // undoes it.
+        "client": {
+            "deny_skills": state.client.deny_skills,
+            "disable_connectors": state.client.disable_connectors,
+        },
         "recording": state.capture.any(),
     })
 }

@@ -19,6 +19,34 @@ pub fn default_path() -> PathBuf {
     std::env::temp_dir().join("codex-cc-proxy.sock")
 }
 
+/// This binary's version. One file is both the daemon and the CLI, so the
+/// daemon answering a socket is not necessarily the build that asked.
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// Refuse a payload from a daemon that predates client policy.
+///
+/// **Read as a capability, not a version comparison.** Comparing version
+/// strings forces a policy about which differences matter, and gets it wrong
+/// for a patched build or a forgotten bump. The question being asked is whether
+/// this daemon can answer for the policy, and its payload answers that
+/// directly: the key is always present on a daemon that knows about it, empty
+/// when there is none to state.
+///
+/// Verbs whose correctness depends on the policy call this and stop. Producing
+/// a settings document that silently lacks a permission rule is exactly the
+/// shape of failure this proxy exists to prevent — it would look like a
+/// complete document and behave like an incomplete one.
+pub fn require_client_policy(result: &serde_json::Value) -> Result<(), ProxyError> {
+    if result.get("settings").is_some() {
+        return Ok(());
+    }
+
+    Err(ProxyError::invalid_request(
+        "The running daemon is from an older build and has no client policy to give. Restart \
+         the daemon and try again.",
+    ))
+}
+
 /// Serve the control socket until the process stops.
 #[cfg(unix)]
 pub async fn serve(path: &Path, state: ControlState) -> Result<(), ProxyError> {
@@ -70,6 +98,14 @@ async fn handle_connection(
         body.push('\n');
         writer.write_all(body.as_bytes()).await?;
         writer.flush().await?;
+
+        // Only now. A stop that released the run loop before this flush would
+        // race the process against its own answer, and a caller reading a
+        // closed connection cannot tell a clean stop from a crash.
+        if state.shutdown.requested() {
+            state.shutdown.release();
+            break;
+        }
     }
 
     Ok(())
@@ -149,6 +185,14 @@ pub async fn call(
 
     match (response.result, response.error) {
         (Some(result), _) => Ok(result),
+        // The code survives the trip. Flattening every failure into one kind
+        // reads as tidy and costs a caller the one distinction it acts on:
+        // "this daemon does not have that method" is a different situation from
+        // "that method refused what you asked", and only the first is answered
+        // by replacing the daemon.
+        (None, Some(error)) if error.code == codes::METHOD_NOT_FOUND => {
+            Err(ProxyError::not_found(error.message))
+        }
         (None, Some(error)) => Err(ProxyError::invalid_request(error.message)),
         (None, None) => Err(ProxyError::invalid_request(
             "the daemon returned neither a result nor an error",
@@ -186,6 +230,15 @@ pub async fn serve(path: &Path, state: ControlState) -> Result<(), ProxyError> {
                     break;
                 }
                 let _ = writer.flush().await;
+
+                // Same order as the other listener: released only once the
+                // answer is out. Without this a stop is answered and never
+                // acted on, which is the worse of the two failures because the
+                // caller was told it worked.
+                if state.shutdown.requested() {
+                    state.shutdown.release();
+                    break;
+                }
             }
         });
     }
@@ -230,6 +283,14 @@ pub async fn call(
 
     match (response.result, response.error) {
         (Some(result), _) => Ok(result),
+        // The code survives the trip. Flattening every failure into one kind
+        // reads as tidy and costs a caller the one distinction it acts on:
+        // "this daemon does not have that method" is a different situation from
+        // "that method refused what you asked", and only the first is answered
+        // by replacing the daemon.
+        (None, Some(error)) if error.code == codes::METHOD_NOT_FOUND => {
+            Err(ProxyError::not_found(error.message))
+        }
         (None, Some(error)) => Err(ProxyError::invalid_request(error.message)),
         (None, None) => Err(ProxyError::invalid_request(
             "the daemon returned neither a result nor an error",

@@ -21,8 +21,27 @@ pub enum Command {
     Status,
     /// Available models.
     Models,
-    /// Environment for Claude Code.
+    /// Environment for Claude Code, as shell exports.
     Env(EnvArgs),
+    /// The same configuration as one client settings document.
+    ///
+    /// A separate verb rather than a flag on `env`, because it produces
+    /// something an environment is not: it carries the client policy no export
+    /// can hold. `env --json` prints the identical document and stays for the
+    /// callers that already use it.
+    Settings,
+    /// Ask the running daemon to stop.
+    ///
+    /// Named for what it asks, not for what follows: whether anything starts
+    /// the daemon again belongs to whatever supervises it. What happened is
+    /// reported from what was observed afterwards.
+    Stop,
+    /// Run a command with this proxy's configuration applied.
+    ///
+    /// Named for what it does rather than what it launches: a launcher that
+    /// only ever starts one program is a launcher that cannot start the next
+    /// one.
+    Exec(ExecArgs),
     /// Probe backend capabilities.
     Doctor(DoctorArgs),
     /// What quota is left, as of the last turn.
@@ -38,13 +57,29 @@ pub struct RunArgs {
     /// Port to bind on loopback. Overrides the configured value.
     #[arg(long, env = "CODEX_CC_PROXY_PORT")]
     pub port: Option<u16>,
+    /// Start the daemon in the background and return once it answers.
+    #[arg(long)]
+    pub detach: bool,
 }
 
 #[derive(Debug, clap::Args)]
 pub struct EnvArgs {
     /// Emit a Claude Code settings fragment instead of shell exports.
+    ///
+    /// The same output as the `settings` verb, which is the name for it.
     #[arg(long)]
     pub json: bool,
+}
+
+#[derive(Debug, clap::Args)]
+pub struct ExecArgs {
+    /// The program to start, and everything to hand it.
+    ///
+    /// Opaque from the program name onward, so the client's own flags keep
+    /// working unchanged. `--` is accepted for a command whose first argument
+    /// would otherwise be read as this verb's.
+    #[arg(trailing_var_arg = true, allow_hyphen_values = true, required = true)]
+    pub command: Vec<String>,
 }
 
 #[derive(Debug, clap::Args)]
@@ -105,6 +140,63 @@ mod tests {
     #[test]
     fn cli_definition_is_valid() {
         Cli::command().debug_assert();
+    }
+
+    #[test]
+    fn stop_parses_as_a_verb_of_its_own() {
+        let cli = Cli::try_parse_from(["codex-cc-proxy", "stop"]).unwrap();
+        assert!(matches!(cli.command, Command::Stop));
+    }
+
+    /// The flag belongs to `run` alone; without it the daemon owns the
+    /// terminal, which is the right default for watching it work.
+    #[test]
+    fn run_can_be_asked_to_detach() {
+        let cli = Cli::try_parse_from(["codex-cc-proxy", "run", "--detach"]).unwrap();
+        let Command::Run(args) = cli.command else {
+            panic!("run should parse");
+        };
+        assert!(args.detach);
+
+        let cli = Cli::try_parse_from(["codex-cc-proxy", "run"]).unwrap();
+        let Command::Run(args) = cli.command else {
+            panic!("run should parse");
+        };
+        assert!(!args.detach);
+    }
+
+    /// `env --json` and `settings` are one document under two names, so a
+    /// caller cannot pick the one that leaves the policy out.
+    #[test]
+    fn settings_parses_as_a_verb_of_its_own() {
+        let cli = Cli::try_parse_from(["codex-cc-proxy", "settings"]).unwrap();
+        assert!(matches!(cli.command, Command::Settings));
+    }
+
+    /// Everything after the program name belongs to the child, hyphens and
+    /// all. A launcher that swallowed one would make the thing it wraps
+    /// undebuggable.
+    #[test]
+    fn exec_forwards_everything_after_the_program() {
+        let cli =
+            Cli::try_parse_from(["codex-cc-proxy", "exec", "claude", "--resume", "abc", "-p"])
+                .unwrap();
+        let Command::Exec(args) = cli.command else {
+            panic!("expected exec");
+        };
+        assert_eq!(args.command, ["claude", "--resume", "abc", "-p"]);
+    }
+
+    /// `--` for the command whose own first argument would otherwise be read
+    /// here. The separator itself is not passed on.
+    #[test]
+    fn exec_accepts_a_double_dash_boundary() {
+        let cli =
+            Cli::try_parse_from(["codex-cc-proxy", "exec", "--", "claude", "--help"]).unwrap();
+        let Command::Exec(args) = cli.command else {
+            panic!("expected exec");
+        };
+        assert_eq!(args.command, ["claude", "--help"]);
     }
 
     #[test]

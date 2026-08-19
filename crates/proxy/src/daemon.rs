@@ -40,3 +40,46 @@ pub async fn serve(listener: tokio::net::TcpListener, state: AppState) -> Result
 async fn shutdown() {
     let _ = tokio::signal::ctrl_c().await;
 }
+
+/// A stop asked for over the control socket.
+///
+/// **Two steps, and the order is the whole point.** `request` records the
+/// intent and returns, so the handler can answer; the run loop is released only
+/// once that answer has been written. A caller that saw its connection close
+/// with no reply could not tell a clean stop from a crash, and learning what
+/// happened is the reason to ask over the socket rather than send a signal.
+///
+/// Under a supervisor this is how a running daemon is replaced by the build on
+/// disk: it stops, and the supervisor starts the file again. Whether anything
+/// does that is the supervisor's business, so this reports only that it is
+/// going.
+#[derive(Debug, Default)]
+pub struct Shutdown {
+    requested: std::sync::atomic::AtomicBool,
+    released: tokio::sync::Notify,
+}
+
+impl Shutdown {
+    /// Record that a stop was asked for. Does not release anything yet.
+    pub fn request(&self) {
+        self.requested
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    pub fn requested(&self) -> bool {
+        self.requested.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// Release the run loop. Called once the answer is on the wire.
+    ///
+    /// `notify_one` rather than `notify_waiters`: it stores a permit when
+    /// nobody is waiting yet, so a stop asked for before the loop reaches its
+    /// wait is not lost.
+    pub fn release(&self) {
+        self.released.notify_one();
+    }
+
+    pub async fn wait(&self) {
+        self.released.notified().await;
+    }
+}

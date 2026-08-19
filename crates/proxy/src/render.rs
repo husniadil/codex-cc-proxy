@@ -5,26 +5,84 @@
 
 use serde_json::Value;
 
-/// `docs/api.md` §2.1 — shell exports.
+/// `docs/api.md` §2.2 — shell exports, for a shell.
+///
+/// Routing only. Client policy lives in the client's settings file and has no
+/// environment variable of any kind, so this rendering cannot carry it and says
+/// so in a comment `eval` steps over.
+///
+/// It keeps working against a daemon older than this binary, because routing is
+/// all it ever carried and an older daemon has all of it. That case gets its own
+/// comment: continuing quietly while a permission rule goes missing is the
+/// failure this whole area exists to prevent.
 pub fn env_shell(result: &Value) -> String {
-    variables(result)
-        .into_iter()
-        .map(|(name, value)| format!("export {name}={}", quote(&value)))
-        .collect::<Vec<_>>()
-        .join("\n")
+    let mut lines = Vec::new();
+
+    match result.get("settings").and_then(Value::as_object) {
+        None => {
+            lines.push(
+                "# The running daemon is from an older build, so the client policy is missing"
+                    .to_owned(),
+            );
+            lines.push("# from the exports below. Restart the daemon to pick it up.".to_owned());
+        }
+        Some(policy) if !policy.is_empty() => {
+            lines.push(
+                "# Client policy (a denied skill, the connector notice) is not below: it lives in \
+                 the client's"
+                    .to_owned(),
+            );
+            lines.push(
+                "# settings file and has no environment variable. `codex-cc-proxy settings` \
+                 carries it,"
+                    .to_owned(),
+            );
+            lines.push("# and `codex-cc-proxy exec` applies it for one run.".to_owned());
+        }
+        // Present and empty: the daemon knows about this and has nothing to say.
+        Some(_) => {}
+    }
+
+    lines.extend(
+        variables(result)
+            .into_iter()
+            .map(|(name, value)| format!("export {name}={}", quote(&value))),
+    );
+
+    lines.join("\n")
 }
 
-/// The same, as a settings fragment.
-pub fn env_json(result: &Value) -> String {
+/// `docs/api.md` §2.2 — one complete client settings document.
+///
+/// Complete on its own, which is measured rather than assumed: a client started
+/// with no `ANTHROPIC_*` in its environment, reading only a settings file
+/// holding this document's `env` block, still reached the proxy. So this is not
+/// half a configuration waiting for an `eval`.
+pub fn settings_json(result: &Value) -> String {
     let map: serde_json::Map<String, Value> = variables(result)
         .into_iter()
         .map(|(name, value)| (name, Value::from(value)))
         .collect();
 
-    serde_json::to_string_pretty(&serde_json::json!({ "env": map })).unwrap_or_default()
+    let mut document = serde_json::Map::new();
+    document.insert("env".to_owned(), Value::Object(map));
+
+    // The policy half merges in as siblings of `env`, because that is where the
+    // client reads them. Absent when the daemon published none: an empty
+    // `permissions` block would read as a policy to whoever merges this, and
+    // merging an empty deny list over a real one is how a rule disappears.
+    if let Some(policy) = result.get("settings").and_then(Value::as_object) {
+        for (key, value) in policy {
+            document.insert(key.clone(), value.clone());
+        }
+    }
+
+    serde_json::to_string_pretty(&Value::Object(document)).unwrap_or_default()
 }
 
-fn variables(result: &Value) -> Vec<(String, String)> {
+/// The environment half of the payload, for a caller that sets it rather than
+/// prints it.
+pub fn variables(result: &Value) -> Vec<(String, String)> {
     result
         .get("variables")
         .and_then(Value::as_array)
@@ -139,6 +197,54 @@ pub fn status(result: &Value) -> String {
         lines.push(format!(
             "catalog    {} {verb} mapped but not offered by the catalog",
             withheld.join(", ")
+        ));
+    }
+
+    // One binary is both the daemon and the CLI, and replacing the file does not
+    // restart what is already running — so a newer CLI against an older daemon
+    // is the ordinary state after an upgrade. Silent when they agree: a line
+    // printed on every run is one nobody reads on the run that matters.
+    //
+    // Two reads, because either can be the only one that fires. A version
+    // string catches an upgrade across releases. Within one — two builds of the
+    // same version, one of them older than a feature — the string is equal and
+    // the missing field is the only evidence there is.
+    let older_build = field(result, "client").is_none();
+    let daemon_version = field(result, "version").and_then(Value::as_str);
+    match (daemon_version, older_build) {
+        // Across releases the string is the plain answer, and it names both
+        // sides so the reader can tell which way round it is.
+        (Some(daemon), _) if daemon != crate::control::VERSION => lines.push(format!(
+            "version    daemon {daemon}, this binary {} — restart the daemon",
+            crate::control::VERSION
+        )),
+        // Old enough that it does not report a version at all. Saying which
+        // number it did not report would be inventing one.
+        (None, true) => lines
+            .push("version    the daemon is old enough not to report one — restart it".to_owned()),
+        // Same string on both sides, and one of them older than a feature. The
+        // string says nothing here, so the missing field is the only evidence
+        // there is.
+        (Some(daemon), true) => lines.push(format!(
+            "version    the daemon reports {daemon}, this binary's own, but is an older \
+             build — restart it"
+        )),
+        _ => {}
+    }
+
+    // The one place a denied skill is ever attributed. The client's own refusal
+    // names no source, so without this the only way to find out is to guess.
+    // Silent when nothing is denied: a line about an empty policy sends the
+    // reader looking for a rule that does not exist.
+    let denied: Vec<&str> = field(result, "client")
+        .and_then(|client| field(client, "deny_skills"))
+        .and_then(Value::as_array)
+        .map(|skills| skills.iter().filter_map(Value::as_str).collect())
+        .unwrap_or_default();
+    if !denied.is_empty() {
+        lines.push(format!(
+            "client     {} denied — change with `client.deny_skills`",
+            denied.join(", ")
         ));
     }
 

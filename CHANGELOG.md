@@ -4,6 +4,63 @@ All notable changes to this project are recorded here. This project follows
 [semantic versioning](https://semver.org). The semver-bound surfaces are listed
 in [`docs/api.md`](docs/api.md) §6.
 
+## [Unreleased]
+
+### Added
+
+- **`run --detach` starts the daemon in the background.** The command returns
+  once the daemon answers the control socket, printing the pid, the log path,
+  and `stop` as the counterpart. A child that dies at startup is reported with
+  its own log quoted and a nonzero exit; a second detach is refused while a
+  daemon still answers, because it would take over the first one's socket file.
+
+- **The proxy publishes the policy a client cannot be told by environment
+  variable.** Two of the things a client has to be told live in its settings
+  file, and no export reaches them — checked against the whole settings schema,
+  there is no per-skill variable and nothing that points at an extra settings
+  file. `[client]` now carries `deny_skills` and `disable_connectors`, the `env`
+  control method carries a `settings` half beside `variables`, and a new
+  `settings` verb prints one complete client settings document. That document is
+  complete on its own: measured, a client reading only its `env` block, with no
+  `ANTHROPIC_*` in its environment, still reached the proxy.
+- **The bundled `claude-api` skill is denied by default.** Measured against a
+  local capture stub, one invocation lands 73,000 to 93,000 bytes — roughly
+  18,000 to 23,000 tokens — in the conversation as a user item, where it sits
+  for the rest of the session and is charged every turn, while a refused
+  invocation costs a 43-byte error. A range because both ends were measured and
+  the figure moves with what else the session has loaded. Denying does not remove it from the listing the client sends; what it
+  stops is the load. It is also the wrong reference for a session served here,
+  documenting another provider's model ids, prices, and parameters. Switchable
+  in `[client]`, and `status` names it so the person holding "Skill execution
+  blocked by permission rules" can find the key that undoes it.
+- **`stop`**, so a daemon can be replaced with the CLI that replaced it. It
+  watches the `instance` id `status` now carries rather than watching the socket
+  fall silent, because silence is a statement about timing: a supervisor quick
+  enough leaves no gap to see, and one that throttles a respawn leaves a gap
+  longer than any sensible wait. Under a
+  supervisor, stopping is how a running daemon picks up the build on disk, and
+  this reports what it observed afterwards: gone, or started again and on which
+  version. The answer reaches the caller before the process goes, because a
+  closed connection with no reply cannot be told apart from a crash. An
+  in-flight turn is cut, which is what the person typing it asked for.
+- **A newer CLI will not quietly serve an older daemon.** One file is both, and
+  replacing it on disk does not restart what is already running, so this is what
+  an ordinary upgrade leaves behind. The policy half of the `env` payload is
+  therefore always present, empty where there is none, and absence means only
+  that the daemon predates it. `settings` and `exec` refuse such a daemon rather
+  than producing a document that looks complete and lacks a permission rule;
+  `env` continues, because routing is all it ever carried, and names the daemon
+  it is talking to. `status` reports the version actually serving the socket and
+  says so only when it differs from the binary that asked. The decision reads a
+  capability rather than comparing version strings, which would force a policy
+  about which differences matter and get it wrong for a patched build.
+- **`exec`**, a launcher: it applies both halves and runs the command, so
+  starting a client is one step. Nothing is written to disk — the policy rides
+  inline on the client's own settings flag. It refuses before starting anything
+  when the daemon is not answering, and when the forwarded arguments already
+  carry `--settings`, because the client keeps only the last such flag and drops
+  the first without a word.
+
 ## [0.2.0]
 
 A daemon a front-end can drive. Every capability below was reachable only by

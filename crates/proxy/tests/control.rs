@@ -72,6 +72,12 @@ struct Harness {
     /// the difference between testing that a flag round-trips and testing that
     /// the method does anything.
     switches: Arc<codex_cc_proxy::recorder::Switches>,
+    /// The policy the daemon publishes for whoever starts the client. Held so a
+    /// test can switch it off and assert that nothing is left behind.
+    client: Arc<codex_cc_proxy::config::ClientConfig>,
+    /// The same signal the daemon's own run loop waits on, so a test can assert
+    /// a stop actually moved something rather than only answering.
+    shutdown: Arc<codex_cc_proxy::daemon::Shutdown>,
     _dir: tempfile::TempDir,
 }
 
@@ -85,6 +91,8 @@ impl Harness {
         let policy = Arc::new(codex_cc_proxy::policy::Policy::new(
             codex_cc_proxy::policy::Snapshot::new(tiers(), None),
         ));
+        let client = Arc::new(codex_cc_proxy::config::ClientConfig::default());
+        let shutdown = Arc::new(codex_cc_proxy::daemon::Shutdown::default());
 
         let state = ControlState {
             port: 8787,
@@ -101,6 +109,8 @@ impl Harness {
             capture: Arc::clone(&switches),
             usage: Arc::clone(&usage),
             login: Arc::new(codex_cc_proxy::auth::daemon_login::LoginFlow::default()),
+            client: Arc::clone(&client),
+            shutdown: Arc::clone(&shutdown),
             // No credentials to ask with, and no endpoint that would answer:
             // no test may reach the network.
             tokens: None,
@@ -131,6 +141,8 @@ impl Harness {
             policy,
             switches,
             usage,
+            client,
+            shutdown,
             _dir: dir,
         }
     }
@@ -149,6 +161,18 @@ impl Harness {
         let catalog = r#"{"data":[{"id":"gpt-5.6-terra","context_window":272000},
                                   {"id":"gpt-5.4-mini","context_window":200000}]}"#;
         harness.respawn(catalog, "gpt-5.6-terra").await
+    }
+
+    /// The same harness, publishing the caller's client policy — for the tests
+    /// about what switching it off leaves behind.
+    async fn with_client(self, client: codex_cc_proxy::config::ClientConfig) -> Self {
+        let harness = Self {
+            client: Arc::new(client),
+            ..self
+        };
+        let catalog = r#"{"data":[{"id":"gpt-5.6-terra","context_window":272000},
+                                  {"id":"gpt-5.4-mini","context_window":200000}]}"#;
+        harness.respawn(catalog, "gpt-5.4-mini").await
     }
 
     /// A harness whose catalog and single mapped model are the caller's, for
@@ -189,6 +213,8 @@ impl Harness {
             capture: Arc::clone(&self.switches),
             usage: Arc::clone(&self.usage),
             login: Arc::new(codex_cc_proxy::auth::daemon_login::LoginFlow::default()),
+            client: Arc::clone(&self.client),
+            shutdown: Arc::clone(&self.shutdown),
             tokens,
             usage_endpoint: String::new(),
             config_path: Some(self.config.clone()),
@@ -494,6 +520,8 @@ async fn an_unknown_window_is_reported_as_null() {
         capture: Arc::new(codex_cc_proxy::recorder::Switches::default()),
         usage: Arc::new(codex_cc_proxy::usage::UsageStore::default()),
         login: Arc::new(codex_cc_proxy::auth::daemon_login::LoginFlow::default()),
+        client: Arc::new(codex_cc_proxy::config::ClientConfig::default()),
+        shutdown: Arc::new(codex_cc_proxy::daemon::Shutdown::default()),
         tokens: None,
         usage_endpoint: String::new(),
         config_path: None,
@@ -641,6 +669,8 @@ async fn a_malformed_request_is_reported_without_closing_the_socket() {
         capture: Arc::new(codex_cc_proxy::recorder::Switches::default()),
         usage: Arc::new(codex_cc_proxy::usage::UsageStore::default()),
         login: Arc::new(codex_cc_proxy::auth::daemon_login::LoginFlow::default()),
+        client: Arc::new(codex_cc_proxy::config::ClientConfig::default()),
+        shutdown: Arc::new(codex_cc_proxy::daemon::Shutdown::default()),
         tokens: None,
         usage_endpoint: String::new(),
         config_path: None,
@@ -700,13 +730,168 @@ async fn env_renders_as_a_settings_fragment() {
     let harness = Harness::start().await;
     let result = harness.call("env").await.unwrap();
 
-    let parsed: Value = serde_json::from_str(&render::env_json(&result)).unwrap();
+    let parsed: Value = serde_json::from_str(&render::settings_json(&result)).unwrap();
 
     assert_eq!(
         parsed["env"]["ANTHROPIC_DEFAULT_FABLE_MODEL"],
         json!("gpt-5.4-mini")
     );
     assert_eq!(parsed["env"]["CLAUDE_CODE_DISABLE_1M_CONTEXT"], json!("1"));
+}
+
+/// The payload carries both halves of what a client needs, under names of their
+/// own. A caller reading only `variables` is untouched by this, which is what
+/// makes it safe to add underneath one that already exists.
+#[tokio::test]
+async fn the_env_payload_carries_the_client_policy_beside_the_variables() {
+    let harness = Harness::start().await;
+    let result = harness.call("env").await.unwrap();
+
+    assert!(
+        result["variables"].is_array(),
+        "the existing half must keep its shape: {result}"
+    );
+    assert_eq!(
+        result["settings"],
+        json!({
+            "permissions": { "deny": ["Skill(claude-api)"] },
+            "disableClaudeAiConnectors": true,
+        })
+    );
+}
+
+/// One document, complete on its own.
+///
+/// Measured: a settings file's `env` key routes without help. A client started
+/// with no `ANTHROPIC_*` in its environment, reading only this document, still
+/// reached the proxy. So this rendering is not half a configuration waiting for
+/// an `eval` — it is the whole thing, and it carries the policy an export
+/// cannot.
+#[tokio::test]
+async fn the_settings_rendering_is_a_complete_configuration() {
+    let harness = Harness::start().await;
+    let result = harness.call("env").await.unwrap();
+
+    let parsed: Value = serde_json::from_str(&render::settings_json(&result)).unwrap();
+
+    assert_eq!(
+        parsed["env"]["ANTHROPIC_BASE_URL"],
+        json!("http://127.0.0.1:8787")
+    );
+    assert_eq!(
+        parsed["permissions"]["deny"],
+        json!(["Skill(claude-api)"]),
+        "the policy half belongs in the same document as the routing half"
+    );
+    assert_eq!(parsed["disableClaudeAiConnectors"], json!(true));
+}
+
+/// Shell exports carry routing and say so.
+///
+/// A deny rule has no environment variable — checked against the whole settings
+/// schema, there is none — so this rendering is incomplete by construction. The
+/// comment is the only place a reader finds that out at the moment it matters,
+/// and `eval` steps over it.
+#[tokio::test]
+async fn shell_exports_name_what_they_cannot_carry() {
+    let harness = Harness::start().await;
+    let result = harness.call("env").await.unwrap();
+
+    let rendered = render::env_shell(&result);
+
+    assert!(
+        rendered.contains("export ANTHROPIC_BASE_URL=http://127.0.0.1:8787"),
+        "{rendered}"
+    );
+    assert!(
+        !rendered.contains("Skill(claude-api)"),
+        "a deny rule is not an environment variable: {rendered}"
+    );
+    assert!(
+        rendered.lines().any(|line| line.starts_with('#')),
+        "the gap has to be stated where it is discovered: {rendered}"
+    );
+    assert!(
+        rendered.contains("settings"),
+        "the comment has to name the rendering that does carry it: {rendered}"
+    );
+}
+
+/// Switched off leaves nothing behind.
+///
+/// The absent key is the assertion. A document that always carries an empty
+/// `permissions` block would look like a policy to whoever merges it, and
+/// merging an empty deny list over a real one is how a rule disappears.
+#[tokio::test]
+async fn a_client_policy_switched_off_leaves_no_trace() {
+    let harness = Harness::start()
+        .await
+        .with_client(codex_cc_proxy::config::ClientConfig {
+            deny_skills: Vec::new(),
+            disable_connectors: false,
+        })
+        .await;
+    let result = harness.call("env").await.unwrap();
+
+    // Present and empty: see `the_policy_half_is_present_and_empty_rather_than_absent`
+    // for why absence has to stay reserved for a daemon that predates this.
+    assert_eq!(result["settings"], json!({}), "{result}");
+
+    let parsed: Value = serde_json::from_str(&render::settings_json(&result)).unwrap();
+    assert!(parsed["env"].is_object(), "{parsed}");
+    assert!(parsed.get("permissions").is_none(), "{parsed}");
+    assert!(
+        parsed.get("disableClaudeAiConnectors").is_none(),
+        "{parsed}"
+    );
+
+    let rendered = render::env_shell(&result);
+    assert!(
+        !rendered.lines().any(|line| line.starts_with('#')),
+        "there is no gap left to warn about: {rendered}"
+    );
+}
+
+/// The client refuses a denied skill with "Skill execution blocked by
+/// permission rules" and names nobody. This is where the person holding that
+/// message finds out what blocked it and which key to change.
+#[tokio::test]
+async fn status_names_the_client_policy_and_the_key_that_sets_it() {
+    let harness = Harness::start().await;
+    let result = harness.call("status").await.unwrap();
+
+    assert_eq!(result["client"]["deny_skills"], json!(["claude-api"]));
+    assert_eq!(result["client"]["disable_connectors"], json!(true));
+
+    let rendered = render::status(&result);
+    assert!(
+        rendered.contains("claude-api"),
+        "the blocked skill has to be named: {rendered}"
+    );
+    assert!(
+        rendered.contains("deny_skills"),
+        "and so has the key that undoes it: {rendered}"
+    );
+}
+
+/// Nothing denied, nothing said. A status line reporting an empty policy would
+/// have the reader looking for a rule that is not there.
+#[tokio::test]
+async fn status_stays_quiet_when_nothing_is_denied() {
+    let harness = Harness::start()
+        .await
+        .with_client(codex_cc_proxy::config::ClientConfig {
+            deny_skills: Vec::new(),
+            disable_connectors: true,
+        })
+        .await;
+    let result = harness.call("status").await.unwrap();
+
+    let rendered = render::status(&result);
+    assert!(
+        !rendered.contains("deny_skills"),
+        "there is no denial to attribute: {rendered}"
+    );
 }
 
 /// The rendered status names the plan and the account, because that is the
@@ -812,6 +997,8 @@ async fn status_says_when_the_catalog_was_unavailable() {
         capture: Arc::new(codex_cc_proxy::recorder::Switches::default()),
         usage: Arc::new(codex_cc_proxy::usage::UsageStore::default()),
         login: Arc::new(codex_cc_proxy::auth::daemon_login::LoginFlow::default()),
+        client: Arc::new(codex_cc_proxy::config::ClientConfig::default()),
+        shutdown: Arc::new(codex_cc_proxy::daemon::Shutdown::default()),
         tokens: None,
         usage_endpoint: String::new(),
         config_path: None,
@@ -842,6 +1029,8 @@ async fn models_prints_unknown_rather_than_a_number() {
         capture: Arc::new(codex_cc_proxy::recorder::Switches::default()),
         usage: Arc::new(codex_cc_proxy::usage::UsageStore::default()),
         login: Arc::new(codex_cc_proxy::auth::daemon_login::LoginFlow::default()),
+        client: Arc::new(codex_cc_proxy::config::ClientConfig::default()),
+        shutdown: Arc::new(codex_cc_proxy::daemon::Shutdown::default()),
         tokens: None,
         usage_endpoint: String::new(),
         config_path: None,
@@ -912,6 +1101,8 @@ async fn env_states_no_window_when_the_catalog_is_unavailable() {
         capture: Arc::new(codex_cc_proxy::recorder::Switches::default()),
         usage: Arc::new(codex_cc_proxy::usage::UsageStore::default()),
         login: Arc::new(codex_cc_proxy::auth::daemon_login::LoginFlow::default()),
+        client: Arc::new(codex_cc_proxy::config::ClientConfig::default()),
+        shutdown: Arc::new(codex_cc_proxy::daemon::Shutdown::default()),
         tokens: None,
         usage_endpoint: String::new(),
         config_path: None,
@@ -1379,7 +1570,45 @@ async fn refusing_token_endpoint() -> String {
 
     tokio::spawn(async move {
         while let Ok((mut stream, _)) = listener.accept().await {
+            use tokio::io::AsyncReadExt;
             use tokio::io::AsyncWriteExt;
+
+            // Consume the whole request before answering. Replying first races
+            // the reply against the client still writing its request, and
+            // closing a socket with unread inbound data resets the connection
+            // instead of finishing it — a race the client loses only when the
+            // machine is busy, which made this stub the suite's one flaky
+            // dependency.
+            let mut request = Vec::new();
+            let mut buffer = [0u8; 4096];
+            while let Ok(read) = stream.read(&mut buffer).await {
+                if read == 0 {
+                    break;
+                }
+                request.extend_from_slice(&buffer[..read]);
+                let Some(headers_end) = request
+                    .windows(4)
+                    .position(|window| window == b"\r\n\r\n")
+                    .map(|position| position + 4)
+                else {
+                    continue;
+                };
+                let headers = String::from_utf8_lossy(&request[..headers_end]);
+                let content_length: usize = headers
+                    .lines()
+                    .find_map(|line| {
+                        line.to_ascii_lowercase()
+                            .strip_prefix("content-length:")
+                            .map(str::trim)
+                            .map(str::to_owned)
+                    })
+                    .and_then(|value| value.parse().ok())
+                    .unwrap_or(0);
+                if request.len() >= headers_end + content_length {
+                    break;
+                }
+            }
+
             let body = r#"{"error":"refresh_token_expired"}"#;
             let reply = format!(
                 "HTTP/1.1 400 Bad Request\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
@@ -1429,13 +1658,230 @@ async fn status_reports_a_grant_the_backend_refused() {
         json!(false)
     );
 
-    tokens
+    let refusal = tokens
         .access_token()
         .await
         .expect_err("the grant should have been refused");
-    assert!(tokens.is_dead());
+    assert!(
+        tokens.is_dead(),
+        "the refusal was not treated as terminal: {refusal:?}"
+    );
 
     let status = harness.call("status").await.unwrap();
     assert_eq!(status["auth"]["connected"], json!(true));
     assert_eq!(status["auth"]["dead"], json!(true));
+}
+
+// ---------------------------------------------------------------------------
+// Version skew. One binary is both the daemon and the CLI, and upgrading the
+// file on disk does not restart the daemon — so a newer CLI talking to an older
+// daemon is the ordinary state after an upgrade, not an exotic one.
+// ---------------------------------------------------------------------------
+
+/// Present and empty rather than absent.
+///
+/// Absence has to mean exactly one thing. With the key omitted when the policy
+/// is empty, a daemon that predates client policy and a daemon told to publish
+/// none look identical from here, and the CLI cannot tell the operator which it
+/// is. Same rule `unlisted_tiers` already follows.
+#[tokio::test]
+async fn the_policy_half_is_present_and_empty_rather_than_absent() {
+    let harness = Harness::start()
+        .await
+        .with_client(codex_cc_proxy::config::ClientConfig {
+            deny_skills: Vec::new(),
+            disable_connectors: false,
+        })
+        .await;
+    let result = harness.call("env").await.unwrap();
+
+    assert_eq!(
+        result["settings"],
+        json!({}),
+        "no policy is still an answer, and has to be reported as one: {result}"
+    );
+}
+
+/// The capability is read from the payload, not from a version comparison.
+///
+/// Comparing version strings forces a policy about which differences matter and
+/// gets it wrong for anyone running a patched build or anyone who forgets to
+/// raise the number. The question actually being asked is whether this daemon
+/// can answer for the policy, and the payload answers it directly.
+#[test]
+fn a_daemon_that_predates_the_policy_is_told_apart_from_one_that_has_none() {
+    let predates = json!({ "variables": [] });
+    let has_none = json!({ "variables": [], "settings": {} });
+
+    let error = control::require_client_policy(&predates)
+        .expect_err("a daemon that cannot answer for the policy must not be assumed to have none");
+    assert!(
+        error.message.contains("older build"),
+        "the refusal has to name the situation: {}",
+        error.message
+    );
+    assert!(
+        error.message.to_lowercase().contains("restart the daemon"),
+        "and what to do: {}",
+        error.message
+    );
+
+    control::require_client_policy(&has_none)
+        .expect("a daemon that published an empty policy answered the question");
+}
+
+/// `status` names both versions when they differ, and this is where an operator
+/// looks first when something behaves as though a change never landed.
+#[test]
+fn status_names_a_version_skew_between_the_daemon_and_this_binary() {
+    let stale = json!({
+        "base_url": "http://127.0.0.1:8787",
+        "version": "0.0.1-from-before",
+        "auth": { "connected": false },
+    });
+
+    let rendered = render::status(&stale);
+    assert!(
+        rendered.contains("0.0.1-from-before"),
+        "the daemon's version has to appear: {rendered}"
+    );
+    assert!(
+        rendered.contains(env!("CARGO_PKG_VERSION")),
+        "and this binary's, so the two can be compared at a glance: {rendered}"
+    );
+    assert!(
+        rendered.to_lowercase().contains("restart the daemon"),
+        "and what to do about it: {rendered}"
+    );
+}
+
+/// Agreement is the common case and says nothing. A line that appears on every
+/// run is one nobody reads on the run that matters.
+#[tokio::test]
+async fn status_is_quiet_when_the_daemon_is_this_binary() {
+    let harness = Harness::start().await;
+    let result = harness.call("status").await.unwrap();
+
+    assert_eq!(result["version"], json!(env!("CARGO_PKG_VERSION")));
+    let rendered = render::status(&result);
+    assert!(
+        !rendered.to_lowercase().contains("restart the daemon"),
+        "nothing to warn about: {rendered}"
+    );
+}
+
+/// Shell exports keep working against an older daemon, because everything they
+/// carry is routing and an older daemon has all of it. They say what is
+/// missing, which is the whole reason this path is allowed to continue.
+#[test]
+fn shell_exports_keep_working_against_an_older_daemon_and_say_so() {
+    let predates = json!({
+        "variables": [["ANTHROPIC_BASE_URL", "http://127.0.0.1:8787"]],
+    });
+
+    let rendered = render::env_shell(&predates);
+    assert!(
+        rendered.contains("export ANTHROPIC_BASE_URL=http://127.0.0.1:8787"),
+        "routing still works: {rendered}"
+    );
+    assert!(
+        rendered.to_lowercase().contains("restart the daemon"),
+        "and the reason the policy is missing is named: {rendered}"
+    );
+}
+
+/// The answer arrives before the process goes.
+///
+/// A caller that saw the connection close with no reply could not tell a clean
+/// stop from a crash, and the whole point of asking over the socket rather than
+/// with a signal is that the asker learns what happened. So the request marks
+/// the intent, and the run loop is only released once the response has been
+/// written. This asserts both halves in the order they have to happen: a reply
+/// came back, and only then did the signal the daemon waits on fire.
+#[tokio::test]
+async fn a_stop_answers_first_and_releases_the_run_loop_after() {
+    let harness = Harness::start().await;
+
+    let result = harness.call("shutdown").await.unwrap();
+    assert_eq!(result["stopping"], json!(true));
+    assert_eq!(
+        result["version"],
+        json!(env!("CARGO_PKG_VERSION")),
+        "the answer says which build is going away: {result}"
+    );
+
+    tokio::time::timeout(std::time::Duration::from_secs(2), harness.shutdown.wait())
+        .await
+        .expect("the run loop should be released once the answer has been written");
+}
+
+/// Until it is asked for, nothing is armed. A run loop released by anything
+/// other than an explicit stop would be a daemon that exits on its own.
+#[tokio::test]
+async fn nothing_arms_a_stop_that_was_not_asked_for() {
+    let harness = Harness::start().await;
+    harness.call("status").await.unwrap();
+
+    let waited = tokio::time::timeout(
+        std::time::Duration::from_millis(300),
+        harness.shutdown.wait(),
+    )
+    .await;
+    assert!(waited.is_err(), "no stop was requested, so nothing fires");
+}
+
+/// Two builds can carry the same version string and one still be older than a
+/// feature. Then the string says nothing and the missing field is the only
+/// evidence there is, so `status` reads that instead.
+#[test]
+fn status_names_an_older_build_even_when_the_version_string_matches() {
+    let same_version_older_build = json!({
+        "base_url": "http://127.0.0.1:8787",
+        "version": env!("CARGO_PKG_VERSION"),
+        "auth": { "connected": false },
+    });
+
+    let rendered = render::status(&same_version_older_build);
+    assert!(
+        rendered.contains("older build"),
+        "the version matches, so only the missing field can say this: {rendered}"
+    );
+}
+
+/// A daemon old enough not to report a version at all — which is what every
+/// build before this one is. Naming a number it never sent would be inventing
+/// one.
+#[test]
+fn status_does_not_invent_a_version_the_daemon_never_sent() {
+    let ancient = json!({
+        "base_url": "http://127.0.0.1:8787",
+        "auth": { "connected": false },
+    });
+
+    let rendered = render::status(&ancient);
+    assert!(rendered.contains("restart it"), "{rendered}");
+    assert!(
+        !rendered.contains("nothing,"),
+        "no invented figure, and no sentence built around one: {rendered}"
+    );
+}
+
+/// A stop is observed by what answers afterwards, and silence is a statement
+/// about timing rather than about the daemon: a supervisor quick enough leaves
+/// no gap to see, and one that throttles a respawn leaves a gap longer than any
+/// sensible wait. The identity is what actually changes when the process does.
+#[tokio::test]
+async fn status_carries_an_identity_for_the_process_answering() {
+    let harness = Harness::start().await;
+    let first = harness.call("status").await.unwrap();
+
+    let instance = first["instance"]
+        .as_str()
+        .expect("an answering daemon has to be identifiable");
+    assert!(!instance.is_empty());
+
+    // Stable within one process: an id that changed per call would report a
+    // restart on every poll.
+    let second = harness.call("status").await.unwrap();
+    assert_eq!(second["instance"], first["instance"]);
 }

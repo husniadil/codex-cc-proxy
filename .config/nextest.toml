@@ -1,0 +1,14 @@
+# A hang has to fail, not wait.
+#
+# Several tests here stand up a loopback server and drive a request through it.
+# Under contention from parallel test binaries, one of those requests has been
+# observed to be accepted and never answered, with every thread idle: a
+# deadlock, not slowness. Without a bound, nextest waits on it forever and the
+# gate reports nothing at all — the failure that does not surface, which is the
+# one thing this project refuses everywhere else.
+#
+# So: warn at 45s, and terminate after two of those. The slowest honest test
+# here finishes well inside one period, and a run that trips this says which
+# test it was.
+[profile.default]
+slow-timeout = { period = "45s", terminate-after = 2 }

@@ -751,7 +751,92 @@ The proxy independently enforces the real window from catalog metadata, rejectin
 an over-window request with a clear error rather than forwarding it into an opaque
 upstream rejection.
 
+### 7.3 Client policy
 
+Two of the things a client has to be told cannot be an environment variable.
+They live in its settings file, and no export reaches them: checked against the
+whole settings schema, there is no per-skill variable and nothing that points at
+an extra settings file. The one variable that comes close relocates the client's
+entire state directory, credentials and history included, which is not a price
+this buys anything worth.
+
+So the proxy **publishes** this policy and never installs it. It is emitted
+beside the environment (`docs/api.md` §2.2) and applied by whoever starts the
+client: a person writing it into a settings file, `exec` splicing it into one
+launch (§2.3), or a supervisor merging it into the argument list it already
+builds. Nothing here writes into a file the proxy does not own.
+
+Settings layers union, measured: a rule in a project settings file and a rule on
+the command line were both enforced in the same session, while a control skill
+denied by neither still launched. A deny rule also survives an untrusted
+workspace, where an allow rule is dropped. So the policy can be delivered
+through any layer without displacing what is already there — with one exception,
+which is that **two `--settings` flags on one argument list are not two layers**:
+the client keeps the last and drops the first, silently. That is why `exec`
+refuses a collision rather than choosing a side, and why a supervisor that
+already passes the flag merges into its own document rather than adding a
+second.
+
+**A bundled skill is denied by default.** `claude-api` is a reference for another
+provider's API. A session served here is not talking to that API, so the
+reference is wrong twice over: it costs context, and a model that reads it
+answers confidently about model ids, prices, and parameters that are not its own.
+
+The figures are measured, against a local capture stub with nothing forwarded
+anywhere:
+
+| | |
+|---|---|
+| Skill content injected on one invocation | 73,000 to 93,000 bytes, roughly 18,000 to 23,000 tokens |
+| Cost of a refused invocation | one 43-byte error result |
+| Effect on the listing the client sends | **none** |
+
+That third row is the one that decides the design. Denying does not remove the
+skill from the listing, so the model may still reach for it and lose a turn
+finding out. What the deny stops is the load. The arithmetic is what settles it:
+one blocked call costs 43 bytes, one allowed call costs four orders of magnitude
+more than that and then keeps costing.
+
+The skill figure is a range because both ends were measured and it moves with
+what else the session has loaded — the same probe read 92,601 bytes in a
+populated environment and 73,214 in a bare one. Quoting either alone would claim
+a precision the measurement does not have. Nothing about the decision turns on
+where in that range it lands.
+
+**What "keeps costing" means precisely.** In tokens, always: the content lands as
+a user item, so it sits in the conversation for the rest of the session and is
+charged on every turn, and it moves compaction earlier by that much. In bytes, it
+depends on the transport. Over HTTP the whole conversation is re-sent every turn
+(§4.2), so it is re-uploaded each time. Over WebSocket the incremental path sends
+only what is new (§4.3), so it is uploaded once — but the backend echoes the
+entire request back in `response.created`, `response.in_progress`, and
+`response.completed` (§4.4), so it returns three times per turn on either
+transport. The token cost is the one that holds regardless.
+
+**The connector notice** is suppressed by the same document. The client prints it
+whenever an auth token is set, which here is always. Whether the setting still
+silences it on the current client version is **unverified here** — see
+`docs/roadmap.md` §L.
+
+**Both are switchable**, in `[client]`, where the comments explaining them live.
+An operator building against that provider's API wants the reference the rest of
+us are paying to avoid, and an empty `deny_skills` gives it back. The default is
+on for the same reason the working budget is (§2.1): the cost was measured and
+the alternative is worse.
+
+**The policy is published even when it is empty.** One file is both the daemon
+and the CLI, and replacing it on disk does not restart a running daemon, so a
+newer CLI against an older daemon is what an ordinary upgrade leaves behind. If
+an empty policy and a daemon that cannot answer for one looked the same, nothing
+could tell the operator which they had — so the payload always carries the field
+and absence means only that the daemon predates this. The verbs whose output
+would otherwise be quietly incomplete refuse; the one that carries routing alone
+continues and says which daemon answered. `docs/api.md` §2.2 and §6.
+
+**A denied call is attributed by `status` and nowhere else.** The client refuses
+with "Skill execution blocked by permission rules" and names no source, so
+`status` reports the policy under the configuration's own key names — the person
+holding that message needs the key that undoes it, not a restatement of it.
 
 ---
 

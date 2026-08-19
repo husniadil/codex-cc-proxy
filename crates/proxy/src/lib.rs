@@ -14,6 +14,7 @@ pub mod doctor;
 pub mod error;
 pub mod estimate;
 pub mod ingress;
+pub mod launch;
 pub mod policy;
 pub mod probe;
 pub mod recorder;
