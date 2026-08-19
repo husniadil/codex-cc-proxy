@@ -90,6 +90,28 @@ working_budget = true
 # Prefer ripgrep over find.
 # """
 
+# Policy the client applies to itself. It lives in the client's settings file,
+# not its environment, so `env` cannot carry it — `settings` can, and so can the
+# launcher. This proxy publishes it and never writes it into a file it does not
+# own.
+[client]
+# Skills refused for a session served through here. `claude-api` is on this list
+# by measurement: one invocation lands 92,601 bytes — roughly 23,000 tokens — in
+# the conversation, where it stays for the rest of the session and is charged
+# every turn, while a refused call costs a 43-byte error. It is also the wrong
+# reference for a session served here, since it documents another provider's
+# model ids, prices, and parameters.
+#
+# Denying does not remove the skill from the listing the client sends, so the
+# model may still reach for it once; what this stops is the load. Write an empty
+# list to allow everything, which is what someone building against that API
+# wants.
+deny_skills = ["claude-api"]
+
+# Suppress the connector notice the client prints whenever an auth token is set,
+# which here is always.
+disable_connectors = true
+
 # Every key here has a default that is correct today and will not always be.
 # They are configurable so a pinned binary can be repointed rather than rebuilt.
 [upstream]
@@ -138,6 +160,8 @@ pub struct Config {
     pub effort: Option<String>,
     #[serde(default)]
     pub instructions: InstructionsConfig,
+    #[serde(default)]
+    pub client: ClientConfig,
     #[serde(default)]
     pub upstream: UpstreamConfig,
 }
@@ -342,6 +366,91 @@ impl InstructionsConfig {
     }
 }
 
+/// §2.8 — policy the client applies to itself, which no environment variable
+/// can carry.
+///
+/// Two of the things a client needs to be told live in its settings file rather
+/// than its environment, so they cannot ride in an export. They are published
+/// here and delivered by whoever starts the client; this proxy never installs
+/// them into a file it does not own.
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ClientConfig {
+    /// Skills refused for a session served through this proxy.
+    ///
+    /// `claude-api` is here by measurement. One invocation lands 92,601 bytes
+    /// in the conversation — roughly 23,000 tokens — as a user text block that
+    /// then sits in context for the rest of the session and is charged on every
+    /// turn. A refused call costs a 43-byte error instead.
+    ///
+    /// The deny does **not** remove the skill from the listing the client
+    /// sends, so the model may still reach for it; what it stops is the load.
+    ///
+    /// It is also the wrong reference for a session served here at all: it
+    /// documents another provider's model ids, prices, and parameters, and a
+    /// model that reads it answers confidently about something it is not.
+    #[serde(default = "default_deny_skills")]
+    pub deny_skills: Vec<String>,
+    /// Suppress the connector notice the client prints whenever an auth token
+    /// is set, which is always, here.
+    #[serde(default = "default_disable_connectors")]
+    pub disable_connectors: bool,
+}
+
+fn default_deny_skills() -> Vec<String> {
+    vec!["claude-api".to_owned()]
+}
+
+fn default_disable_connectors() -> bool {
+    true
+}
+
+impl Default for ClientConfig {
+    fn default() -> Self {
+        Self {
+            deny_skills: default_deny_skills(),
+            disable_connectors: default_disable_connectors(),
+        }
+    }
+}
+
+impl ClientConfig {
+    /// The policy as the client's own settings document, or `None` when there
+    /// is nothing to say.
+    ///
+    /// `None` rather than an empty object: a caller composing a document has to
+    /// be able to tell "no policy" from "a policy with nothing in it", and a
+    /// launcher passes no flag at all in the first case.
+    ///
+    /// The operator writes a skill id and this writes the rule. Building the
+    /// wrapper by hand is a step that fails silently — a rule the client does
+    /// not recognize denies nothing and reports nothing.
+    pub fn settings(&self) -> Option<serde_json::Value> {
+        let mut document = serde_json::Map::new();
+
+        if !self.deny_skills.is_empty() {
+            let rules: Vec<serde_json::Value> = self
+                .deny_skills
+                .iter()
+                .map(|skill| serde_json::Value::from(format!("Skill({skill})")))
+                .collect();
+            document.insert(
+                "permissions".to_owned(),
+                serde_json::json!({ "deny": rules }),
+            );
+        }
+
+        if self.disable_connectors {
+            document.insert(
+                "disableClaudeAiConnectors".to_owned(),
+                serde_json::Value::Bool(true),
+            );
+        }
+
+        (!document.is_empty()).then_some(serde_json::Value::Object(document))
+    }
+}
+
 fn default_port() -> u16 {
     DEFAULT_PORT
 }
@@ -430,6 +539,7 @@ impl Default for Config {
             transport: TransportConfig::default(),
             effort: None,
             instructions: InstructionsConfig::default(),
+            client: ClientConfig::default(),
             upstream: UpstreamConfig::default(),
         }
     }

@@ -751,7 +751,65 @@ The proxy independently enforces the real window from catalog metadata, rejectin
 an over-window request with a clear error rather than forwarding it into an opaque
 upstream rejection.
 
+### 7.3 Client policy
 
+Two of the things a client has to be told cannot be an environment variable.
+They live in its settings file, and no export reaches them: checked against the
+whole settings schema, there is no per-skill variable and nothing that points at
+an extra settings file. The one variable that comes close relocates the client's
+entire state directory, credentials and history included, which is not a price
+this buys anything worth.
+
+So the proxy **publishes** this policy and never installs it. It is emitted
+beside the environment (`docs/api.md` §2.2) and applied by whoever starts the
+client: a person writing it into a settings file, or a launcher splicing it into
+the argument list. Nothing here writes into a file the proxy does not own.
+
+**A bundled skill is denied by default.** `claude-api` is a reference for another
+provider's API. A session served here is not talking to that API, so the
+reference is wrong twice over: it costs context, and a model that reads it
+answers confidently about model ids, prices, and parameters that are not its own.
+
+The figures are measured, against a local capture stub with nothing forwarded
+anywhere:
+
+| | |
+|---|---|
+| Skill content injected on one invocation | 92,601 bytes, roughly 23,000 tokens |
+| Cost of a refused invocation | one 43-byte error result |
+| Effect on the listing the client sends | **none** |
+
+That third row is the one that decides the design. Denying does not remove the
+skill from the listing, so the model may still reach for it and lose a turn
+finding out. What the deny stops is the load. The arithmetic is what settles it:
+one blocked call costs 43 bytes, one allowed call costs 92,601 and then keeps
+costing.
+
+**What "keeps costing" means precisely.** In tokens, always: the content lands as
+a user item, so it sits in the conversation for the rest of the session and is
+charged on every turn, and it moves compaction earlier by that much. In bytes, it
+depends on the transport. Over HTTP the whole conversation is re-sent every turn
+(§4.2), so it is re-uploaded each time. Over WebSocket the incremental path sends
+only what is new (§4.3), so it is uploaded once — but the backend echoes the
+entire request back in `response.created`, `response.in_progress`, and
+`response.completed` (§4.4), so it returns three times per turn on either
+transport. The token cost is the one that holds regardless.
+
+**The connector notice** is suppressed by the same document. The client prints it
+whenever an auth token is set, which here is always. Whether the setting still
+silences it on the current client version is **unverified here** — see
+`docs/roadmap.md` §L.
+
+**Both are switchable**, in `[client]`, where the comments explaining them live.
+An operator building against that provider's API wants the reference the rest of
+us are paying to avoid, and an empty `deny_skills` gives it back. The default is
+on for the same reason the working budget is (§2.1): the cost was measured and
+the alternative is worse.
+
+**A denied call is attributed by `status` and nowhere else.** The client refuses
+with "Skill execution blocked by permission rules" and names no source, so
+`status` reports the policy under the configuration's own key names — the person
+holding that message needs the key that undoes it, not a restatement of it.
 
 ---
 

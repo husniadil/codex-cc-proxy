@@ -30,6 +30,7 @@ async fn main() -> Result<()> {
         Command::Status => print_status().await,
         Command::Models => print_models().await,
         Command::Env(args) => print_env(args).await,
+        Command::Settings => print_settings().await,
         Command::Doctor(args) => doctor(args).await,
         Command::Usage(args) => print_usage(args).await,
         Command::Statusline(args) => statusline(args).await,
@@ -266,11 +267,21 @@ async fn print_env(args: cli::EnvArgs) -> Result<()> {
     println!(
         "{}",
         if args.json {
-            render::env_json(&result)
+            render::settings_json(&result)
         } else {
             render::env_shell(&result)
         }
     );
+    Ok(())
+}
+
+/// One complete client settings document, for a file or a launcher.
+///
+/// The same bytes `env --json` prints. Two names, one document: a caller that
+/// reaches for the obvious one must not get the half that leaves the policy out.
+async fn print_settings() -> Result<()> {
+    let result = control::call(&control::default_path(), "env", None).await?;
+    println!("{}", render::settings_json(&result));
     Ok(())
 }
 
@@ -410,6 +421,7 @@ async fn run_with(args: RunArgs, capture: Capture) -> Result<()> {
         capture: Arc::clone(&switches),
         usage: Arc::clone(&usage),
         login: Arc::new(codex_cc_proxy::auth::daemon_login::LoginFlow::default()),
+        client: Arc::new(config.client.clone()),
         tokens: Some(Arc::clone(&tokens)),
         usage_endpoint: config.upstream.usage.clone(),
         config_path: Some(codex_cc_proxy::config::config_path()),

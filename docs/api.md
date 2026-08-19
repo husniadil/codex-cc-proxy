@@ -69,7 +69,8 @@ codex-cc-proxy run        start the daemon
 codex-cc-proxy login      authenticate
 codex-cc-proxy status     connection, tier mapping, model catalog
 codex-cc-proxy models     available models
-codex-cc-proxy env        environment for Claude Code
+codex-cc-proxy env        environment for Claude Code, as shell exports
+codex-cc-proxy settings   the same configuration, as one settings document
 codex-cc-proxy doctor     probe live backend capabilities
 codex-cc-proxy usage      what quota is left
 codex-cc-proxy statusline wrap a status-line script, adding that quota
@@ -222,10 +223,13 @@ messages, and whatever the tools read.
 
 Logging is controlled by `RUST_LOG`. Credentials never appear at any level.
 
-### 2.2 `env`
+### 2.2 `env` and `settings`
 
-Emits the configuration Claude Code needs, as shell exports or as a settings
-fragment:
+The configuration Claude Code needs, in two renderings. Neither is a degraded
+version of the other; they carry different amounts because the client has two
+configuration surfaces and only one of them is the environment.
+
+`env` emits shell exports, for a shell:
 
 ```
 ANTHROPIC_BASE_URL=http://127.0.0.1:8787
@@ -250,6 +254,43 @@ an unmapped haiku breaks it in a way that looks unrelated to tier mapping.
 `CLAUDE_CODE_DISABLE_1M_CONTEXT` is not inert: without it this client appends
 `[1m]` to an unrecognized id and assumes a million tokens — see
 `proxy-behavior.md` §7.2.
+
+**Shell exports carry routing only.** Client policy (§7.3 of
+`proxy-behavior.md`) lives in the client's settings file and has no environment
+variable of any kind, so this rendering cannot deliver it. It says so in a
+comment, which `eval` steps over, and the comment appears only when there is a
+policy being left out.
+
+`settings` emits one complete client settings document — the same bytes as
+`env --json`, under the name that describes them:
+
+```json
+{
+  "env": { "ANTHROPIC_BASE_URL": "http://127.0.0.1:8787", "...": "..." },
+  "permissions": { "deny": ["Skill(claude-api)"] },
+  "disableClaudeAiConnectors": true
+}
+```
+
+**This document is complete on its own.** Measured: a client started with no
+`ANTHROPIC_*` in its environment, reading only a settings file holding this
+document's `env` block, still reached the proxy. It needs no `eval`.
+
+The `permissions` and `disableClaudeAiConnectors` keys are absent when nothing is
+configured, rather than present and empty. An empty deny list merged over a real
+one is how a rule disappears.
+
+**Redirecting this into a settings file overwrites that file.** `>` truncates;
+it does not merge. `.claude/settings.local.json` in particular is where the
+client itself records the permissions a user has accepted, so an existing file
+with real content in it is the common case, not the corner case. Merge, or write
+somewhere nothing else owns. Deep-merging with `jq -s '.[0] * .[1]'` is the
+obvious one-liner and is wrong: it recurses into objects but takes arrays from
+the right-hand side, so the existing `permissions.deny` is replaced rather than
+extended.
+
+The proxy publishes this document and never installs it. Applying it is the job
+of whoever starts the client.
 
 ---
 
@@ -357,6 +398,10 @@ identity       = true
 working_budget = true
 append         = "..."
 
+[client]
+deny_skills        = ["claude-api"]
+disable_connectors = true
+
 [upstream]
 client_version           = "2.0.0"
 effective_window_percent = 95.0
@@ -393,6 +438,14 @@ tier written blank is refused, because an omission accepts the shipped answer
 while a blank is a mistake. Each mapped model is validated against the live
 catalog when one is reachable. That validation happens once, at startup: the
 catalog is not refetched, so a mapping cannot go stale while the daemon runs.
+
+`[client]` is policy the client applies to itself, which no environment variable
+can carry — see `proxy-behavior.md` §7.3 for why each default is what it is.
+`deny_skills` names skills refused for a session served here; the proxy writes
+the `Skill(...)` rule the client understands, because a rule built by hand and
+built wrong denies nothing and reports nothing. An empty list allows everything.
+`disable_connectors` suppresses the connector notice the client prints whenever
+an auth token is set, which here is always.
 
 `effort` caps reasoning effort on every request, whatever the client asks for —
 one of `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, `ultra`

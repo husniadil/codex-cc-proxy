@@ -481,3 +481,95 @@ fn the_working_budget_ships_on_and_can_be_switched_off() {
     .unwrap();
     assert_eq!(off.instructions.budget(), None);
 }
+
+/// The bundled `claude-api` skill ships denied.
+///
+/// Measured here: one invocation lands 92,601 bytes — roughly 23,000 tokens —
+/// in the conversation as a user text block, where it then sits for the rest of
+/// the session and is charged on every turn. A refused call costs a 43-byte
+/// error instead. The deny does not remove the skill from the listing the
+/// client sends, so the model may still reach for it; what it stops is the
+/// load.
+///
+/// Opinionated by default for the same reason the working budget is, and
+/// switchable in the same place, because an operator building against that API
+/// wants the reference the rest of us are paying to avoid.
+#[test]
+fn the_client_policy_ships_on_and_can_be_switched_off() {
+    let on = Config::default();
+    assert_eq!(on.client.deny_skills, vec!["claude-api".to_owned()]);
+    assert!(on.client.disable_connectors);
+    assert_eq!(
+        on.client.settings(),
+        Some(serde_json::json!({
+            "permissions": { "deny": ["Skill(claude-api)"] },
+            "disableClaudeAiConnectors": true,
+        }))
+    );
+
+    let off: Config = toml::from_str(
+        r#"
+        [client]
+        deny_skills = []
+        disable_connectors = false
+        "#,
+    )
+    .unwrap();
+    assert_eq!(
+        off.client.settings(),
+        None,
+        "switched off should leave nothing behind, not an empty shell"
+    );
+}
+
+/// Either half can be switched off alone, and the half left on is the only one
+/// that appears. A policy document carrying a key nobody asked for is a policy
+/// document that is partly guessed.
+#[test]
+fn each_half_of_the_client_policy_stands_alone() {
+    let skills_only: Config = toml::from_str(
+        r#"
+        [client]
+        disable_connectors = false
+        "#,
+    )
+    .unwrap();
+    assert_eq!(
+        skills_only.client.settings(),
+        Some(serde_json::json!({
+            "permissions": { "deny": ["Skill(claude-api)"] },
+        }))
+    );
+
+    let connectors_only: Config = toml::from_str(
+        r#"
+        [client]
+        deny_skills = []
+        "#,
+    )
+    .unwrap();
+    assert_eq!(
+        connectors_only.client.settings(),
+        Some(serde_json::json!({ "disableClaudeAiConnectors": true }))
+    );
+}
+
+/// A skill named in the configuration reaches the document as the client's own
+/// rule shape. The operator writes the skill id; the `Skill(...)` wrapper is
+/// this proxy's job, because getting it wrong fails silently — an unrecognized
+/// rule denies nothing and says nothing.
+#[test]
+fn a_configured_skill_becomes_a_rule_the_client_understands() {
+    let config: Config = toml::from_str(
+        r#"
+        [client]
+        deny_skills = ["claude-api", "some-other-skill"]
+        "#,
+    )
+    .unwrap();
+
+    assert_eq!(
+        config.client.settings().unwrap()["permissions"]["deny"],
+        serde_json::json!(["Skill(claude-api)", "Skill(some-other-skill)"])
+    );
+}

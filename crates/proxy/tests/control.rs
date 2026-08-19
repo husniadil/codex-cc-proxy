@@ -72,6 +72,9 @@ struct Harness {
     /// the difference between testing that a flag round-trips and testing that
     /// the method does anything.
     switches: Arc<codex_cc_proxy::recorder::Switches>,
+    /// The policy the daemon publishes for whoever starts the client. Held so a
+    /// test can switch it off and assert that nothing is left behind.
+    client: Arc<codex_cc_proxy::config::ClientConfig>,
     _dir: tempfile::TempDir,
 }
 
@@ -85,6 +88,7 @@ impl Harness {
         let policy = Arc::new(codex_cc_proxy::policy::Policy::new(
             codex_cc_proxy::policy::Snapshot::new(tiers(), None),
         ));
+        let client = Arc::new(codex_cc_proxy::config::ClientConfig::default());
 
         let state = ControlState {
             port: 8787,
@@ -101,6 +105,7 @@ impl Harness {
             capture: Arc::clone(&switches),
             usage: Arc::clone(&usage),
             login: Arc::new(codex_cc_proxy::auth::daemon_login::LoginFlow::default()),
+            client: Arc::clone(&client),
             // No credentials to ask with, and no endpoint that would answer:
             // no test may reach the network.
             tokens: None,
@@ -131,6 +136,7 @@ impl Harness {
             policy,
             switches,
             usage,
+            client,
             _dir: dir,
         }
     }
@@ -149,6 +155,18 @@ impl Harness {
         let catalog = r#"{"data":[{"id":"gpt-5.6-terra","context_window":272000},
                                   {"id":"gpt-5.4-mini","context_window":200000}]}"#;
         harness.respawn(catalog, "gpt-5.6-terra").await
+    }
+
+    /// The same harness, publishing the caller's client policy — for the tests
+    /// about what switching it off leaves behind.
+    async fn with_client(self, client: codex_cc_proxy::config::ClientConfig) -> Self {
+        let harness = Self {
+            client: Arc::new(client),
+            ..self
+        };
+        let catalog = r#"{"data":[{"id":"gpt-5.6-terra","context_window":272000},
+                                  {"id":"gpt-5.4-mini","context_window":200000}]}"#;
+        harness.respawn(catalog, "gpt-5.4-mini").await
     }
 
     /// A harness whose catalog and single mapped model are the caller's, for
@@ -189,6 +207,7 @@ impl Harness {
             capture: Arc::clone(&self.switches),
             usage: Arc::clone(&self.usage),
             login: Arc::new(codex_cc_proxy::auth::daemon_login::LoginFlow::default()),
+            client: Arc::clone(&self.client),
             tokens,
             usage_endpoint: String::new(),
             config_path: Some(self.config.clone()),
@@ -494,6 +513,7 @@ async fn an_unknown_window_is_reported_as_null() {
         capture: Arc::new(codex_cc_proxy::recorder::Switches::default()),
         usage: Arc::new(codex_cc_proxy::usage::UsageStore::default()),
         login: Arc::new(codex_cc_proxy::auth::daemon_login::LoginFlow::default()),
+        client: Arc::new(codex_cc_proxy::config::ClientConfig::default()),
         tokens: None,
         usage_endpoint: String::new(),
         config_path: None,
@@ -641,6 +661,7 @@ async fn a_malformed_request_is_reported_without_closing_the_socket() {
         capture: Arc::new(codex_cc_proxy::recorder::Switches::default()),
         usage: Arc::new(codex_cc_proxy::usage::UsageStore::default()),
         login: Arc::new(codex_cc_proxy::auth::daemon_login::LoginFlow::default()),
+        client: Arc::new(codex_cc_proxy::config::ClientConfig::default()),
         tokens: None,
         usage_endpoint: String::new(),
         config_path: None,
@@ -700,13 +721,169 @@ async fn env_renders_as_a_settings_fragment() {
     let harness = Harness::start().await;
     let result = harness.call("env").await.unwrap();
 
-    let parsed: Value = serde_json::from_str(&render::env_json(&result)).unwrap();
+    let parsed: Value = serde_json::from_str(&render::settings_json(&result)).unwrap();
 
     assert_eq!(
         parsed["env"]["ANTHROPIC_DEFAULT_FABLE_MODEL"],
         json!("gpt-5.4-mini")
     );
     assert_eq!(parsed["env"]["CLAUDE_CODE_DISABLE_1M_CONTEXT"], json!("1"));
+}
+
+/// The payload carries both halves of what a client needs, under names of their
+/// own. A caller reading only `variables` is untouched by this, which is what
+/// makes it safe to add underneath one that already exists.
+#[tokio::test]
+async fn the_env_payload_carries_the_client_policy_beside_the_variables() {
+    let harness = Harness::start().await;
+    let result = harness.call("env").await.unwrap();
+
+    assert!(
+        result["variables"].is_array(),
+        "the existing half must keep its shape: {result}"
+    );
+    assert_eq!(
+        result["settings"],
+        json!({
+            "permissions": { "deny": ["Skill(claude-api)"] },
+            "disableClaudeAiConnectors": true,
+        })
+    );
+}
+
+/// One document, complete on its own.
+///
+/// Measured: a settings file's `env` key routes without help. A client started
+/// with no `ANTHROPIC_*` in its environment, reading only this document, still
+/// reached the proxy. So this rendering is not half a configuration waiting for
+/// an `eval` — it is the whole thing, and it carries the policy an export
+/// cannot.
+#[tokio::test]
+async fn the_settings_rendering_is_a_complete_configuration() {
+    let harness = Harness::start().await;
+    let result = harness.call("env").await.unwrap();
+
+    let parsed: Value = serde_json::from_str(&render::settings_json(&result)).unwrap();
+
+    assert_eq!(
+        parsed["env"]["ANTHROPIC_BASE_URL"],
+        json!("http://127.0.0.1:8787")
+    );
+    assert_eq!(
+        parsed["permissions"]["deny"],
+        json!(["Skill(claude-api)"]),
+        "the policy half belongs in the same document as the routing half"
+    );
+    assert_eq!(parsed["disableClaudeAiConnectors"], json!(true));
+}
+
+/// Shell exports carry routing and say so.
+///
+/// A deny rule has no environment variable — checked against the whole settings
+/// schema, there is none — so this rendering is incomplete by construction. The
+/// comment is the only place a reader finds that out at the moment it matters,
+/// and `eval` steps over it.
+#[tokio::test]
+async fn shell_exports_name_what_they_cannot_carry() {
+    let harness = Harness::start().await;
+    let result = harness.call("env").await.unwrap();
+
+    let rendered = render::env_shell(&result);
+
+    assert!(
+        rendered.contains("export ANTHROPIC_BASE_URL=http://127.0.0.1:8787"),
+        "{rendered}"
+    );
+    assert!(
+        !rendered.contains("Skill(claude-api)"),
+        "a deny rule is not an environment variable: {rendered}"
+    );
+    assert!(
+        rendered.lines().any(|line| line.starts_with('#')),
+        "the gap has to be stated where it is discovered: {rendered}"
+    );
+    assert!(
+        rendered.contains("settings"),
+        "the comment has to name the rendering that does carry it: {rendered}"
+    );
+}
+
+/// Switched off leaves nothing behind.
+///
+/// The absent key is the assertion. A document that always carries an empty
+/// `permissions` block would look like a policy to whoever merges it, and
+/// merging an empty deny list over a real one is how a rule disappears.
+#[tokio::test]
+async fn a_client_policy_switched_off_leaves_no_trace() {
+    let harness = Harness::start()
+        .await
+        .with_client(codex_cc_proxy::config::ClientConfig {
+            deny_skills: Vec::new(),
+            disable_connectors: false,
+        })
+        .await;
+    let result = harness.call("env").await.unwrap();
+
+    assert!(
+        result.get("settings").is_none() || result["settings"].is_null(),
+        "no policy should read as no policy: {result}"
+    );
+
+    let parsed: Value = serde_json::from_str(&render::settings_json(&result)).unwrap();
+    assert!(parsed["env"].is_object(), "{parsed}");
+    assert!(parsed.get("permissions").is_none(), "{parsed}");
+    assert!(
+        parsed.get("disableClaudeAiConnectors").is_none(),
+        "{parsed}"
+    );
+
+    let rendered = render::env_shell(&result);
+    assert!(
+        !rendered.lines().any(|line| line.starts_with('#')),
+        "there is no gap left to warn about: {rendered}"
+    );
+}
+
+/// The client refuses a denied skill with "Skill execution blocked by
+/// permission rules" and names nobody. This is where the person holding that
+/// message finds out what blocked it and which key to change.
+#[tokio::test]
+async fn status_names_the_client_policy_and_the_key_that_sets_it() {
+    let harness = Harness::start().await;
+    let result = harness.call("status").await.unwrap();
+
+    assert_eq!(result["client"]["deny_skills"], json!(["claude-api"]));
+    assert_eq!(result["client"]["disable_connectors"], json!(true));
+
+    let rendered = render::status(&result);
+    assert!(
+        rendered.contains("claude-api"),
+        "the blocked skill has to be named: {rendered}"
+    );
+    assert!(
+        rendered.contains("deny_skills"),
+        "and so has the key that undoes it: {rendered}"
+    );
+}
+
+/// Nothing denied, nothing said. A status line reporting an empty policy would
+/// have the reader looking for a rule that is not there.
+#[tokio::test]
+async fn status_stays_quiet_when_nothing_is_denied() {
+    let harness = Harness::start()
+        .await
+        .with_client(codex_cc_proxy::config::ClientConfig {
+            deny_skills: Vec::new(),
+            disable_connectors: true,
+        })
+        .await;
+    let result = harness.call("status").await.unwrap();
+
+    let rendered = render::status(&result);
+    assert!(
+        !rendered.contains("deny_skills"),
+        "there is no denial to attribute: {rendered}"
+    );
 }
 
 /// The rendered status names the plan and the account, because that is the
@@ -812,6 +989,7 @@ async fn status_says_when_the_catalog_was_unavailable() {
         capture: Arc::new(codex_cc_proxy::recorder::Switches::default()),
         usage: Arc::new(codex_cc_proxy::usage::UsageStore::default()),
         login: Arc::new(codex_cc_proxy::auth::daemon_login::LoginFlow::default()),
+        client: Arc::new(codex_cc_proxy::config::ClientConfig::default()),
         tokens: None,
         usage_endpoint: String::new(),
         config_path: None,
@@ -842,6 +1020,7 @@ async fn models_prints_unknown_rather_than_a_number() {
         capture: Arc::new(codex_cc_proxy::recorder::Switches::default()),
         usage: Arc::new(codex_cc_proxy::usage::UsageStore::default()),
         login: Arc::new(codex_cc_proxy::auth::daemon_login::LoginFlow::default()),
+        client: Arc::new(codex_cc_proxy::config::ClientConfig::default()),
         tokens: None,
         usage_endpoint: String::new(),
         config_path: None,
@@ -912,6 +1091,7 @@ async fn env_states_no_window_when_the_catalog_is_unavailable() {
         capture: Arc::new(codex_cc_proxy::recorder::Switches::default()),
         usage: Arc::new(codex_cc_proxy::usage::UsageStore::default()),
         login: Arc::new(codex_cc_proxy::auth::daemon_login::LoginFlow::default()),
+        client: Arc::new(codex_cc_proxy::config::ClientConfig::default()),
         tokens: None,
         usage_endpoint: String::new(),
         config_path: None,

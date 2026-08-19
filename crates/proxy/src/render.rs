@@ -5,23 +5,66 @@
 
 use serde_json::Value;
 
-/// `docs/api.md` §2.1 — shell exports.
+/// `docs/api.md` §2.2 — shell exports, for a shell.
+///
+/// Routing only. Client policy lives in the client's settings file and has no
+/// environment variable of any kind, so this rendering cannot carry it and says
+/// so in a comment `eval` steps over. The comment appears only when there is a
+/// policy being left out; with none configured there is no gap to warn about.
 pub fn env_shell(result: &Value) -> String {
-    variables(result)
-        .into_iter()
-        .map(|(name, value)| format!("export {name}={}", quote(&value)))
-        .collect::<Vec<_>>()
-        .join("\n")
+    let mut lines = Vec::new();
+
+    if result
+        .get("settings")
+        .is_some_and(|policy| !policy.is_null())
+    {
+        lines.push(
+            "# Client policy (a denied skill, the connector notice) is not below: it lives in \
+             the client's"
+                .to_owned(),
+        );
+        lines.push(
+            "# settings file and has no environment variable. `codex-cc-proxy settings` \
+             carries it."
+                .to_owned(),
+        );
+    }
+
+    lines.extend(
+        variables(result)
+            .into_iter()
+            .map(|(name, value)| format!("export {name}={}", quote(&value))),
+    );
+
+    lines.join("\n")
 }
 
-/// The same, as a settings fragment.
-pub fn env_json(result: &Value) -> String {
+/// `docs/api.md` §2.2 — one complete client settings document.
+///
+/// Complete on its own, which is measured rather than assumed: a client started
+/// with no `ANTHROPIC_*` in its environment, reading only a settings file
+/// holding this document's `env` block, still reached the proxy. So this is not
+/// half a configuration waiting for an `eval`.
+pub fn settings_json(result: &Value) -> String {
     let map: serde_json::Map<String, Value> = variables(result)
         .into_iter()
         .map(|(name, value)| (name, Value::from(value)))
         .collect();
 
-    serde_json::to_string_pretty(&serde_json::json!({ "env": map })).unwrap_or_default()
+    let mut document = serde_json::Map::new();
+    document.insert("env".to_owned(), Value::Object(map));
+
+    // The policy half merges in as siblings of `env`, because that is where the
+    // client reads them. Absent when the daemon published none: an empty
+    // `permissions` block would read as a policy to whoever merges this, and
+    // merging an empty deny list over a real one is how a rule disappears.
+    if let Some(policy) = result.get("settings").and_then(Value::as_object) {
+        for (key, value) in policy {
+            document.insert(key.clone(), value.clone());
+        }
+    }
+
+    serde_json::to_string_pretty(&Value::Object(document)).unwrap_or_default()
 }
 
 fn variables(result: &Value) -> Vec<(String, String)> {
@@ -139,6 +182,22 @@ pub fn status(result: &Value) -> String {
         lines.push(format!(
             "catalog    {} {verb} mapped but not offered by the catalog",
             withheld.join(", ")
+        ));
+    }
+
+    // The one place a denied skill is ever attributed. The client's own refusal
+    // names no source, so without this the only way to find out is to guess.
+    // Silent when nothing is denied: a line about an empty policy sends the
+    // reader looking for a rule that does not exist.
+    let denied: Vec<&str> = field(result, "client")
+        .and_then(|client| field(client, "deny_skills"))
+        .and_then(Value::as_array)
+        .map(|skills| skills.iter().filter_map(Value::as_str).collect())
+        .unwrap_or_default();
+    if !denied.is_empty() {
+        lines.push(format!(
+            "client     {} denied — change with `client.deny_skills`",
+            denied.join(", ")
         ));
     }
 

@@ -21,8 +21,15 @@ pub enum Command {
     Status,
     /// Available models.
     Models,
-    /// Environment for Claude Code.
+    /// Environment for Claude Code, as shell exports.
     Env(EnvArgs),
+    /// The same configuration as one client settings document.
+    ///
+    /// A separate verb rather than a flag on `env`, because it produces
+    /// something an environment is not: it carries the client policy no export
+    /// can hold. `env --json` prints the identical document and stays for the
+    /// callers that already use it.
+    Settings,
     /// Probe backend capabilities.
     Doctor(DoctorArgs),
     /// What quota is left, as of the last turn.
@@ -43,6 +50,8 @@ pub struct RunArgs {
 #[derive(Debug, clap::Args)]
 pub struct EnvArgs {
     /// Emit a Claude Code settings fragment instead of shell exports.
+    ///
+    /// The same output as the `settings` verb, which is the name for it.
     #[arg(long)]
     pub json: bool,
 }
@@ -105,6 +114,14 @@ mod tests {
     #[test]
     fn cli_definition_is_valid() {
         Cli::command().debug_assert();
+    }
+
+    /// `env --json` and `settings` are one document under two names, so a
+    /// caller cannot pick the one that leaves the policy out.
+    #[test]
+    fn settings_parses_as_a_verb_of_its_own() {
+        let cli = Cli::try_parse_from(["codex-cc-proxy", "settings"]).unwrap();
+        assert!(matches!(cli.command, Command::Settings));
     }
 
     #[test]

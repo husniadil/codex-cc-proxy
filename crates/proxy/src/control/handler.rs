@@ -40,6 +40,12 @@ pub struct ControlState {
     /// The authorization flow, if one is running. Held here because there is
     /// exactly one callback port and every front-end shares it.
     pub login: Arc<crate::auth::daemon_login::LoginFlow>,
+    /// Policy the client applies to itself, published for whoever starts it.
+    ///
+    /// Read once at startup, like the instructions: nothing routes a turn from
+    /// it, so a change that outlives the process belongs in the file where the
+    /// comments explaining it live.
+    pub client: Arc<crate::config::ClientConfig>,
     /// The grant, for the two things this socket reports about it: whether it
     /// has been refused, and the token a quota request is made with. `None`
     /// where the daemon holds no credentials at all.
@@ -60,7 +66,14 @@ pub async fn dispatch(
         "status" => Ok(status(state)),
         "models" => Ok(models(state)),
         "tiers.get" => Ok(tiers(state)),
-        "env" => Ok(json!({ "variables": environment(state) })),
+        // Two halves, because the client has two configuration surfaces and
+        // only one of them is the environment. `variables` keeps the shape it
+        // has always had; `settings` is additive, and absent when there is no
+        // policy to state.
+        "env" => Ok(match state.client.settings() {
+            Some(settings) => json!({ "variables": environment(state), "settings": settings }),
+            None => json!({ "variables": environment(state) }),
+        }),
         "usage" => Ok(usage(state)),
         "disconnect" => {
             state.credentials.clear()?;
@@ -166,6 +179,15 @@ fn status(state: &ControlState) -> Value {
         // that cannot tell would report an unvalidated mapping as a validated
         // one.
         "catalog_authoritative": state.catalog.authoritative,
+        // Policy this daemon publishes for whoever starts the client. Reported
+        // under the configuration's own key names, because the person reading
+        // this arrived holding "Skill execution blocked by permission rules" —
+        // a message that names nobody — and what they need next is the key that
+        // undoes it.
+        "client": {
+            "deny_skills": state.client.deny_skills,
+            "disable_connectors": state.client.disable_connectors,
+        },
         "recording": state.capture.any(),
     })
 }
