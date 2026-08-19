@@ -100,6 +100,14 @@ async fn handle_connection(
         body.push('\n');
         writer.write_all(body.as_bytes()).await?;
         writer.flush().await?;
+
+        // Only now. A stop that released the run loop before this flush would
+        // race the process against its own answer, and a caller reading a
+        // closed connection cannot tell a clean stop from a crash.
+        if state.shutdown.requested() {
+            state.shutdown.release();
+            break;
+        }
     }
 
     Ok(())

@@ -30,6 +30,12 @@ pub enum Command {
     /// can hold. `env --json` prints the identical document and stays for the
     /// callers that already use it.
     Settings,
+    /// Ask the running daemon to stop.
+    ///
+    /// Named for what it asks, not for what follows: whether anything starts
+    /// the daemon again belongs to whatever supervises it. What happened is
+    /// reported from what was observed afterwards.
+    Stop,
     /// Run a command with this proxy's configuration applied.
     ///
     /// Named for what it does rather than what it launches: a launcher that
@@ -131,6 +137,12 @@ mod tests {
     #[test]
     fn cli_definition_is_valid() {
         Cli::command().debug_assert();
+    }
+
+    #[test]
+    fn stop_parses_as_a_verb_of_its_own() {
+        let cli = Cli::try_parse_from(["codex-cc-proxy", "stop"]).unwrap();
+        assert!(matches!(cli.command, Command::Stop));
     }
 
     /// `env --json` and `settings` are one document under two names, so a

@@ -46,6 +46,9 @@ pub struct ControlState {
     /// it, so a change that outlives the process belongs in the file where the
     /// comments explaining it live.
     pub client: Arc<crate::config::ClientConfig>,
+    /// The stop signal the daemon's own run loop waits on. Shared, so asking
+    /// here moves the process rather than only answering about it.
+    pub shutdown: Arc<crate::daemon::Shutdown>,
     /// The grant, for the two things this socket reports about it: whether it
     /// has been refused, and the token a quota request is made with. `None`
     /// where the daemon holds no credentials at all.
@@ -101,6 +104,13 @@ pub async fn dispatch(
             };
             state.capture.start(mode);
             Ok(json!({ "recording": true, "mode": requested }))
+        }
+        // Answers, then goes. The release happens after this response is
+        // written — see `Shutdown`. Under a supervisor this is how a running
+        // daemon is replaced by the build on disk.
+        "shutdown" => {
+            state.shutdown.request();
+            Ok(json!({ "stopping": true, "version": VERSION }))
         }
         "record.stop" => {
             state.capture.stop();

@@ -75,6 +75,9 @@ struct Harness {
     /// The policy the daemon publishes for whoever starts the client. Held so a
     /// test can switch it off and assert that nothing is left behind.
     client: Arc<codex_cc_proxy::config::ClientConfig>,
+    /// The same signal the daemon's own run loop waits on, so a test can assert
+    /// a stop actually moved something rather than only answering.
+    shutdown: Arc<codex_cc_proxy::daemon::Shutdown>,
     _dir: tempfile::TempDir,
 }
 
@@ -89,6 +92,7 @@ impl Harness {
             codex_cc_proxy::policy::Snapshot::new(tiers(), None),
         ));
         let client = Arc::new(codex_cc_proxy::config::ClientConfig::default());
+        let shutdown = Arc::new(codex_cc_proxy::daemon::Shutdown::default());
 
         let state = ControlState {
             port: 8787,
@@ -106,6 +110,7 @@ impl Harness {
             usage: Arc::clone(&usage),
             login: Arc::new(codex_cc_proxy::auth::daemon_login::LoginFlow::default()),
             client: Arc::clone(&client),
+            shutdown: Arc::clone(&shutdown),
             // No credentials to ask with, and no endpoint that would answer:
             // no test may reach the network.
             tokens: None,
@@ -137,6 +142,7 @@ impl Harness {
             switches,
             usage,
             client,
+            shutdown,
             _dir: dir,
         }
     }
@@ -208,6 +214,7 @@ impl Harness {
             usage: Arc::clone(&self.usage),
             login: Arc::new(codex_cc_proxy::auth::daemon_login::LoginFlow::default()),
             client: Arc::clone(&self.client),
+            shutdown: Arc::clone(&self.shutdown),
             tokens,
             usage_endpoint: String::new(),
             config_path: Some(self.config.clone()),
@@ -514,6 +521,7 @@ async fn an_unknown_window_is_reported_as_null() {
         usage: Arc::new(codex_cc_proxy::usage::UsageStore::default()),
         login: Arc::new(codex_cc_proxy::auth::daemon_login::LoginFlow::default()),
         client: Arc::new(codex_cc_proxy::config::ClientConfig::default()),
+        shutdown: Arc::new(codex_cc_proxy::daemon::Shutdown::default()),
         tokens: None,
         usage_endpoint: String::new(),
         config_path: None,
@@ -662,6 +670,7 @@ async fn a_malformed_request_is_reported_without_closing_the_socket() {
         usage: Arc::new(codex_cc_proxy::usage::UsageStore::default()),
         login: Arc::new(codex_cc_proxy::auth::daemon_login::LoginFlow::default()),
         client: Arc::new(codex_cc_proxy::config::ClientConfig::default()),
+        shutdown: Arc::new(codex_cc_proxy::daemon::Shutdown::default()),
         tokens: None,
         usage_endpoint: String::new(),
         config_path: None,
@@ -989,6 +998,7 @@ async fn status_says_when_the_catalog_was_unavailable() {
         usage: Arc::new(codex_cc_proxy::usage::UsageStore::default()),
         login: Arc::new(codex_cc_proxy::auth::daemon_login::LoginFlow::default()),
         client: Arc::new(codex_cc_proxy::config::ClientConfig::default()),
+        shutdown: Arc::new(codex_cc_proxy::daemon::Shutdown::default()),
         tokens: None,
         usage_endpoint: String::new(),
         config_path: None,
@@ -1020,6 +1030,7 @@ async fn models_prints_unknown_rather_than_a_number() {
         usage: Arc::new(codex_cc_proxy::usage::UsageStore::default()),
         login: Arc::new(codex_cc_proxy::auth::daemon_login::LoginFlow::default()),
         client: Arc::new(codex_cc_proxy::config::ClientConfig::default()),
+        shutdown: Arc::new(codex_cc_proxy::daemon::Shutdown::default()),
         tokens: None,
         usage_endpoint: String::new(),
         config_path: None,
@@ -1091,6 +1102,7 @@ async fn env_states_no_window_when_the_catalog_is_unavailable() {
         usage: Arc::new(codex_cc_proxy::usage::UsageStore::default()),
         login: Arc::new(codex_cc_proxy::auth::daemon_login::LoginFlow::default()),
         client: Arc::new(codex_cc_proxy::config::ClientConfig::default()),
+        shutdown: Arc::new(codex_cc_proxy::daemon::Shutdown::default()),
         tokens: None,
         usage_endpoint: String::new(),
         config_path: None,
@@ -1730,4 +1742,44 @@ fn shell_exports_keep_working_against_an_older_daemon_and_say_so() {
         rendered.to_lowercase().contains("restart the daemon"),
         "and the reason the policy is missing is named: {rendered}"
     );
+}
+
+/// The answer arrives before the process goes.
+///
+/// A caller that saw the connection close with no reply could not tell a clean
+/// stop from a crash, and the whole point of asking over the socket rather than
+/// with a signal is that the asker learns what happened. So the request marks
+/// the intent, and the run loop is only released once the response has been
+/// written. This asserts both halves in the order they have to happen: a reply
+/// came back, and only then did the signal the daemon waits on fire.
+#[tokio::test]
+async fn a_stop_answers_first_and_releases_the_run_loop_after() {
+    let harness = Harness::start().await;
+
+    let result = harness.call("shutdown").await.unwrap();
+    assert_eq!(result["stopping"], json!(true));
+    assert_eq!(
+        result["version"],
+        json!(env!("CARGO_PKG_VERSION")),
+        "the answer says which build is going away: {result}"
+    );
+
+    tokio::time::timeout(std::time::Duration::from_secs(2), harness.shutdown.wait())
+        .await
+        .expect("the run loop should be released once the answer has been written");
+}
+
+/// Until it is asked for, nothing is armed. A run loop released by anything
+/// other than an explicit stop would be a daemon that exits on its own.
+#[tokio::test]
+async fn nothing_arms_a_stop_that_was_not_asked_for() {
+    let harness = Harness::start().await;
+    harness.call("status").await.unwrap();
+
+    let waited = tokio::time::timeout(
+        std::time::Duration::from_millis(300),
+        harness.shutdown.wait(),
+    )
+    .await;
+    assert!(waited.is_err(), "no stop was requested, so nothing fires");
 }

@@ -31,6 +31,7 @@ async fn main() -> Result<()> {
         Command::Models => print_models().await,
         Command::Env(args) => print_env(args).await,
         Command::Settings => print_settings().await,
+        Command::Stop => stop().await,
         Command::Exec(args) => exec(args).await,
         Command::Doctor(args) => doctor(args).await,
         Command::Usage(args) => print_usage(args).await,
@@ -276,6 +277,78 @@ async fn print_env(args: cli::EnvArgs) -> Result<()> {
     Ok(())
 }
 
+/// How long to watch for the daemon to go, and then to come back.
+///
+/// Both windows are stated in the output rather than assumed, because a
+/// supervisor that restarts more slowly than this has not been caught doing
+/// nothing — it has been caught outside the window.
+const STOP_WINDOW: std::time::Duration = std::time::Duration::from_secs(3);
+const RESTART_WINDOW: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Ask the running daemon to stop, then say what actually happened.
+///
+/// The observation is the useful half. Under a supervisor a stop is how a
+/// running daemon is replaced by the build on disk, so the common outcome is
+/// that it goes and comes straight back as a different version — which is the
+/// answer to "why is my upgrade not taking effect". Whether anything restarts
+/// it is not this verb's doing, so it reports what it saw rather than claiming
+/// to have done it.
+async fn stop() -> Result<()> {
+    let result = control::call(&control::default_path(), "shutdown", None).await?;
+    let was = version_of(&result).unwrap_or_else(|| "the running daemon".to_owned());
+
+    if !watch(STOP_WINDOW, |answering| answering.is_none()).await {
+        println!("asked {was} to stop; it is still answering after {STOP_WINDOW:?}");
+        return Ok(());
+    }
+
+    let mut now = None;
+    watch(RESTART_WINDOW, |answering| {
+        now = answering;
+        now.is_some()
+    })
+    .await;
+
+    match now {
+        Some(version) if version == was => {
+            println!("stopped {was}; something started it again, on the same build");
+        }
+        Some(version) => println!("stopped {was}; something started it again as {version}"),
+        None => println!("stopped {was}; nothing started it again within {RESTART_WINDOW:?}"),
+    }
+    Ok(())
+}
+
+/// Poll the socket until `settled` accepts what it sees, or the window closes.
+async fn watch(
+    window: std::time::Duration,
+    mut settled: impl FnMut(Option<String>) -> bool,
+) -> bool {
+    let deadline = tokio::time::Instant::now() + window;
+    loop {
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        let answering = control::call(&control::default_path(), "status", None)
+            .await
+            .ok()
+            .map(|result| {
+                version_of(&result).unwrap_or_else(|| "a build that does not say".to_owned())
+            });
+        if settled(answering) {
+            return true;
+        }
+        if tokio::time::Instant::now() >= deadline {
+            return false;
+        }
+    }
+}
+
+fn version_of(result: &serde_json::Value) -> Option<String> {
+    result
+        .get("version")
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_owned)
+}
+
 /// Start a program with this proxy's configuration applied.
 ///
 /// The environment half is set on the child, which is the launcher's whole job.
@@ -476,6 +549,10 @@ async fn run_with(args: RunArgs, capture: Capture) -> Result<()> {
         codex_cc_proxy::policy::Snapshot::new(tiers.clone(), effort_ceiling),
     ));
 
+    // One signal, shared: asking over the socket has to move this process, not
+    // merely answer about it.
+    let shutdown = Arc::new(codex_cc_proxy::daemon::Shutdown::default());
+
     let control_state = codex_cc_proxy::control::handler::ControlState {
         port: addr.port(),
         policy: Arc::clone(&policy),
@@ -485,6 +562,7 @@ async fn run_with(args: RunArgs, capture: Capture) -> Result<()> {
         usage: Arc::clone(&usage),
         login: Arc::new(codex_cc_proxy::auth::daemon_login::LoginFlow::default()),
         client: Arc::new(config.client.clone()),
+        shutdown: Arc::clone(&shutdown),
         tokens: Some(Arc::clone(&tokens)),
         usage_endpoint: config.upstream.usage.clone(),
         config_path: Some(codex_cc_proxy::config::config_path()),
@@ -554,7 +632,13 @@ async fn run_with(args: RunArgs, capture: Capture) -> Result<()> {
         sessions: Arc::new(codex_cc_proxy::session::SessionStore::new()),
     };
 
-    daemon::serve(listener, state).await?;
+    // Whichever comes first: the listener stopping on its own, or a stop asked
+    // for over the socket. An in-flight turn is cut — a person typing `stop`
+    // means it, and the client's own retry handles a dropped connection.
+    tokio::select! {
+        result = daemon::serve(listener, state) => result?,
+        () = shutdown.wait() => tracing::info!("stopping, as asked over the control socket"),
+    }
     Ok(())
 }
 

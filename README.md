@@ -201,6 +201,7 @@ make on someone's behalf — open it in a private window to pick a different one
 | `status`, `models` | connection, catalog, and the client policy in effect |
 | `env`, `settings` | what a client needs, as shell exports or as one settings document |
 | `exec <command>` | runs a command with both of those applied |
+| `stop` | asks the running daemon to stop, and says what happened next |
 | `usage` | what quota is left, as of the last turn |
 | `statusline -- <script>` | wraps your own status-line script and merges that quota into what it reads |
 | `record ingress` / `record upstream` | capture exchanges as fixtures |

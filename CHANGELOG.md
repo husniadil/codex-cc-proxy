@@ -27,6 +27,12 @@ in [`docs/api.md`](docs/api.md) §6.
   documenting another provider's model ids, prices, and parameters. Switchable
   in `[client]`, and `status` names it so the person holding "Skill execution
   blocked by permission rules" can find the key that undoes it.
+- **`stop`**, so a daemon can be replaced with the CLI that replaced it. Under a
+  supervisor, stopping is how a running daemon picks up the build on disk, and
+  this reports what it observed afterwards: gone, or started again and on which
+  version. The answer reaches the caller before the process goes, because a
+  closed connection with no reply cannot be told apart from a crash. An
+  in-flight turn is cut, which is what the person typing it asked for.
 - **A newer CLI will not quietly serve an older daemon.** One file is both, and
   replacing it on disk does not restart what is already running, so this is what
   an ordinary upgrade leaves behind. The policy half of the `env` payload is

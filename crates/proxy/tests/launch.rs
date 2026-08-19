@@ -300,3 +300,83 @@ fn settings_and_exec_refuse_a_daemon_that_predates_client_policy() {
 
     let _ = server.join();
 }
+
+/// A stop over the socket actually stops the process.
+///
+/// The unit tests establish that the signal is armed after the answer is
+/// written; nothing there proves the run loop is listening to it. This starts
+/// the shipping binary as a daemon, asks it to stop through the shipping CLI,
+/// and waits for the process to be gone. The wiring is the whole assertion.
+///
+/// It contacts nothing: without credentials the daemon short-circuits to the
+/// fallback model list before any request is built. `TMPDIR` moves the control
+/// socket and `CODEX_CC_PROXY_HOME` the configuration, so a developer's own
+/// daemon is never involved.
+#[cfg(unix)]
+#[test]
+fn a_stop_asked_for_over_the_socket_ends_the_process() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().join("home");
+    std::fs::create_dir_all(&home).unwrap();
+
+    let binary = env!("CARGO_BIN_EXE_codex-cc-proxy");
+    let mut daemon = std::process::Command::new(binary)
+        .args(["run", "--port", "0"])
+        .env("CODEX_CC_PROXY_HOME", &home)
+        .env("TMPDIR", dir.path())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("the daemon should start");
+
+    let socket = dir.path().join("codex-cc-proxy.sock");
+    for _ in 0..200 {
+        if socket.exists() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    assert!(socket.exists(), "the daemon never came up");
+
+    let stopped = std::process::Command::new(binary)
+        .arg("stop")
+        .env("CODEX_CC_PROXY_HOME", &home)
+        .env("TMPDIR", dir.path())
+        .output()
+        .expect("the stop verb should run");
+
+    let said = String::from_utf8_lossy(&stopped.stdout);
+    assert!(
+        stopped.status.success(),
+        "stop failed: {}",
+        String::from_utf8_lossy(&stopped.stderr)
+    );
+    assert!(
+        said.contains("stopped"),
+        "it has to say what it observed: {said}"
+    );
+    assert!(
+        said.contains("nothing started it again"),
+        "nothing supervises this one, and saying so is the useful half: {said}"
+    );
+
+    // The process itself, not the socket: a daemon that stopped answering while
+    // still running would be the worse of the two failures.
+    let mut gone = false;
+    for _ in 0..100 {
+        match daemon.try_wait() {
+            Ok(Some(_)) => {
+                gone = true;
+                break;
+            }
+            _ => std::thread::sleep(std::time::Duration::from_millis(50)),
+        }
+    }
+    if !gone {
+        let _ = daemon.kill();
+    }
+    assert!(
+        gone,
+        "the run loop is not listening to the stop it answered"
+    );
+}

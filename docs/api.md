@@ -72,6 +72,7 @@ codex-cc-proxy models     available models
 codex-cc-proxy env        environment for Claude Code, as shell exports
 codex-cc-proxy settings   the same configuration, as one settings document
 codex-cc-proxy exec       run a command with that configuration applied
+codex-cc-proxy stop       ask the running daemon to stop
 codex-cc-proxy doctor     probe live backend capabilities
 codex-cc-proxy usage      what quota is left
 codex-cc-proxy statusline wrap a status-line script, adding that quota
@@ -349,6 +350,33 @@ inherits the environment into anything it spawns, but not the argument list, so
 a client started from inside it carries the routing and not the policy. Anything
 that spawns a client composes its own `--settings`.
 
+### 2.4 `stop`
+
+Asks the running daemon to stop, then reports what it observed afterwards.
+
+```
+$ codex-cc-proxy stop
+stopped 0.2.0; something started it again as 0.3.0
+```
+
+The observation is the useful half. Under a supervisor a stop is how a running
+daemon is replaced by the build on disk, which is the answer to "the binary is
+new and nothing changed" — one file is both the daemon and the CLI, and
+replacing it does not restart what is already running (§2.2). Whether anything
+restarts it belongs to the supervisor, so this reports what it saw rather than
+claiming to have done it, and names the window it watched for: three seconds for
+the daemon to go, five for anything to bring it back. A supervisor slower than
+that has not been caught doing nothing, it has been caught outside the window,
+and the output says so.
+
+**The answer arrives before the process goes.** A caller reading a closed
+connection with no reply cannot tell a clean stop from a crash, and learning what
+happened is the reason to ask over the socket rather than send a signal. The run
+loop is released only once the response has been written.
+
+**An in-flight turn is cut.** Someone typing `stop` means it, and a dropped
+connection is something the client's own retry already handles.
+
 ---
 
 ## 3. Control socket
@@ -364,6 +392,7 @@ A Unix domain socket, or a named pipe on Windows, carrying JSON-RPC:
 | `usage` | quota snapshot as of the last turn, or that no turn has been made, plus `models` — the ids this daemon serves | yes |
 | `usage.refresh` | asks the backend for a figure now, for a front-end with nothing to show on a daemon that has served no turn | yes |
 | `env` | the §2.2 block: `variables`, and `settings` always present | yes |
+| `shutdown` | `{"stopping": true, "version": ...}`, then the process goes once the answer is written | yes |
 | `record.start` / `record.stop` | fixture capture | yes — `{"mode": "ingress"}` by default, `"upstream"` must be named because it bills every turn that follows |
 | `login` | authorization URL, then completion in the background; `status` reports when it landed | yes |
 | `login.cancel` | abandons a flow and releases the callback port | yes |
