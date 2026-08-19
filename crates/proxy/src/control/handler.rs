@@ -133,6 +133,17 @@ pub async fn dispatch(
 /// replacing it on disk does not restart what is already running.
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
+/// Minted once, when this process starts.
+///
+/// A stop is observed by watching what answers afterwards, and "it went" cannot
+/// be read from a socket falling silent: a supervisor that restarts inside the
+/// first poll never leaves a gap, and one that throttles respawns leaves a gap
+/// far longer than anything worth waiting for. Both make absence a statement
+/// about timing rather than about the daemon. This changes exactly when the
+/// process does, so the same observation holds either way.
+static INSTANCE: std::sync::LazyLock<String> =
+    std::sync::LazyLock::new(|| uuid::Uuid::new_v4().to_string());
+
 fn status(state: &ControlState) -> Value {
     let authenticated = state
         .credentials
@@ -199,6 +210,8 @@ fn status(state: &ControlState) -> Value {
         // The build actually serving this socket, which is not necessarily the
         // build the caller was invoked from.
         "version": VERSION,
+        // This process, as distinct from any other that serves the same socket.
+        "instance": &*INSTANCE,
         // Policy this daemon publishes for whoever starts the client. Reported
         // under the configuration's own key names, because the person reading
         // this arrived holding "Skill execution blocked by permission rules" —

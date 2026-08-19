@@ -230,6 +230,15 @@ pub async fn serve(path: &Path, state: ControlState) -> Result<(), ProxyError> {
                     break;
                 }
                 let _ = writer.flush().await;
+
+                // Same order as the other listener: released only once the
+                // answer is out. Without this a stop is answered and never
+                // acted on, which is the worse of the two failures because the
+                // caller was told it worked.
+                if state.shutdown.requested() {
+                    state.shutdown.release();
+                    break;
+                }
             }
         });
     }

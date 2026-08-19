@@ -245,8 +245,8 @@ fn settings_and_exec_refuse_a_daemon_that_predates_client_policy() {
     let listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
 
     let server = std::thread::spawn(move || {
-        // Three callers: `settings`, `exec`, and `env`.
-        for stream in listener.incoming().take(3) {
+        // Four callers: `settings`, `exec`, `env --json`, and `env`.
+        for stream in listener.incoming().take(4) {
             let Ok(mut stream) = stream else { continue };
             let mut request = String::new();
             let _ = BufReader::new(stream.try_clone().unwrap()).read_line(&mut request);
@@ -267,7 +267,14 @@ fn settings_and_exec_refuse_a_daemon_that_predates_client_policy() {
             .expect("the binary should run")
     };
 
-    for verb in [vec!["settings"], vec!["exec", "claude"]] {
+    // `env --json` is the same document under the older name, so it has to
+    // refuse for the same reason. Leaving it out is how one of two names for
+    // one thing quietly keeps the behaviour the other one dropped.
+    for verb in [
+        vec!["settings"],
+        vec!["exec", "claude"],
+        vec!["env", "--json"],
+    ] {
         let output = run(&verb);
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(
@@ -401,15 +408,22 @@ fn stop_names_the_upgrade_problem_when_the_daemon_predates_it() {
     let socket = dir.path().join("codex-cc-proxy.sock");
     let listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
 
+    // Faithful to what an older daemon does: it answers `status` perfectly well
+    // and has never heard of `shutdown`.
+    // Exactly two: `stop` reads what is answering, then asks it to stop, then
+    // gives up on the refusal. A larger count would leave this thread waiting
+    // for a connection that never comes.
     let server = std::thread::spawn(move || {
-        for stream in listener.incoming().take(1) {
+        for stream in listener.incoming().take(2) {
             let Ok(mut stream) = stream else { continue };
             let mut request = String::new();
             let _ = BufReader::new(stream.try_clone().unwrap()).read_line(&mut request);
-            let _ = writeln!(
-                stream,
-                r#"{{"jsonrpc":"2.0","id":1,"error":{{"code":-32601,"message":"unknown method `shutdown`"}}}}"#
-            );
+            let reply = if request.contains("\"shutdown\"") {
+                r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"unknown method `shutdown`"}}"#
+            } else {
+                r#"{"jsonrpc":"2.0","id":1,"result":{"version":"0.0.1-from-before"}}"#
+            };
+            let _ = writeln!(stream, "{reply}");
             let _ = stream.flush();
         }
     });

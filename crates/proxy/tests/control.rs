@@ -1824,3 +1824,23 @@ fn status_does_not_invent_a_version_the_daemon_never_sent() {
         "no invented figure, and no sentence built around one: {rendered}"
     );
 }
+
+/// A stop is observed by what answers afterwards, and silence is a statement
+/// about timing rather than about the daemon: a supervisor quick enough leaves
+/// no gap to see, and one that throttles a respawn leaves a gap longer than any
+/// sensible wait. The identity is what actually changes when the process does.
+#[tokio::test]
+async fn status_carries_an_identity_for_the_process_answering() {
+    let harness = Harness::start().await;
+    let first = harness.call("status").await.unwrap();
+
+    let instance = first["instance"]
+        .as_str()
+        .expect("an answering daemon has to be identifiable");
+    assert!(!instance.is_empty());
+
+    // Stable within one process: an id that changed per call would report a
+    // restart on every poll.
+    let second = harness.call("status").await.unwrap();
+    assert_eq!(second["instance"], first["instance"]);
+}

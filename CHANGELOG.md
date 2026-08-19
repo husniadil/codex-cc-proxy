@@ -27,7 +27,11 @@ in [`docs/api.md`](docs/api.md) §6.
   documenting another provider's model ids, prices, and parameters. Switchable
   in `[client]`, and `status` names it so the person holding "Skill execution
   blocked by permission rules" can find the key that undoes it.
-- **`stop`**, so a daemon can be replaced with the CLI that replaced it. Under a
+- **`stop`**, so a daemon can be replaced with the CLI that replaced it. It
+  watches the `instance` id `status` now carries rather than watching the socket
+  fall silent, because silence is a statement about timing: a supervisor quick
+  enough leaves no gap to see, and one that throttles a respawn leaves a gap
+  longer than any sensible wait. Under a
   supervisor, stopping is how a running daemon picks up the build on disk, and
   this reports what it observed afterwards: gone, or started again and on which
   version. The answer reaches the caller before the process goes, because a

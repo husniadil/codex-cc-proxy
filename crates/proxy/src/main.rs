@@ -265,42 +265,59 @@ async fn statusline(args: cli::StatuslineArgs) -> Result<()> {
 }
 
 async fn print_env(args: cli::EnvArgs) -> Result<()> {
+    // The JSON form is the `settings` document, so it goes through `settings`
+    // rather than alongside it. Rendering it here as well left one of the two
+    // names unguarded, and it was the older name — the one a caller reaches for
+    // out of habit — that printed a document quietly missing a permission rule.
+    if args.json {
+        return print_settings().await;
+    }
+
     let result = control::call(&control::default_path(), "env", None).await?;
-    println!(
-        "{}",
-        if args.json {
-            render::settings_json(&result)
-        } else {
-            render::env_shell(&result)
-        }
-    );
+    println!("{}", render::env_shell(&result));
     Ok(())
 }
 
-/// How long to watch for the daemon to go, and then to come back.
+/// How long to watch for the daemon to go, and then for anything to bring it
+/// back.
 ///
-/// Both windows are stated in the output rather than assumed, because a
-/// supervisor that restarts more slowly than this has not been caught doing
-/// nothing — it has been caught outside the window.
+/// The second is the longer of the two on purpose: launchd throttles a respawn
+/// to ten seconds after the last start, and a window under that would report
+/// "nothing started it again" moments before something did — sending the reader
+/// to `run` straight into the port the supervisor is about to take. It returns
+/// as soon as it sees the answer, so the wait is only paid when there is
+/// genuinely nothing there.
 const STOP_WINDOW: std::time::Duration = std::time::Duration::from_secs(3);
-const RESTART_WINDOW: std::time::Duration = std::time::Duration::from_secs(5);
+const RESTART_WINDOW: std::time::Duration = std::time::Duration::from_secs(12);
+
+/// What is answering the socket right now.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Answering {
+    version: String,
+    instance: Option<String>,
+}
 
 /// Ask the running daemon to stop, then say what actually happened.
 ///
 /// The observation is the useful half. Under a supervisor a stop is how a
-/// running daemon is replaced by the build on disk, so the common outcome is
-/// that it goes and comes straight back as a different version — which is the
-/// answer to "why is my upgrade not taking effect". Whether anything restarts
-/// it is not this verb's doing, so it reports what it saw rather than claiming
-/// to have done it.
+/// running daemon is replaced by the build on disk, which is the answer to "the
+/// binary is new and nothing changed". Whether anything restarts it is not this
+/// verb's doing, so it reports what it saw rather than claiming to have done it.
+///
+/// **It watches the instance, not the silence.** A socket falling quiet is a
+/// statement about timing: a supervisor quick enough leaves no gap to see, and
+/// one that throttles leaves a gap longer than any sensible wait. The daemon
+/// mints an id at startup, so a different id is a different process no matter
+/// how the two overlapped.
 async fn stop() -> Result<()> {
+    let before = answering().await;
+
     let result = match control::call(&control::default_path(), "shutdown", None).await {
         Ok(result) => result,
         // The chicken and the egg, stated rather than papered over. This verb
-        // exists to replace a daemon that predates the binary asking, and it
-        // cannot replace one that predates the verb itself: the older daemon
-        // has no method to ask. Nothing here can fix that, so it says which
-        // situation this is and what does fix it, once.
+        // exists to replace a daemon older than the binary asking, and it
+        // cannot replace one older than the verb: that daemon has no method to
+        // ask. Nothing here can fix it, so it says which situation this is.
         Err(error) if error.status == axum::http::StatusCode::NOT_FOUND => {
             anyhow::bail!(
                 "The running daemon is from an older build and has no `stop`. End that \
@@ -311,49 +328,80 @@ async fn stop() -> Result<()> {
     };
     let was = version_of(&result).unwrap_or_else(|| "the running daemon".to_owned());
 
-    if !watch(STOP_WINDOW, |answering| answering.is_none()).await {
+    // Gone, or already replaced. An id that changed says the second even when
+    // there was never a moment where nothing answered.
+    let mut seen = None;
+    let went = watch(STOP_WINDOW, |now| {
+        seen = now.clone();
+        now.is_none() || (now.is_some() && now != before)
+    })
+    .await;
+
+    if !went {
         println!("asked {was} to stop; it is still answering after {STOP_WINDOW:?}");
         return Ok(());
     }
 
-    let mut now = None;
-    watch(RESTART_WINDOW, |answering| {
-        now = answering;
-        now.is_some()
+    if let Some(replacement) = seen {
+        report_replacement(&was, &replacement);
+        return Ok(());
+    }
+
+    // It went and nothing has taken its place yet. Wait long enough to outlast
+    // a throttled respawn before saying nothing did.
+    let mut back = None;
+    watch(RESTART_WINDOW, |now| {
+        back = now;
+        back.is_some()
     })
     .await;
 
-    match now {
-        Some(version) if version == was => {
-            println!("stopped {was}; something started it again, on the same build");
-        }
-        Some(version) => println!("stopped {was}; something started it again as {version}"),
+    match back {
+        Some(replacement) => report_replacement(&was, &replacement),
         None => println!("stopped {was}; nothing started it again within {RESTART_WINDOW:?}"),
     }
     Ok(())
 }
 
-/// Poll the socket until `settled` accepts what it sees, or the window closes.
+fn report_replacement(was: &str, now: &Answering) {
+    if now.version == was {
+        println!("stopped {was}; something started it again, on the same build");
+    } else {
+        println!(
+            "stopped {was}; something started it again as {}",
+            now.version
+        );
+    }
+}
+
+/// Poll until `settled` accepts what it sees, or the window closes.
 async fn watch(
     window: std::time::Duration,
-    mut settled: impl FnMut(Option<String>) -> bool,
+    mut settled: impl FnMut(Option<Answering>) -> bool,
 ) -> bool {
     let deadline = tokio::time::Instant::now() + window;
     loop {
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-        let answering = control::call(&control::default_path(), "status", None)
-            .await
-            .ok()
-            .map(|result| {
-                version_of(&result).unwrap_or_else(|| "a build that does not say".to_owned())
-            });
-        if settled(answering) {
+        if settled(answering().await) {
             return true;
         }
         if tokio::time::Instant::now() >= deadline {
             return false;
         }
     }
+}
+
+async fn answering() -> Option<Answering> {
+    let result = control::call(&control::default_path(), "status", None)
+        .await
+        .ok()?;
+    Some(Answering {
+        version: version_of(&result).unwrap_or_else(|| "a build that does not say".to_owned()),
+        instance: result
+            .get("instance")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned),
+    })
 }
 
 fn version_of(result: &serde_json::Value) -> Option<String> {

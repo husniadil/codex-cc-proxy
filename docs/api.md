@@ -263,8 +263,10 @@ variable of any kind, so this rendering cannot deliver it. It says so in a
 comment, which `eval` steps over, and the comment appears only when there is a
 policy being left out.
 
-`settings` emits one complete client settings document — the same bytes as
-`env --json`, under the name that describes them:
+`settings` emits one complete client settings document. `env --json` is the same
+verb under the older name and prints the same bytes by running it, rather than
+rendering the document a second time — two renderings of one thing is how the
+older name kept a behaviour the newer one had dropped.
 
 ```json
 {
@@ -364,10 +366,20 @@ daemon is replaced by the build on disk, which is the answer to "the binary is
 new and nothing changed" — one file is both the daemon and the CLI, and
 replacing it does not restart what is already running (§2.2). Whether anything
 restarts it belongs to the supervisor, so this reports what it saw rather than
-claiming to have done it, and names the window it watched for: three seconds for
-the daemon to go, five for anything to bring it back. A supervisor slower than
-that has not been caught doing nothing, it has been caught outside the window,
-and the output says so.
+claiming to have done it.
+
+**It watches the `instance`, not the silence.** A socket falling quiet is a
+statement about timing rather than about the daemon: a supervisor quick enough
+leaves no gap to observe, and one that throttles a respawn leaves a gap longer
+than any sensible wait. `status` therefore carries an id minted when the process
+started, and a different id is a different process however the two overlapped.
+
+The windows are three seconds for the daemon to go and twelve for anything to
+bring it back, and it returns as soon as it sees the answer. Twelve because
+launchd holds a respawn for ten seconds after the last start, and a shorter
+window would report "nothing started it again" moments before something did,
+sending the reader to `run` straight into the port the supervisor is about to
+take.
 
 **The answer arrives before the process goes.** A caller reading a closed
 connection with no reply cannot tell a clean stop from a crash, and learning what
@@ -392,7 +404,7 @@ A Unix domain socket, or a named pipe on Windows, carrying JSON-RPC:
 
 | Method | Returns | v0.1 |
 |---|---|---|
-| `status` | connection state, whether the grant has been **refused**, plan and which source reported it, the tier mapping and the effort ceiling, any mapped model the catalog withholds, whether the catalog was authoritative | yes |
+| `status` | connection state, whether the grant has been **refused**, plan and which source reported it, the tier mapping and the effort ceiling, any mapped model the catalog withholds, whether the catalog was authoritative, the client policy in effect, and the build and `instance` serving the socket | yes |
 | `disconnect` | clears credentials | yes |
 | `models` | catalog, and whether it is the fallback list | yes |
 | `tiers.get` | tier mapping | yes |
