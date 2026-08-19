@@ -303,10 +303,8 @@ async fn stop() -> Result<()> {
         // situation this is and what does fix it, once.
         Err(error) if error.status == axum::http::StatusCode::NOT_FOUND => {
             anyhow::bail!(
-                "the daemon answering this socket predates `stop`, so it cannot be asked to \
-                 stop this way. Whatever supervises it has to end it once — after that, this \
-                 binary's daemon answers `stop`. `codex-cc-proxy status` names the version \
-                 actually running."
+                "The running daemon is from an older build and has no `stop`. End that \
+                 process however it was started, then `codex-cc-proxy run`."
             );
         }
         Err(error) => return Err(error.into()),

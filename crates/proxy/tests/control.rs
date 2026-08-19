@@ -1675,8 +1675,13 @@ fn a_daemon_that_predates_the_policy_is_told_apart_from_one_that_has_none() {
     let error = control::require_client_policy(&predates)
         .expect_err("a daemon that cannot answer for the policy must not be assumed to have none");
     assert!(
+        error.message.contains("older build"),
+        "the refusal has to name the situation: {}",
+        error.message
+    );
+    assert!(
         error.message.to_lowercase().contains("restart the daemon"),
-        "the refusal has to say what to do: {}",
+        "and what to do: {}",
         error.message
     );
 
@@ -1782,4 +1787,40 @@ async fn nothing_arms_a_stop_that_was_not_asked_for() {
     )
     .await;
     assert!(waited.is_err(), "no stop was requested, so nothing fires");
+}
+
+/// Two builds can carry the same version string and one still be older than a
+/// feature. Then the string says nothing and the missing field is the only
+/// evidence there is, so `status` reads that instead.
+#[test]
+fn status_names_an_older_build_even_when_the_version_string_matches() {
+    let same_version_older_build = json!({
+        "base_url": "http://127.0.0.1:8787",
+        "version": env!("CARGO_PKG_VERSION"),
+        "auth": { "connected": false },
+    });
+
+    let rendered = render::status(&same_version_older_build);
+    assert!(
+        rendered.contains("older build"),
+        "the version matches, so only the missing field can say this: {rendered}"
+    );
+}
+
+/// A daemon old enough not to report a version at all — which is what every
+/// build before this one is. Naming a number it never sent would be inventing
+/// one.
+#[test]
+fn status_does_not_invent_a_version_the_daemon_never_sent() {
+    let ancient = json!({
+        "base_url": "http://127.0.0.1:8787",
+        "auth": { "connected": false },
+    });
+
+    let rendered = render::status(&ancient);
+    assert!(rendered.contains("restart it"), "{rendered}");
+    assert!(
+        !rendered.contains("nothing,"),
+        "no invented figure, and no sentence built around one: {rendered}"
+    );
 }

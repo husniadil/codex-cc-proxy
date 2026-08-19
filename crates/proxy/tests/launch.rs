@@ -425,7 +425,7 @@ fn stop_names_the_upgrade_problem_when_the_daemon_predates_it() {
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("predates `stop`"),
+        stderr.contains("older build") && stderr.contains("no `stop`"),
         "it has to name the situation rather than echo the protocol: {stderr}"
     );
     assert!(

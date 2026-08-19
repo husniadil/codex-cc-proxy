@@ -41,12 +41,10 @@ pub fn require_client_policy(result: &serde_json::Value) -> Result<(), ProxyErro
         return Ok(());
     }
 
-    Err(ProxyError::invalid_request(format!(
-        "the daemon answering this socket predates client policy, so it cannot say what the \
-         client has to be told. This binary is {VERSION}; restart the daemon so it is this \
-         build too. `codex-cc-proxy status` names the version that is actually running, and \
-         `codex-cc-proxy env` still works meanwhile, carrying routing only."
-    )))
+    Err(ProxyError::invalid_request(
+        "The running daemon is from an older build and has no client policy to give. Restart \
+         the daemon and try again.",
+    ))
 }
 
 /// Serve the control socket until the process stops.

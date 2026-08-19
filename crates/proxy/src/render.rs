@@ -20,13 +20,11 @@ pub fn env_shell(result: &Value) -> String {
 
     match result.get("settings").and_then(Value::as_object) {
         None => {
-            lines.push(format!(
-                "# The daemon answering this socket predates client policy; this binary is {}.",
-                crate::control::VERSION
-            ));
             lines.push(
-                "# Restart the daemon to pick it up. The routing below is unaffected.".to_owned(),
+                "# The running daemon is from an older build, so the client policy is missing"
+                    .to_owned(),
             );
+            lines.push("# from the exports below. Restart the daemon to pick it up.".to_owned());
         }
         Some(policy) if !policy.is_empty() => {
             lines.push(
@@ -206,13 +204,32 @@ pub fn status(result: &Value) -> String {
     // restart what is already running — so a newer CLI against an older daemon
     // is the ordinary state after an upgrade. Silent when they agree: a line
     // printed on every run is one nobody reads on the run that matters.
-    if let Some(daemon) = field(result, "version").and_then(Value::as_str)
-        && daemon != crate::control::VERSION
-    {
-        lines.push(format!(
-            "version    daemon {daemon}, this binary {} — restart the daemon so they match",
+    //
+    // Two reads, because either can be the only one that fires. A version
+    // string catches an upgrade across releases. Within one — two builds of the
+    // same version, one of them older than a feature — the string is equal and
+    // the missing field is the only evidence there is.
+    let older_build = field(result, "client").is_none();
+    let daemon_version = field(result, "version").and_then(Value::as_str);
+    match (daemon_version, older_build) {
+        // Across releases the string is the plain answer, and it names both
+        // sides so the reader can tell which way round it is.
+        (Some(daemon), _) if daemon != crate::control::VERSION => lines.push(format!(
+            "version    daemon {daemon}, this binary {} — restart the daemon",
             crate::control::VERSION
-        ));
+        )),
+        // Old enough that it does not report a version at all. Saying which
+        // number it did not report would be inventing one.
+        (None, true) => lines
+            .push("version    the daemon is old enough not to report one — restart it".to_owned()),
+        // Same string on both sides, and one of them older than a feature. The
+        // string says nothing here, so the missing field is the only evidence
+        // there is.
+        (Some(daemon), true) => lines.push(format!(
+            "version    the daemon reports {daemon}, this binary's own, but is an older \
+             build — restart it"
+        )),
+        _ => {}
     }
 
     // The one place a denied skill is ever attributed. The client's own refusal
