@@ -377,6 +377,13 @@ loop is released only once the response has been written.
 **An in-flight turn is cut.** Someone typing `stop` means it, and a dropped
 connection is something the client's own retry already handles.
 
+**It cannot stop a daemon older than itself.** The verb exists to replace a
+running daemon with the build on disk, and a daemon that predates the verb has
+no method to ask — so the first upgrade past this version still has to be ended
+by whatever supervises it. Nothing here can fix that; what it does is say which
+situation it is rather than surface `unknown method` and leave the reader to
+work out that a protocol error is really an upgrade problem.
+
 ---
 
 ## 3. Control socket
@@ -642,6 +649,11 @@ pending work.
 The CLI verb set, the control-socket method names, the configuration keys, and
 the error-type vocabulary are semver-bound. A shipped name is never repurposed or
 removed within a major version; only new ones are added.
+
+**An unknown method reaches the caller as an unknown method.** The error code
+survives the round trip rather than being flattened into one kind, because
+"this daemon does not have that method" and "that method refused what you asked"
+are different situations and only the first is answered by replacing the daemon.
 
 **A field added to a response is a capability, and a caller that needs it checks
 for it.** Adding one is not a breaking change: an older caller ignores what it

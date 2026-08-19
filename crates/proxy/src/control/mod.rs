@@ -187,6 +187,14 @@ pub async fn call(
 
     match (response.result, response.error) {
         (Some(result), _) => Ok(result),
+        // The code survives the trip. Flattening every failure into one kind
+        // reads as tidy and costs a caller the one distinction it acts on:
+        // "this daemon does not have that method" is a different situation from
+        // "that method refused what you asked", and only the first is answered
+        // by replacing the daemon.
+        (None, Some(error)) if error.code == codes::METHOD_NOT_FOUND => {
+            Err(ProxyError::not_found(error.message))
+        }
         (None, Some(error)) => Err(ProxyError::invalid_request(error.message)),
         (None, None) => Err(ProxyError::invalid_request(
             "the daemon returned neither a result nor an error",
@@ -268,6 +276,14 @@ pub async fn call(
 
     match (response.result, response.error) {
         (Some(result), _) => Ok(result),
+        // The code survives the trip. Flattening every failure into one kind
+        // reads as tidy and costs a caller the one distinction it acts on:
+        // "this daemon does not have that method" is a different situation from
+        // "that method refused what you asked", and only the first is answered
+        // by replacing the daemon.
+        (None, Some(error)) if error.code == codes::METHOD_NOT_FOUND => {
+            Err(ProxyError::not_found(error.message))
+        }
         (None, Some(error)) => Err(ProxyError::invalid_request(error.message)),
         (None, None) => Err(ProxyError::invalid_request(
             "the daemon returned neither a result nor an error",

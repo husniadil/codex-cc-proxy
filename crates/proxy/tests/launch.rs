@@ -380,3 +380,56 @@ fn a_stop_asked_for_over_the_socket_ends_the_process() {
         "the run loop is not listening to the stop it answered"
     );
 }
+
+/// The verb that replaces an old daemon cannot replace one older than itself.
+///
+/// `stop` exists so a running daemon can be swapped for the build on disk. A
+/// daemon that predates `stop` has no method to ask, so this cannot work and
+/// nothing here can make it — what it can do is say which situation this is,
+/// instead of surfacing `unknown method` and leaving the reader to work out
+/// that the raw protocol error is really an upgrade problem.
+///
+/// The stand-in answers the way an older daemon does: method-not-found.
+#[cfg(unix)]
+#[test]
+fn stop_names_the_upgrade_problem_when_the_daemon_predates_it() {
+    use std::io::BufRead;
+    use std::io::BufReader;
+    use std::io::Write;
+
+    let dir = tempfile::tempdir().unwrap();
+    let socket = dir.path().join("codex-cc-proxy.sock");
+    let listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+
+    let server = std::thread::spawn(move || {
+        for stream in listener.incoming().take(1) {
+            let Ok(mut stream) = stream else { continue };
+            let mut request = String::new();
+            let _ = BufReader::new(stream.try_clone().unwrap()).read_line(&mut request);
+            let _ = writeln!(
+                stream,
+                r#"{{"jsonrpc":"2.0","id":1,"error":{{"code":-32601,"message":"unknown method `shutdown`"}}}}"#
+            );
+            let _ = stream.flush();
+        }
+    });
+
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_codex-cc-proxy"))
+        .arg("stop")
+        .env("TMPDIR", dir.path())
+        .output()
+        .expect("the binary should run");
+
+    let _ = server.join();
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("predates `stop`"),
+        "it has to name the situation rather than echo the protocol: {stderr}"
+    );
+    assert!(
+        !stderr.contains("unknown method"),
+        "the raw error is what this replaces: {stderr}"
+    );
+}

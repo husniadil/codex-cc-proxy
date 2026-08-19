@@ -294,7 +294,23 @@ const RESTART_WINDOW: std::time::Duration = std::time::Duration::from_secs(5);
 /// it is not this verb's doing, so it reports what it saw rather than claiming
 /// to have done it.
 async fn stop() -> Result<()> {
-    let result = control::call(&control::default_path(), "shutdown", None).await?;
+    let result = match control::call(&control::default_path(), "shutdown", None).await {
+        Ok(result) => result,
+        // The chicken and the egg, stated rather than papered over. This verb
+        // exists to replace a daemon that predates the binary asking, and it
+        // cannot replace one that predates the verb itself: the older daemon
+        // has no method to ask. Nothing here can fix that, so it says which
+        // situation this is and what does fix it, once.
+        Err(error) if error.status == axum::http::StatusCode::NOT_FOUND => {
+            anyhow::bail!(
+                "the daemon answering this socket predates `stop`, so it cannot be asked to \
+                 stop this way. Whatever supervises it has to end it once — after that, this \
+                 binary's daemon answers `stop`. `codex-cc-proxy status` names the version \
+                 actually running."
+            );
+        }
+        Err(error) => return Err(error.into()),
+    };
     let was = version_of(&result).unwrap_or_else(|| "the running daemon".to_owned());
 
     if !watch(STOP_WINDOW, |answering| answering.is_none()).await {
