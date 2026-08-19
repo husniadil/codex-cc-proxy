@@ -134,3 +134,90 @@ fn exec_refuses_before_starting_anything_when_the_daemon_is_not_answering() {
         "the refusal has to say how to fix it: {stderr}"
     );
 }
+
+/// The assembly, not the parts.
+///
+/// Features in this project have shipped inert while every unit test passed,
+/// each time because nothing exercised the wiring between a value handed in at
+/// startup and the thing that was supposed to read it. So this starts the
+/// shipping binary as a daemon and drives a launch all the way through it: a
+/// policy that never reaches the child fails here rather than in someone's
+/// session.
+///
+/// **It contacts nothing.** Without credentials the daemon short-circuits to
+/// the fallback model list before any request is built, which the log states in
+/// as many words. `TMPDIR` moves the control socket and `CODEX_CC_PROXY_HOME`
+/// moves the configuration, so neither this developer's daemon nor their
+/// configuration is touched.
+#[cfg(unix)]
+#[test]
+fn a_launched_child_is_given_the_policy_and_the_environment() {
+    use std::io::Write;
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().join("home");
+    let bin = dir.path().join("bin");
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::create_dir_all(&bin).unwrap();
+
+    // A stand-in that reports what it was actually given, which is the only
+    // evidence that distinguishes a delivered policy from a plausible one.
+    let stub = bin.join("claude");
+    let mut file = std::fs::File::create(&stub).unwrap();
+    file.write_all(b"#!/bin/sh\necho \"ARGV: $*\"\necho \"BASE: $ANTHROPIC_BASE_URL\"\n")
+        .unwrap();
+    drop(file);
+    std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    let binary = env!("CARGO_BIN_EXE_codex-cc-proxy");
+    let mut daemon = std::process::Command::new(binary)
+        .args(["run", "--port", "0"])
+        .env("CODEX_CC_PROXY_HOME", &home)
+        .env("TMPDIR", dir.path())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("the daemon should start");
+
+    let socket = dir.path().join("codex-cc-proxy.sock");
+    for _ in 0..200 {
+        if socket.exists() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+
+    let launched = std::process::Command::new(binary)
+        .args(["exec", "claude", "--resume", "abc"])
+        .env("CODEX_CC_PROXY_HOME", &home)
+        .env("TMPDIR", dir.path())
+        .env(
+            "PATH",
+            format!(
+                "{}:{}",
+                bin.display(),
+                std::env::var("PATH").unwrap_or_default()
+            ),
+        )
+        .output()
+        .expect("the launcher should run");
+
+    let _ = daemon.kill();
+    let _ = daemon.wait();
+
+    let stdout = String::from_utf8_lossy(&launched.stdout);
+    let stderr = String::from_utf8_lossy(&launched.stderr);
+    assert!(
+        stdout.contains("Skill(claude-api)"),
+        "the policy has to reach the child, not merely exist: {stdout}{stderr}"
+    );
+    assert!(
+        stdout.contains("--resume abc"),
+        "and the caller's own arguments with it: {stdout}{stderr}"
+    );
+    assert!(
+        stdout.contains("BASE: http://127.0.0.1:"),
+        "and the environment half: {stdout}{stderr}"
+    );
+}
