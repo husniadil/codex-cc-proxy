@@ -787,15 +787,21 @@ anywhere:
 
 | | |
 |---|---|
-| Skill content injected on one invocation | 92,601 bytes, roughly 23,000 tokens |
+| Skill content injected on one invocation | 73,000 to 93,000 bytes, roughly 18,000 to 23,000 tokens |
 | Cost of a refused invocation | one 43-byte error result |
 | Effect on the listing the client sends | **none** |
 
 That third row is the one that decides the design. Denying does not remove the
 skill from the listing, so the model may still reach for it and lose a turn
 finding out. What the deny stops is the load. The arithmetic is what settles it:
-one blocked call costs 43 bytes, one allowed call costs 92,601 and then keeps
-costing.
+one blocked call costs 43 bytes, one allowed call costs four orders of magnitude
+more than that and then keeps costing.
+
+The skill figure is a range because both ends were measured and it moves with
+what else the session has loaded — the same probe read 92,601 bytes in a
+populated environment and 73,214 in a bare one. Quoting either alone would claim
+a precision the measurement does not have. Nothing about the decision turns on
+where in that range it lands.
 
 **What "keeps costing" means precisely.** In tokens, always: the content lands as
 a user item, so it sits in the conversation for the rest of the session and is

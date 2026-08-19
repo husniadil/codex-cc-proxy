@@ -96,9 +96,10 @@ working_budget = true
 # own.
 [client]
 # Skills refused for a session served through here. `claude-api` is on this list
-# by measurement: one invocation lands 92,601 bytes — roughly 23,000 tokens — in
-# the conversation, where it stays for the rest of the session and is charged
-# every turn, while a refused call costs a 43-byte error. It is also the wrong
+# by measurement: one invocation lands 73,000 to 93,000 bytes — roughly 18,000 to
+# 23,000 tokens — in the conversation, where it stays for the rest of the session
+# and is charged every turn, while a refused call costs a 43-byte error. A range
+# because the figure moves with what else the session has loaded. It is also the wrong
 # reference for a session served here, since it documents another provider's
 # model ids, prices, and parameters.
 #
@@ -378,10 +379,12 @@ impl InstructionsConfig {
 pub struct ClientConfig {
     /// Skills refused for a session served through this proxy.
     ///
-    /// `claude-api` is here by measurement. One invocation lands 92,601 bytes
-    /// in the conversation — roughly 23,000 tokens — as a user text block that
-    /// then sits in context for the rest of the session and is charged on every
-    /// turn. A refused call costs a 43-byte error instead.
+    /// `claude-api` is here by measurement. One invocation lands 73,000 to
+    /// 93,000 bytes in the conversation — roughly 18,000 to 23,000 tokens — as a
+    /// user text block that then sits in context for the rest of the session and
+    /// is charged on every turn. A range because both ends were measured and the
+    /// figure moves with what else the session has loaded; quoting one number
+    /// would claim a precision the measurement does not have. A refused call costs a 43-byte error instead.
     ///
     /// The deny does **not** remove the skill from the listing the client
     /// sends, so the model may still reach for it; what it stops is the load.

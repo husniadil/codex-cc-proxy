@@ -18,10 +18,11 @@ in [`docs/api.md`](docs/api.md) §6.
   complete on its own: measured, a client reading only its `env` block, with no
   `ANTHROPIC_*` in its environment, still reached the proxy.
 - **The bundled `claude-api` skill is denied by default.** Measured against a
-  local capture stub: one invocation lands 92,601 bytes — roughly 23,000 tokens
-  — in the conversation as a user item, where it sits for the rest of the
-  session and is charged every turn, while a refused invocation costs a 43-byte
-  error. Denying does not remove it from the listing the client sends; what it
+  local capture stub, one invocation lands 73,000 to 93,000 bytes — roughly
+  18,000 to 23,000 tokens — in the conversation as a user item, where it sits
+  for the rest of the session and is charged every turn, while a refused
+  invocation costs a 43-byte error. A range because both ends were measured and
+  the figure moves with what else the session has loaded. Denying does not remove it from the listing the client sends; what it
   stops is the load. It is also the wrong reference for a session served here,
   documenting another provider's model ids, prices, and parameters. Switchable
   in `[client]`, and `status` names it so the person holding "Skill execution

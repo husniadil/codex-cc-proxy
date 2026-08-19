@@ -484,9 +484,11 @@ fn the_working_budget_ships_on_and_can_be_switched_off() {
 
 /// The bundled `claude-api` skill ships denied.
 ///
-/// Measured here: one invocation lands 92,601 bytes — roughly 23,000 tokens —
-/// in the conversation as a user text block, where it then sits for the rest of
-/// the session and is charged on every turn. A refused call costs a 43-byte
+/// Measured here: one invocation lands 73,000 to 93,000 bytes — roughly 18,000
+/// to 23,000 tokens — in the conversation as a user text block, where it then
+/// sits for the rest of the session and is charged on every turn. A range
+/// because both ends were measured; the figure moves with what else the session
+/// has loaded, so it is not a constant. A refused call costs a 43-byte
 /// error instead. The deny does not remove the skill from the listing the
 /// client sends, so the model may still reach for it; what it stops is the
 /// load.
