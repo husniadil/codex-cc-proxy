@@ -818,6 +818,15 @@ us are paying to avoid, and an empty `deny_skills` gives it back. The default is
 on for the same reason the working budget is (§2.1): the cost was measured and
 the alternative is worse.
 
+**The policy is published even when it is empty.** One file is both the daemon
+and the CLI, and replacing it on disk does not restart a running daemon, so a
+newer CLI against an older daemon is what an ordinary upgrade leaves behind. If
+an empty policy and a daemon that cannot answer for one looked the same, nothing
+could tell the operator which they had — so the payload always carries the field
+and absence means only that the daemon predates this. The verbs whose output
+would otherwise be quietly incomplete refuse; the one that carries routing alone
+continues and says which daemon answered. `docs/api.md` §2.2 and §6.
+
 **A denied call is attributed by `status` and nowhere else.** The client refuses
 with "Skill execution blocked by permission rules" and names no source, so
 `status` reports the policy under the configuration's own key names — the person

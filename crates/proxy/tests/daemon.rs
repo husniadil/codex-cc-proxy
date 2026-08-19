@@ -500,11 +500,11 @@ fn the_client_policy_ships_on_and_can_be_switched_off() {
     assert_eq!(on.client.deny_skills, vec!["claude-api".to_owned()]);
     assert!(on.client.disable_connectors);
     assert_eq!(
-        on.client.settings(),
-        Some(serde_json::json!({
+        serde_json::Value::Object(on.client.settings()),
+        serde_json::json!({
             "permissions": { "deny": ["Skill(claude-api)"] },
             "disableClaudeAiConnectors": true,
-        }))
+        })
     );
 
     let off: Config = toml::from_str(
@@ -515,10 +515,9 @@ fn the_client_policy_ships_on_and_can_be_switched_off() {
         "#,
     )
     .unwrap();
-    assert_eq!(
-        off.client.settings(),
-        None,
-        "switched off should leave nothing behind, not an empty shell"
+    assert!(
+        off.client.settings().is_empty(),
+        "switched off should leave no keys behind"
     );
 }
 
@@ -535,10 +534,8 @@ fn each_half_of_the_client_policy_stands_alone() {
     )
     .unwrap();
     assert_eq!(
-        skills_only.client.settings(),
-        Some(serde_json::json!({
-            "permissions": { "deny": ["Skill(claude-api)"] },
-        }))
+        serde_json::Value::Object(skills_only.client.settings()),
+        serde_json::json!({ "permissions": { "deny": ["Skill(claude-api)"] } })
     );
 
     let connectors_only: Config = toml::from_str(
@@ -549,8 +546,8 @@ fn each_half_of_the_client_policy_stands_alone() {
     )
     .unwrap();
     assert_eq!(
-        connectors_only.client.settings(),
-        Some(serde_json::json!({ "disableClaudeAiConnectors": true }))
+        serde_json::Value::Object(connectors_only.client.settings()),
+        serde_json::json!({ "disableClaudeAiConnectors": true })
     );
 }
 
@@ -569,7 +566,7 @@ fn a_configured_skill_becomes_a_rule_the_client_understands() {
     .unwrap();
 
     assert_eq!(
-        config.client.settings().unwrap()["permissions"]["deny"],
+        config.client.settings()["permissions"]["deny"],
         serde_json::json!(["Skill(claude-api)", "Skill(some-other-skill)"])
     );
 }

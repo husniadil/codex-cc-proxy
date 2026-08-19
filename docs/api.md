@@ -277,9 +277,23 @@ policy being left out.
 `ANTHROPIC_*` in its environment, reading only a settings file holding this
 document's `env` block, still reached the proxy. It needs no `eval`.
 
-The `permissions` and `disableClaudeAiConnectors` keys are absent when nothing is
-configured, rather than present and empty. An empty deny list merged over a real
-one is how a rule disappears.
+The `permissions` and `disableClaudeAiConnectors` keys are absent from the
+*document* when nothing is configured, rather than present and empty. An empty
+deny list merged over a real one is how a rule disappears.
+
+**The payload behind it is the other way round.** The `env` method's `settings`
+field is always present, an empty object when there is no policy, because
+absence there is reserved for one thing only: a daemon that predates client
+policy. One file is both the daemon and the CLI, and replacing it on disk does
+not restart what is already running, so a newer CLI against an older daemon is
+what an ordinary upgrade leaves behind. If "no policy" and "cannot answer" looked
+alike, nothing could tell the operator which one they had.
+
+`settings` and `exec` **refuse** against such a daemon rather than producing a
+document that looks complete and lacks a permission rule. `env` continues,
+because routing is all it ever carried and an older daemon has all of it — with
+a comment naming the daemon it is talking to. `status` (§3) names the version
+actually running.
 
 **Redirecting this into a settings file overwrites that file.** `>` truncates;
 it does not merge. `.claude/settings.local.json` in particular is where the
@@ -314,10 +328,13 @@ first argument would otherwise be read as this verb's. On Unix the child is
 `exec`d, so signals, job control, the terminal, and the exit status pass through
 untouched.
 
-**It refuses, before starting anything, in two cases.**
+**It refuses, before starting anything, in three cases.**
 
 When the daemon is not answering: launching anyway hands the operator a
 connection refused from a client that cannot explain it.
+
+When the daemon predates client policy (§2.2): the session would start with a
+permission rule missing and nothing about it would ever say so.
 
 When the forwarded arguments already carry `--settings`. Measured: given two
 settings flags on one argument list, the client keeps the last, drops the first,
@@ -346,7 +363,7 @@ A Unix domain socket, or a named pipe on Windows, carrying JSON-RPC:
 | `tiers.get` | tier mapping | yes |
 | `usage` | quota snapshot as of the last turn, or that no turn has been made, plus `models` — the ids this daemon serves | yes |
 | `usage.refresh` | asks the backend for a figure now, for a front-end with nothing to show on a daemon that has served no turn | yes |
-| `env` | the §2.2 block | yes |
+| `env` | the §2.2 block: `variables`, and `settings` always present | yes |
 | `record.start` / `record.stop` | fixture capture | yes — `{"mode": "ingress"}` by default, `"upstream"` must be named because it bills every turn that follows |
 | `login` | authorization URL, then completion in the background; `status` reports when it landed | yes |
 | `login.cancel` | abandons a flow and releases the callback port | yes |
@@ -399,6 +416,11 @@ already being made, and is what `usage` reports. This exists for the case that
 path cannot cover — a front-end with a figure to show on a daemon that has served
 no turn yet — and its answer is recorded where the stream path records its own,
 so everything reading a quota reads one value.
+
+**`status` reports the version of the build serving the socket.** It is not
+necessarily the build that asked: one file is both, and replacing it does not
+restart a running daemon. The CLI says so only when the two differ, because a
+line printed on every run is one nobody reads on the run that matters.
 
 **`env` keeps its name although its payload now carries more than an
 environment.** The two halves are named inside it — `variables` and `settings` —
@@ -591,6 +613,17 @@ pending work.
 The CLI verb set, the control-socket method names, the configuration keys, and
 the error-type vocabulary are semver-bound. A shipped name is never repurposed or
 removed within a major version; only new ones are added.
+
+**A field added to a response is a capability, and a caller that needs it checks
+for it.** Adding one is not a breaking change: an older caller ignores what it
+does not know, and must not be "fixed" into a strict check, because that would
+make every upgrade have to be simultaneous. The obligation runs the other way. A
+newer caller that requires a field has to establish it is there rather than infer
+it from a version string — comparing versions forces a policy about which
+differences matter and gets it wrong for a patched build or a forgotten bump.
+Where a field's absence would otherwise be ambiguous, it is emitted empty rather
+than omitted, so that absence keeps meaning "this daemon predates it" and nothing
+else.
 
 The ingress shape is not ours — it tracks the Anthropic Messages API, and
 changes there are not breaking changes in this project's versioning.

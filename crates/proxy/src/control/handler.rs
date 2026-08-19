@@ -68,12 +68,14 @@ pub async fn dispatch(
         "tiers.get" => Ok(tiers(state)),
         // Two halves, because the client has two configuration surfaces and
         // only one of them is the environment. `variables` keeps the shape it
-        // has always had; `settings` is additive, and absent when there is no
-        // policy to state.
-        "env" => Ok(match state.client.settings() {
-            Some(settings) => json!({ "variables": environment(state), "settings": settings }),
-            None => json!({ "variables": environment(state) }),
-        }),
+        // has always had; `settings` is additive, and **always present** — an
+        // empty object where there is no policy. Absence is reserved for a
+        // daemon that predates this, which is the ordinary state after an
+        // upgrade that has not restarted anything.
+        "env" => Ok(json!({
+            "variables": environment(state),
+            "settings": state.client.settings(),
+        })),
         "usage" => Ok(usage(state)),
         "disconnect" => {
             state.credentials.clear()?;
@@ -115,6 +117,11 @@ pub async fn dispatch(
         other => Err(ProxyError::not_found(format!("unknown method `{other}`"))),
     }
 }
+
+/// This binary's version, reported so a caller can see whether the daemon
+/// answering it is the same build it was invoked from. One file is both, and
+/// replacing it on disk does not restart what is already running.
+const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 fn status(state: &ControlState) -> Value {
     let authenticated = state
@@ -179,6 +186,9 @@ fn status(state: &ControlState) -> Value {
         // that cannot tell would report an unvalidated mapping as a validated
         // one.
         "catalog_authoritative": state.catalog.authoritative,
+        // The build actually serving this socket, which is not necessarily the
+        // build the caller was invoked from.
+        "version": VERSION,
         // Policy this daemon publishes for whoever starts the client. Reported
         // under the configuration's own key names, because the person reading
         // this arrived holding "Skill execution blocked by permission rules" —

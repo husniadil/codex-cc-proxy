@@ -824,10 +824,9 @@ async fn a_client_policy_switched_off_leaves_no_trace() {
         .await;
     let result = harness.call("env").await.unwrap();
 
-    assert!(
-        result.get("settings").is_none() || result["settings"].is_null(),
-        "no policy should read as no policy: {result}"
-    );
+    // Present and empty: see `the_policy_half_is_present_and_empty_rather_than_absent`
+    // for why absence has to stay reserved for a daemon that predates this.
+    assert_eq!(result["settings"], json!({}), "{result}");
 
     let parsed: Value = serde_json::from_str(&render::settings_json(&result)).unwrap();
     assert!(parsed["env"].is_object(), "{parsed}");
@@ -1618,4 +1617,117 @@ async fn status_reports_a_grant_the_backend_refused() {
     let status = harness.call("status").await.unwrap();
     assert_eq!(status["auth"]["connected"], json!(true));
     assert_eq!(status["auth"]["dead"], json!(true));
+}
+
+// ---------------------------------------------------------------------------
+// Version skew. One binary is both the daemon and the CLI, and upgrading the
+// file on disk does not restart the daemon — so a newer CLI talking to an older
+// daemon is the ordinary state after an upgrade, not an exotic one.
+// ---------------------------------------------------------------------------
+
+/// Present and empty rather than absent.
+///
+/// Absence has to mean exactly one thing. With the key omitted when the policy
+/// is empty, a daemon that predates client policy and a daemon told to publish
+/// none look identical from here, and the CLI cannot tell the operator which it
+/// is. Same rule `unlisted_tiers` already follows.
+#[tokio::test]
+async fn the_policy_half_is_present_and_empty_rather_than_absent() {
+    let harness = Harness::start()
+        .await
+        .with_client(codex_cc_proxy::config::ClientConfig {
+            deny_skills: Vec::new(),
+            disable_connectors: false,
+        })
+        .await;
+    let result = harness.call("env").await.unwrap();
+
+    assert_eq!(
+        result["settings"],
+        json!({}),
+        "no policy is still an answer, and has to be reported as one: {result}"
+    );
+}
+
+/// The capability is read from the payload, not from a version comparison.
+///
+/// Comparing version strings forces a policy about which differences matter and
+/// gets it wrong for anyone running a patched build or anyone who forgets to
+/// raise the number. The question actually being asked is whether this daemon
+/// can answer for the policy, and the payload answers it directly.
+#[test]
+fn a_daemon_that_predates_the_policy_is_told_apart_from_one_that_has_none() {
+    let predates = json!({ "variables": [] });
+    let has_none = json!({ "variables": [], "settings": {} });
+
+    let error = control::require_client_policy(&predates)
+        .expect_err("a daemon that cannot answer for the policy must not be assumed to have none");
+    assert!(
+        error.message.to_lowercase().contains("restart the daemon"),
+        "the refusal has to say what to do: {}",
+        error.message
+    );
+
+    control::require_client_policy(&has_none)
+        .expect("a daemon that published an empty policy answered the question");
+}
+
+/// `status` names both versions when they differ, and this is where an operator
+/// looks first when something behaves as though a change never landed.
+#[test]
+fn status_names_a_version_skew_between_the_daemon_and_this_binary() {
+    let stale = json!({
+        "base_url": "http://127.0.0.1:8787",
+        "version": "0.0.1-from-before",
+        "auth": { "connected": false },
+    });
+
+    let rendered = render::status(&stale);
+    assert!(
+        rendered.contains("0.0.1-from-before"),
+        "the daemon's version has to appear: {rendered}"
+    );
+    assert!(
+        rendered.contains(env!("CARGO_PKG_VERSION")),
+        "and this binary's, so the two can be compared at a glance: {rendered}"
+    );
+    assert!(
+        rendered.to_lowercase().contains("restart the daemon"),
+        "and what to do about it: {rendered}"
+    );
+}
+
+/// Agreement is the common case and says nothing. A line that appears on every
+/// run is one nobody reads on the run that matters.
+#[tokio::test]
+async fn status_is_quiet_when_the_daemon_is_this_binary() {
+    let harness = Harness::start().await;
+    let result = harness.call("status").await.unwrap();
+
+    assert_eq!(result["version"], json!(env!("CARGO_PKG_VERSION")));
+    let rendered = render::status(&result);
+    assert!(
+        !rendered.to_lowercase().contains("restart the daemon"),
+        "nothing to warn about: {rendered}"
+    );
+}
+
+/// Shell exports keep working against an older daemon, because everything they
+/// carry is routing and an older daemon has all of it. They say what is
+/// missing, which is the whole reason this path is allowed to continue.
+#[test]
+fn shell_exports_keep_working_against_an_older_daemon_and_say_so() {
+    let predates = json!({
+        "variables": [["ANTHROPIC_BASE_URL", "http://127.0.0.1:8787"]],
+    });
+
+    let rendered = render::env_shell(&predates);
+    assert!(
+        rendered.contains("export ANTHROPIC_BASE_URL=http://127.0.0.1:8787"),
+        "routing still works: {rendered}"
+    );
+    assert!(
+        rendered.to_lowercase().contains("restart the daemon"),
+        "and the reason the policy is missing is named: {rendered}"
+    );
 }

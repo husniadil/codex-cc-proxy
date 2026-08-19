@@ -297,6 +297,11 @@ async fn exec(args: cli::ExecArgs) -> Result<()> {
             )
         })?;
 
+    // Same stop as `settings`, and for a sharper reason: a launch that quietly
+    // omits the policy produces a working session with a rule missing from it,
+    // and nothing about that session would ever say so.
+    control::require_client_policy(&result)?;
+
     // Compact rather than pretty: this goes on a command line, and a document
     // full of newlines is one that a person reading `ps` has to reassemble.
     let policy = result
@@ -336,6 +341,9 @@ async fn exec(args: cli::ExecArgs) -> Result<()> {
 /// reaches for the obvious one must not get the half that leaves the policy out.
 async fn print_settings() -> Result<()> {
     let result = control::call(&control::default_path(), "env", None).await?;
+    // A document silently missing a permission rule looks complete and behaves
+    // otherwise, so this stops rather than prints.
+    control::require_client_policy(&result)?;
     println!("{}", render::settings_json(&result));
     Ok(())
 }

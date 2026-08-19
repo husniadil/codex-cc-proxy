@@ -415,17 +415,24 @@ impl Default for ClientConfig {
 }
 
 impl ClientConfig {
-    /// The policy as the client's own settings document, or `None` when there
-    /// is nothing to say.
+    /// The policy as the client's own settings keys, empty when there is
+    /// nothing to say.
     ///
-    /// `None` rather than an empty object: a caller composing a document has to
-    /// be able to tell "no policy" from "a policy with nothing in it", and a
-    /// launcher passes no flag at all in the first case.
+    /// **Always a map, never an absence.** Absence on the wire is reserved for
+    /// a daemon that predates client policy entirely: one binary is both the
+    /// daemon and the CLI, and upgrading the file on disk does not restart the
+    /// daemon, so a newer CLI against an older daemon is the ordinary state
+    /// after an upgrade. If "no policy" and "cannot answer" looked the same,
+    /// nothing could tell the operator which one they had.
+    ///
+    /// The document a caller merges still carries no key for an empty policy,
+    /// because merging an empty deny list over a real one is how a rule
+    /// disappears. That is the renderer's job; this is the payload's.
     ///
     /// The operator writes a skill id and this writes the rule. Building the
     /// wrapper by hand is a step that fails silently — a rule the client does
     /// not recognize denies nothing and reports nothing.
-    pub fn settings(&self) -> Option<serde_json::Value> {
+    pub fn settings(&self) -> serde_json::Map<String, serde_json::Value> {
         let mut document = serde_json::Map::new();
 
         if !self.deny_skills.is_empty() {
@@ -447,7 +454,7 @@ impl ClientConfig {
             );
         }
 
-        (!document.is_empty()).then_some(serde_json::Value::Object(document))
+        document
     }
 }
 

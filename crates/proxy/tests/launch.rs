@@ -221,3 +221,82 @@ fn a_launched_child_is_given_the_policy_and_the_environment() {
         "and the environment half: {stdout}{stderr}"
     );
 }
+
+/// The verbs that would lie must stop, and the one that would not must not.
+///
+/// One binary is both the daemon and the CLI, and replacing the file on disk
+/// does not restart what is already running — so a newer CLI against an older
+/// daemon is what an upgrade leaves behind. Against such a daemon `settings`
+/// would print a document that looks complete and lacks a permission rule, and
+/// `exec` would start a session with that rule missing and nothing saying so.
+/// Both refuse. `env` continues, because routing is all it ever carried.
+///
+/// The stand-in answers the way this daemon did before client policy existed:
+/// a payload with `variables` and no `settings` at all.
+#[cfg(unix)]
+#[test]
+fn settings_and_exec_refuse_a_daemon_that_predates_client_policy() {
+    use std::io::BufRead;
+    use std::io::BufReader;
+    use std::io::Write;
+
+    let dir = tempfile::tempdir().unwrap();
+    let socket = dir.path().join("codex-cc-proxy.sock");
+    let listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+
+    let server = std::thread::spawn(move || {
+        // Three callers: `settings`, `exec`, and `env`.
+        for stream in listener.incoming().take(3) {
+            let Ok(mut stream) = stream else { continue };
+            let mut request = String::new();
+            let _ = BufReader::new(stream.try_clone().unwrap()).read_line(&mut request);
+            let _ = writeln!(
+                stream,
+                r#"{{"jsonrpc":"2.0","id":1,"result":{{"variables":[["ANTHROPIC_BASE_URL","http://127.0.0.1:8787"]]}}}}"#
+            );
+            let _ = stream.flush();
+        }
+    });
+
+    let binary = env!("CARGO_BIN_EXE_codex-cc-proxy");
+    let run = |args: &[&str]| {
+        std::process::Command::new(binary)
+            .args(args)
+            .env("TMPDIR", dir.path())
+            .output()
+            .expect("the binary should run")
+    };
+
+    for verb in [vec!["settings"], vec!["exec", "claude"]] {
+        let output = run(&verb);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            !output.status.success(),
+            "`{}` produced something rather than refusing: {}",
+            verb.join(" "),
+            String::from_utf8_lossy(&output.stdout)
+        );
+        assert!(
+            stderr.to_lowercase().contains("restart the daemon"),
+            "`{}` has to say what to do: {stderr}",
+            verb.join(" ")
+        );
+    }
+
+    let output = run(&["env"]);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success(),
+        "routing is unaffected and this path stays open"
+    );
+    assert!(
+        stdout.contains("export ANTHROPIC_BASE_URL=http://127.0.0.1:8787"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.to_lowercase().contains("restart the daemon"),
+        "and it names why the policy is not there: {stdout}"
+    );
+
+    let _ = server.join();
+}

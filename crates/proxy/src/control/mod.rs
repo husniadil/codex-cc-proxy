@@ -19,6 +19,36 @@ pub fn default_path() -> PathBuf {
     std::env::temp_dir().join("codex-cc-proxy.sock")
 }
 
+/// This binary's version. One file is both the daemon and the CLI, so the
+/// daemon answering a socket is not necessarily the build that asked.
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// Refuse a payload from a daemon that predates client policy.
+///
+/// **Read as a capability, not a version comparison.** Comparing version
+/// strings forces a policy about which differences matter, and gets it wrong
+/// for a patched build or a forgotten bump. The question being asked is whether
+/// this daemon can answer for the policy, and its payload answers that
+/// directly: the key is always present on a daemon that knows about it, empty
+/// when there is none to state.
+///
+/// Verbs whose correctness depends on the policy call this and stop. Producing
+/// a settings document that silently lacks a permission rule is exactly the
+/// shape of failure this proxy exists to prevent — it would look like a
+/// complete document and behave like an incomplete one.
+pub fn require_client_policy(result: &serde_json::Value) -> Result<(), ProxyError> {
+    if result.get("settings").is_some() {
+        return Ok(());
+    }
+
+    Err(ProxyError::invalid_request(format!(
+        "the daemon answering this socket predates client policy, so it cannot say what the \
+         client has to be told. This binary is {VERSION}; restart the daemon so it is this \
+         build too. `codex-cc-proxy status` names the version that is actually running, and \
+         `codex-cc-proxy env` still works meanwhile, carrying routing only."
+    )))
+}
+
 /// Serve the control socket until the process stops.
 #[cfg(unix)]
 pub async fn serve(path: &Path, state: ControlState) -> Result<(), ProxyError> {

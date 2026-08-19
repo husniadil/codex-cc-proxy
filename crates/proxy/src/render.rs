@@ -9,26 +9,40 @@ use serde_json::Value;
 ///
 /// Routing only. Client policy lives in the client's settings file and has no
 /// environment variable of any kind, so this rendering cannot carry it and says
-/// so in a comment `eval` steps over. The comment appears only when there is a
-/// policy being left out; with none configured there is no gap to warn about.
+/// so in a comment `eval` steps over.
+///
+/// It keeps working against a daemon older than this binary, because routing is
+/// all it ever carried and an older daemon has all of it. That case gets its own
+/// comment: continuing quietly while a permission rule goes missing is the
+/// failure this whole area exists to prevent.
 pub fn env_shell(result: &Value) -> String {
     let mut lines = Vec::new();
 
-    if result
-        .get("settings")
-        .is_some_and(|policy| !policy.is_null())
-    {
-        lines.push(
-            "# Client policy (a denied skill, the connector notice) is not below: it lives in \
-             the client's"
-                .to_owned(),
-        );
-        lines.push(
-            "# settings file and has no environment variable. `codex-cc-proxy settings` \
-             carries it,"
-                .to_owned(),
-        );
-        lines.push("# and `codex-cc-proxy exec` applies it for one run.".to_owned());
+    match result.get("settings").and_then(Value::as_object) {
+        None => {
+            lines.push(format!(
+                "# The daemon answering this socket predates client policy; this binary is {}.",
+                crate::control::VERSION
+            ));
+            lines.push(
+                "# Restart the daemon to pick it up. The routing below is unaffected.".to_owned(),
+            );
+        }
+        Some(policy) if !policy.is_empty() => {
+            lines.push(
+                "# Client policy (a denied skill, the connector notice) is not below: it lives in \
+                 the client's"
+                    .to_owned(),
+            );
+            lines.push(
+                "# settings file and has no environment variable. `codex-cc-proxy settings` \
+                 carries it,"
+                    .to_owned(),
+            );
+            lines.push("# and `codex-cc-proxy exec` applies it for one run.".to_owned());
+        }
+        // Present and empty: the daemon knows about this and has nothing to say.
+        Some(_) => {}
     }
 
     lines.extend(
@@ -185,6 +199,19 @@ pub fn status(result: &Value) -> String {
         lines.push(format!(
             "catalog    {} {verb} mapped but not offered by the catalog",
             withheld.join(", ")
+        ));
+    }
+
+    // One binary is both the daemon and the CLI, and replacing the file does not
+    // restart what is already running — so a newer CLI against an older daemon
+    // is the ordinary state after an upgrade. Silent when they agree: a line
+    // printed on every run is one nobody reads on the run that matters.
+    if let Some(daemon) = field(result, "version").and_then(Value::as_str)
+        && daemon != crate::control::VERSION
+    {
+        lines.push(format!(
+            "version    daemon {daemon}, this binary {} — restart the daemon so they match",
+            crate::control::VERSION
         ));
     }
 

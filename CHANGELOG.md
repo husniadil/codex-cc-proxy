@@ -26,6 +26,17 @@ in [`docs/api.md`](docs/api.md) §6.
   documenting another provider's model ids, prices, and parameters. Switchable
   in `[client]`, and `status` names it so the person holding "Skill execution
   blocked by permission rules" can find the key that undoes it.
+- **A newer CLI will not quietly serve an older daemon.** One file is both, and
+  replacing it on disk does not restart what is already running, so this is what
+  an ordinary upgrade leaves behind. The policy half of the `env` payload is
+  therefore always present, empty where there is none, and absence means only
+  that the daemon predates it. `settings` and `exec` refuse such a daemon rather
+  than producing a document that looks complete and lacks a permission rule;
+  `env` continues, because routing is all it ever carried, and names the daemon
+  it is talking to. `status` reports the version actually serving the socket and
+  says so only when it differs from the binary that asked. The decision reads a
+  capability rather than comparing version strings, which would force a policy
+  about which differences matter and get it wrong for a patched build.
 - **`exec`**, a launcher: it applies both halves and runs the command, so
   starting a client is one step. Nothing is written to disk — the policy rides
   inline on the client's own settings flag. It refuses before starting anything
