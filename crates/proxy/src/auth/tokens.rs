@@ -5,7 +5,7 @@ use super::store::Credentials;
 use crate::error::ProxyError;
 use serde::Deserialize;
 use std::sync::Arc;
-use std::sync::atomic::AtomicBool;
+use std::sync::Mutex;
 use std::sync::atomic::AtomicU32;
 use std::sync::atomic::Ordering;
 
@@ -76,9 +76,15 @@ pub struct TokenSource {
     /// credentials on the way in, so concurrent callers collapse to one
     /// upstream call rather than each issuing their own.
     refresh_lock: tokio::sync::Mutex<()>,
-    /// Once a grant is refused, it stays refused. Retrying an invalid grant in
-    /// a loop is how a client gets its account rate-limited for nothing.
-    dead: AtomicBool,
+    /// The refresh token the backend refused, if it has refused one.
+    ///
+    /// A refusal is about that token, and holding it as a bare flag makes it a
+    /// fact about the process instead: the message a refusal produces tells
+    /// the operator to log in again, and the grant they produce lands in the
+    /// store this reads on every turn — where a flag would go on refusing it
+    /// until the daemon restarts. Holding the token itself keeps both halves:
+    /// a new grant is tried, and the refused one is never retried.
+    refused: Mutex<Option<String>>,
     /// Test-visible count of refresh requests actually sent upstream.
     refreshes: AtomicU32,
 }
@@ -97,7 +103,7 @@ impl TokenSource {
             client_id: client_id.into(),
             clock,
             refresh_lock: tokio::sync::Mutex::new(()),
-            dead: AtomicBool::new(false),
+            refused: Mutex::new(None),
             refreshes: AtomicU32::new(0),
         }
     }
@@ -107,19 +113,24 @@ impl TokenSource {
         self.refreshes.load(Ordering::SeqCst)
     }
 
-    /// Forget a refusal, because the grant it was about is no longer the one
-    /// being served.
+    /// Whether the grant currently stored is one the backend has refused.
     ///
-    /// `dead` is a fact about one grant: the backend said that specific
-    /// refresh token is finished. Switching accounts replaces it, and carrying
-    /// the flag across would report the new account as refused without ever
-    /// having spent it.
-    pub fn forget_refusal(&self) {
-        self.dead.store(false, Ordering::SeqCst);
+    /// Answered against the store rather than from a flag, so switching
+    /// accounts or authorizing a new one is enough to end it, and switching
+    /// back to a refused grant is enough to bring it back.
+    pub fn is_dead(&self) -> bool {
+        match self.store.load() {
+            Ok(Some(credentials)) => self.is_refused(&credentials.refresh_token),
+            _ => false,
+        }
     }
 
-    pub fn is_dead(&self) -> bool {
-        self.dead.load(Ordering::SeqCst)
+    fn is_refused(&self, refresh_token: &str) -> bool {
+        self.refused
+            .lock()
+            .ok()
+            .and_then(|refused| refused.clone())
+            .is_some_and(|refused| refused == refresh_token)
     }
 
     /// The account this grant belongs to, sent upstream as a header.
@@ -129,16 +140,16 @@ impl TokenSource {
 
     /// A usable access token, refreshing first if it is due.
     pub async fn access_token(&self) -> Result<String, ProxyError> {
-        if self.is_dead() {
-            return Err(ProxyError::authentication(
-                "the stored grant was refused and will not be retried; run `login` again",
-            ));
-        }
-
         let credentials = self
             .store
             .load()?
             .ok_or_else(|| ProxyError::authentication("not authenticated; run `login`"))?;
+
+        if self.is_refused(&credentials.refresh_token) {
+            return Err(ProxyError::authentication(
+                "the stored grant was refused and will not be retried; run `login` again",
+            ));
+        }
 
         if !credentials.needs_refresh(self.clock.now_unix(), REFRESH_MARGIN_SECONDS) {
             return Ok(credentials.access_token);
@@ -161,7 +172,7 @@ impl TokenSource {
         if !credentials.needs_refresh(self.clock.now_unix(), REFRESH_MARGIN_SECONDS) {
             return Ok(credentials.access_token);
         }
-        if self.is_dead() {
+        if self.is_refused(&credentials.refresh_token) {
             return Err(ProxyError::authentication(
                 "the stored grant was refused and will not be retried; run `login` again",
             ));
@@ -208,7 +219,9 @@ impl TokenSource {
             // retry loop against an authorization server is how an account
             // ends up rate-limited for nothing.
             if is_dead_grant(&code, status.as_u16()) {
-                self.dead.store(true, Ordering::SeqCst);
+                if let Ok(mut refused) = self.refused.lock() {
+                    *refused = Some(credentials.refresh_token.clone());
+                }
                 return Err(ProxyError::authentication(format!(
                     "the stored grant is no longer valid ({code}); run `login` again"
                 )));

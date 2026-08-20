@@ -54,6 +54,11 @@ pub struct ControlState {
     /// where the daemon holds no credentials at all.
     pub tokens: Option<Arc<crate::auth::tokens::TokenSource>>,
     pub usage_endpoint: String,
+    /// The live conversations. A switch has to reach them: a conduit fixes its
+    /// account on the connection at dial and reuses it for the conversation's
+    /// life, so a session left alone keeps being served as the account it
+    /// started on.
+    pub sessions: Arc<crate::session::SessionStore>,
     /// Where a persisted change is written. `None` in tests, which must never
     /// touch an operator's file.
     pub config_path: Option<std::path::PathBuf>,
@@ -221,6 +226,13 @@ fn status(state: &ControlState) -> Value {
         // that cannot tell would report an unvalidated mapping as a validated
         // one.
         "catalog_authoritative": state.catalog.authoritative,
+        // Whether the list describes the account now serving turns. It is
+        // fetched once, for the account selected then, and nothing refetches
+        // it — so after a switch it is the previous account's menu, and
+        // presenting it as this one's would deny models this account has and
+        // offer models it does not.
+        "catalog_stale": state.catalog.is_stale_for(serving_account(state).as_deref()),
+        "catalog_account": state.catalog.fetched_for,
         // The build actually serving this socket, which is not necessarily the
         // build the caller was invoked from.
         "version": VERSION,
@@ -255,7 +267,11 @@ fn models(state: &ControlState) -> Value {
         })
         .collect();
 
-    json!({ "models": entries, "authoritative": state.catalog.authoritative })
+    json!({
+        "models": entries,
+        "authoritative": state.catalog.authoritative,
+        "stale": state.catalog.is_stale_for(serving_account(state).as_deref()),
+    })
 }
 
 fn tiers(state: &ControlState) -> Value {
@@ -648,8 +664,23 @@ async fn login(state: &ControlState, params: Option<&Value>) -> Result<Value, Pr
         // Whether this call started the flow or joined one. A caller that
         // cannot tell would report a second operator's login as its own.
         "already_in_flight": started.already_in_flight,
+        // The name the account will get. A call that joined a flow already
+        // running gets that flow's label, which is not necessarily the one it
+        // asked for — and a caller that could not tell would go looking for an
+        // account that was never going to exist.
+        "label": started.label,
         "detail": "open the URL to authorize; `status` reports when it completed",
     }))
+}
+
+/// The account id of the account serving turns, where there is one.
+fn serving_account(state: &ControlState) -> Option<String> {
+    state
+        .credentials
+        .load()
+        .ok()
+        .flatten()
+        .and_then(|credentials| credentials.account_id)
 }
 
 /// `accounts` — every stored grant, and which one serves turns.
@@ -680,9 +711,11 @@ fn select_account(state: &ControlState, params: Option<&Value>) -> Result<Value,
 
     state.credentials.select(name)?;
     state.usage.clear();
-    if let Some(tokens) = state.tokens.as_ref() {
-        tokens.forget_refusal();
-    }
+    // The conversations already bound to the previous account. Each pays a
+    // full upload on its next turn, which is what §4.3 resolves every
+    // ambiguity toward anyway — and the alternative is a conversation billed
+    // to an account the operator has just moved off.
+    state.sessions.clear();
 
     Ok(json!({ "selected": name }))
 }
@@ -725,9 +758,6 @@ fn disconnect(state: &ControlState, params: Option<&Value>) -> Result<Value, Pro
     // dispatch failed.
     if cleared.is_some() && cleared == serving {
         state.usage.clear();
-        if let Some(tokens) = state.tokens.as_ref() {
-            tokens.forget_refusal();
-        }
     }
 
     Ok(json!({ "disconnected": cleared }))

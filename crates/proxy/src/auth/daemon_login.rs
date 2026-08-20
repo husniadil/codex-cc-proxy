@@ -32,6 +32,10 @@ const FLOW_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10 * 60
 
 struct InFlight {
     url: String,
+    /// What the account this flow produces will be called. Held so a caller
+    /// that joins is told the name in force rather than assuming its own was
+    /// taken.
+    label: Option<String>,
     /// Dropping this cancels the task waiting on the callback, which drops the
     /// listener and frees the port.
     cancel: tokio::sync::oneshot::Sender<()>,
@@ -46,6 +50,9 @@ pub struct LoginFlow {
 pub struct Started {
     pub url: String,
     pub already_in_flight: bool,
+    /// The label the flow will name its account by. A caller that joined an
+    /// existing flow gets that flow's, which is not necessarily its own.
+    pub label: Option<String>,
 }
 
 impl LoginFlow {
@@ -59,10 +66,11 @@ impl LoginFlow {
         credentials: Arc<dyn AccountStore>,
         label: Option<String>,
     ) -> Result<Started, ProxyError> {
-        if let Some(existing) = self.existing() {
+        if let Some((url, label)) = self.existing() {
             return Ok(Started {
-                url: existing,
+                url,
                 already_in_flight: true,
+                label,
             });
         }
 
@@ -83,6 +91,8 @@ impl LoginFlow {
         let url = authorization.url.clone();
 
         let flow_state = Arc::clone(self);
+        // The task takes one; the flow keeps one to answer whoever joins.
+        let naming = label.clone();
         tokio::spawn(async move {
             let outcome = tokio::select! {
                 result = login::complete_from_listener(
@@ -117,12 +127,14 @@ impl LoginFlow {
 
         self.remember(InFlight {
             url: url.clone(),
+            label: naming.clone(),
             cancel,
         });
 
         Ok(Started {
             url,
             already_in_flight: false,
+            label: naming,
         })
     }
 
@@ -141,11 +153,12 @@ impl LoginFlow {
         }
     }
 
-    fn existing(&self) -> Option<String> {
-        self.current
-            .lock()
-            .ok()
-            .and_then(|current| current.as_ref().map(|flow| flow.url.clone()))
+    fn existing(&self) -> Option<(String, Option<String>)> {
+        self.current.lock().ok().and_then(|current| {
+            current
+                .as_ref()
+                .map(|flow| (flow.url.clone(), flow.label.clone()))
+        })
     }
 
     fn remember(&self, flow: InFlight) {

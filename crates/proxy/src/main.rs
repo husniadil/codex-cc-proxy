@@ -787,6 +787,10 @@ async fn run_with(args: RunArgs, capture: Capture) -> Result<()> {
     // merely answer about it.
     let shutdown = Arc::new(codex_cc_proxy::daemon::Shutdown::default());
 
+    // One store, shared with the ingress: a switch that cleared a set of
+    // conversations the ingress does not serve would clear nothing.
+    let sessions = Arc::new(codex_cc_proxy::session::SessionStore::new());
+
     let control_state = codex_cc_proxy::control::handler::ControlState {
         port: addr.port(),
         policy: Arc::clone(&policy),
@@ -799,6 +803,7 @@ async fn run_with(args: RunArgs, capture: Capture) -> Result<()> {
         shutdown: Arc::clone(&shutdown),
         tokens: Some(Arc::clone(&tokens)),
         usage_endpoint: config.upstream.usage.clone(),
+        sessions: Arc::clone(&sessions),
         config_path: Some(codex_cc_proxy::config::config_path()),
     };
     let socket_path = control::default_path();
@@ -863,7 +868,7 @@ async fn run_with(args: RunArgs, capture: Capture) -> Result<()> {
         capture: Arc::clone(&switches),
         usage: Arc::clone(&usage),
         instructions: Arc::new(config.instructions.clone()),
-        sessions: Arc::new(codex_cc_proxy::session::SessionStore::new()),
+        sessions,
     };
 
     // Whichever comes first: the listener stopping on its own, or a stop asked

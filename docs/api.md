@@ -446,14 +446,14 @@ A Unix domain socket, or a named pipe on Windows, carrying JSON-RPC:
 | `disconnect` | forgets one account — the selected one, or `{"account": name}` — and answers with the name it cleared; the rest stay usable, and an idle account's removal leaves the serving grant's quota and refusal alone | yes |
 | `accounts` | every stored account and which one serves turns; no tokens | no — v0.3 |
 | `accounts.select` | `{"account": name}`, the account every following turn is made as | no — v0.3 |
-| `models` | catalog, and whether it is the fallback list | yes |
+| `models` | catalog, whether it is the fallback list, and whether it was fetched for an account other than the one serving turns | yes |
 | `tiers.get` | tier mapping | yes |
 | `usage` | quota snapshot as of the last turn, or that no turn has been made, plus `models` — the ids this daemon serves | yes |
 | `usage.refresh` | asks the backend for a figure now, for a front-end with nothing to show on a daemon that has served no turn | yes |
 | `env` | the §2.2 block: `variables`, and `settings` always present | yes |
 | `shutdown` | `{"stopping": true, "version": ...}`, then the process goes once the answer is written | yes |
 | `record.start` / `record.stop` | fixture capture | yes — `{"mode": "ingress"}` by default, `"upstream"` must be named because it bills every turn that follows |
-| `login` | authorization URL, then completion in the background; `status` reports when it landed. `{"label": name}` names the account it produces | yes |
+| `login` | authorization URL, then completion in the background; `status` reports when it landed. `{"label": name}` names the account it produces, and the answer states the label actually in force | yes |
 | `login.cancel` | abandons a flow and releases the callback port | yes |
 | `tiers.set` | tier mapping, validated against the catalog and in effect until the daemon stops | yes |
 | `effort.set` | the effort ceiling, or `null` to remove it; in effect until the daemon stops | yes |
@@ -492,14 +492,29 @@ mapping rather than a front-end, since it is the side holding the catalog.
 
 **A selection moves what routes turns.** `accounts.select` writes to the store
 the ingress authenticates through, so the next turn is made as the account
-named rather than the one this socket merely reports. Two things go with it,
-because they belong to the grant and not to the daemon: a refusal is about one
-refresh token and is cleared, and the quota snapshot is dropped so the next turn
-supplies one for whoever is serving now. `disconnect` does the same when the
-account it forgets is the one that was serving, and only then: forgetting an
-idle account changes nothing about the grant being spent, and clearing its
-refusal there would leave `status` reporting a healthy grant while every
-dispatch failed.
+named rather than the one this socket merely reports. The quota snapshot goes
+with it, because it belongs to the account that earned it, and the next turn
+supplies one for whoever is serving now; `disconnect` drops it too when the
+account it forgets is the one that was serving, and only then, since forgetting
+an idle account changes nothing about the grant being spent.
+
+Live conversations are dropped with it. A conduit fixes its account on the
+connection when it dials and reuses that connection for the conversation's life
+(`proxy-behavior.md` §4.1), so a session left alone would go on being billed to
+the account the operator has just moved off. Each dropped session pays a full
+upload on its next turn, which is the direction §4.3 resolves every ambiguity
+toward anyway.
+
+`auth.dead` needs nothing of the sort: a refusal is held as the refresh token
+that was refused, so it ends when the stored grant is no longer that token and
+returns if it comes back.
+
+**A catalog belongs to the account it was fetched for.** It is fetched once, at
+startup, so switching accounts on a running daemon leaves it describing the
+previous one's plan (`proxy-behavior.md` §7.0). `status.catalog_stale` and
+`models.stale` say when that has happened, and `status.catalog_account` names
+the account the list belongs to. Nothing refetches it: the answers stop
+claiming it is this account's menu, and a restart is what replaces it.
 
 **`status` names the account.** `auth.account` is what this daemon calls the one
 serving turns and is what selects it; `auth.account_id` is what the backend
@@ -514,7 +529,10 @@ it did. A control call that blocked until the operator finished in a browser
 would hold the socket for minutes and give a front-end nothing to render. There
 is one fixed callback port, so a second caller **joins** the first and is told so
 rather than being handed a URL whose callback would then be rejected as not
-matching. An abandoned flow releases the port after ten minutes.
+matching. A join takes the running flow's label along with its URL, and the
+answer states the label in force rather than echoing the one asked for: a
+caller that could not tell would go looking for an account that was never going
+to exist. An abandoned flow releases the port after ten minutes.
 
 **`usage.refresh` is not the primary path and does not replace it.** The backend
 volunteers a snapshot at the head of every stream; that one is free, rides a turn

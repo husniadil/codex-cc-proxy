@@ -1435,3 +1435,110 @@ fn a_write_leaves_no_window_where_the_store_is_half_written() {
     );
     assert_eq!(store.accounts().unwrap().len(), 2);
 }
+
+/// §8 — a refusal is about one refresh token, not about the process holding it.
+///
+/// The message a refused grant produces tells the operator to log in again.
+/// They do, and the new grant lands in the store the daemon reads on every
+/// turn — but a refusal latched for the life of the process short-circuits
+/// before it ever gets there, so the documented recovery does not recover
+/// until the daemon is restarted. A login through the CLI never touches the
+/// daemon at all, which is the path most people take.
+#[tokio::test]
+async fn a_new_grant_ends_a_refusal_without_restarting() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = AuthServer::start(400, r#"{"error":"refresh_token_reused"}"#, 0).await;
+    let store = Arc::new(FileStore::new(dir.path().join("credentials.json")));
+    store
+        .add(
+            &Credentials {
+                expires_at: Some(1_000),
+                ..sample()
+            },
+            None,
+        )
+        .unwrap();
+
+    let source = TokenSource::new(
+        Arc::clone(&store) as Arc<dyn CredentialStore>,
+        server.url.clone(),
+        "client-abc",
+        Arc::new(FixedClock(2_000)),
+    );
+    source
+        .access_token()
+        .await
+        .expect_err("the stored grant is refused");
+    assert!(source.is_dead());
+
+    // What a login does: a fresh grant for another account, selected.
+    store
+        .add(
+            &Credentials {
+                access_token: "freshly-authorized".to_owned(),
+                refresh_token: "fresh-refresh".to_owned(),
+                expires_at: Some(9_000),
+                ..other()
+            },
+            None,
+        )
+        .unwrap();
+
+    assert!(
+        !source.is_dead(),
+        "the refused grant is no longer the one held"
+    );
+    assert_eq!(
+        source.access_token().await.unwrap(),
+        "freshly-authorized",
+        "the recovery the refusal's own message describes"
+    );
+
+    // And the refused grant is still refused: selecting it back must not put
+    // the refusal loop the flag exists to prevent back on the table.
+    store.select("acct_123").unwrap();
+    assert!(source.is_dead());
+    source
+        .access_token()
+        .await
+        .expect_err("a refused grant is not retried");
+    assert_eq!(
+        server.bodies().len(),
+        1,
+        "the refused token was sent upstream again"
+    );
+}
+
+/// A label that already names a different account is refused, not honoured.
+///
+/// `login --as work` months after the first one, with the browser signed into
+/// somebody else: the label resolves to an entry holding another account's
+/// grant, and writing over it retires a working grant with nothing said —
+/// exactly what the `add`/`save` split exists to prevent. Refusing costs the
+/// authorization that was just spent, which one more login replaces; the other
+/// way costs a grant that may not be replaceable at all.
+#[test]
+fn a_label_already_naming_another_account_is_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = FileStore::new(dir.path().join("credentials.json"));
+    store.add(&sample(), Some("work")).unwrap();
+
+    let error = store.add(&other(), Some("work")).unwrap_err().to_string();
+
+    assert!(error.contains("work"), "{error}");
+    assert!(
+        error.contains("acct_123"),
+        "the name's current owner: {error}"
+    );
+
+    // Nothing was disturbed.
+    let accounts = store.accounts().unwrap();
+    assert_eq!(accounts.len(), 1);
+    assert_eq!(accounts[0].account_id.as_deref(), Some("acct_123"));
+    assert_eq!(store.load().unwrap().unwrap().access_token, "access-secret");
+
+    // The same label for the account that already holds it still works: that
+    // is a re-authorization, not a collision.
+    store.add(&sample(), Some("work")).unwrap();
+    assert_eq!(store.accounts().unwrap().len(), 1);
+}

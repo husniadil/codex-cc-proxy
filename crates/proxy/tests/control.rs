@@ -79,6 +79,9 @@ struct Harness {
     /// The same signal the daemon's own run loop waits on, so a test can assert
     /// a stop actually moved something rather than only answering.
     shutdown: Arc<codex_cc_proxy::daemon::Shutdown>,
+    /// The same conversations the ingress serves, so a test can assert a
+    /// switch reached them rather than only reached the store.
+    sessions: Arc<codex_cc_proxy::session::SessionStore>,
     _dir: tempfile::TempDir,
 }
 
@@ -94,6 +97,7 @@ impl Harness {
         ));
         let client = Arc::new(codex_cc_proxy::config::ClientConfig::default());
         let shutdown = Arc::new(codex_cc_proxy::daemon::Shutdown::default());
+        let sessions = Arc::new(codex_cc_proxy::session::SessionStore::new());
 
         let state = ControlState {
             port: 8787,
@@ -119,6 +123,7 @@ impl Harness {
             // Inside the temp directory, always. A test that could reach an
             // operator's real configuration would be a test that edits the
             // machine it runs on.
+            sessions: Arc::clone(&sessions),
             config_path: Some(dir.path().join("config.toml")),
         };
 
@@ -144,6 +149,7 @@ impl Harness {
             usage,
             client,
             shutdown,
+            sessions,
             _dir: dir,
         }
     }
@@ -174,6 +180,42 @@ impl Harness {
         let catalog = r#"{"data":[{"id":"gpt-5.6-terra","context_window":272000},
                                   {"id":"gpt-5.4-mini","context_window":200000}]}"#;
         harness.respawn(catalog, "gpt-5.4-mini").await
+    }
+
+    /// The same harness, whose catalog was fetched for the named account.
+    async fn with_catalog_for(self, account: &str) -> Self {
+        let catalog = r#"{"data":[{"id":"gpt-5.6-terra","context_window":272000}]}"#;
+        let catalog = Catalog::parse(catalog, 95.0)
+            .unwrap()
+            .fetched_for(account.to_owned());
+        let path = self._dir.path().join("control-3.sock");
+        let policy = Arc::clone(&self.policy);
+        let state = ControlState {
+            port: 8787,
+            policy: Arc::clone(&policy),
+            catalog: Arc::new(catalog),
+            credentials: Arc::clone(&self.store) as Arc<dyn AccountStore>,
+            capture: Arc::clone(&self.switches),
+            usage: Arc::clone(&self.usage),
+            login: Arc::new(codex_cc_proxy::auth::daemon_login::LoginFlow::default()),
+            client: Arc::clone(&self.client),
+            shutdown: Arc::clone(&self.shutdown),
+            tokens: None,
+            usage_endpoint: String::new(),
+            sessions: Arc::clone(&self.sessions),
+            config_path: Some(self.config.clone()),
+        };
+        let socket = path.clone();
+        tokio::spawn(async move {
+            let _ = control::serve(&socket, state).await;
+        });
+        for _ in 0..100 {
+            if path.exists() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        Self { path, ..self }
     }
 
     /// A harness whose catalog and single mapped model are the caller's, for
@@ -218,6 +260,7 @@ impl Harness {
             shutdown: Arc::clone(&self.shutdown),
             tokens,
             usage_endpoint: String::new(),
+            sessions: Arc::clone(&self.sessions),
             config_path: Some(self.config.clone()),
         };
 
@@ -525,6 +568,7 @@ async fn an_unknown_window_is_reported_as_null() {
         shutdown: Arc::new(codex_cc_proxy::daemon::Shutdown::default()),
         tokens: None,
         usage_endpoint: String::new(),
+        sessions: Arc::new(codex_cc_proxy::session::SessionStore::new()),
         config_path: None,
     };
 
@@ -674,6 +718,7 @@ async fn a_malformed_request_is_reported_without_closing_the_socket() {
         shutdown: Arc::new(codex_cc_proxy::daemon::Shutdown::default()),
         tokens: None,
         usage_endpoint: String::new(),
+        sessions: Arc::new(codex_cc_proxy::session::SessionStore::new()),
         config_path: None,
     };
 
@@ -1002,6 +1047,7 @@ async fn status_says_when_the_catalog_was_unavailable() {
         shutdown: Arc::new(codex_cc_proxy::daemon::Shutdown::default()),
         tokens: None,
         usage_endpoint: String::new(),
+        sessions: Arc::new(codex_cc_proxy::session::SessionStore::new()),
         config_path: None,
     };
 
@@ -1034,6 +1080,7 @@ async fn models_prints_unknown_rather_than_a_number() {
         shutdown: Arc::new(codex_cc_proxy::daemon::Shutdown::default()),
         tokens: None,
         usage_endpoint: String::new(),
+        sessions: Arc::new(codex_cc_proxy::session::SessionStore::new()),
         config_path: None,
     };
 
@@ -1106,6 +1153,7 @@ async fn env_states_no_window_when_the_catalog_is_unavailable() {
         shutdown: Arc::new(codex_cc_proxy::daemon::Shutdown::default()),
         tokens: None,
         usage_endpoint: String::new(),
+        sessions: Arc::new(codex_cc_proxy::session::SessionStore::new()),
         config_path: None,
     };
 
@@ -1424,9 +1472,20 @@ async fn login_arms_a_callback_joins_a_second_caller_and_releases_on_cancel() {
     // A second caller joins the first. Beginning again would either fail to
     // bind or replace the state the first flow is waiting to match, leaving the
     // operator holding a URL whose callback is guaranteed to be rejected.
-    let second = harness.call("login").await.unwrap();
+    let second = harness
+        .call_with("login", json!({ "label": "spare" }))
+        .await
+        .unwrap();
     assert_eq!(second["authorization_url"], json!(url));
     assert_eq!(second["already_in_flight"], json!(true));
+    // The joined flow keeps the name it was started with, and the answer says
+    // so. A caller told only that it joined would go looking for an account
+    // called `spare` that was never going to exist.
+    assert_eq!(
+        second["label"],
+        Value::Null,
+        "the flow it joined carries no label, and this call's is not adopted"
+    );
 
     harness.call("login.cancel").await.unwrap();
 
@@ -1436,8 +1495,16 @@ async fn login_arms_a_callback_joins_a_second_caller_and_releases_on_cancel() {
     assert!(rebound.is_ok(), "the callback port should be free again");
     drop(rebound);
 
-    let again = harness.call("login").await.unwrap();
+    let again = harness
+        .call_with("login", json!({ "label": "spare" }))
+        .await
+        .unwrap();
     assert_eq!(again["already_in_flight"], json!(false));
+    assert_eq!(
+        again["label"],
+        json!("spare"),
+        "a flow this call started carries the name it asked for"
+    );
     assert_ne!(
         again["authorization_url"],
         json!(url),
@@ -2274,4 +2341,90 @@ async fn status_lists_accounts_even_when_nothing_is_connected() {
 
     assert_eq!(status["auth"]["connected"], json!(false));
     assert_eq!(status["auth"]["accounts"], json!([]));
+}
+
+/// A switch reaches conversations already in flight.
+///
+/// A conduit sets its account on the connection at dial and reuses it for the
+/// life of the conversation, so a session bound to the previous account would
+/// keep being billed to it — and keep being refused by it — until the socket
+/// dropped. Live sessions are dropped so the next turn dials again. That costs
+/// a full upload for each one, which is the direction §4.3 already resolves
+/// every ambiguity toward.
+#[tokio::test]
+async fn selecting_an_account_ends_conversations_bound_to_the_previous_one() {
+    let harness = Harness::start().await;
+    harness
+        .store
+        .add(&grant("acct_one", "a-one"), None)
+        .unwrap();
+    harness
+        .store
+        .add(&grant("acct_two", "a-two"), None)
+        .unwrap();
+
+    let input = vec![codex_cc_proxy_core::responses::InputItem::Message {
+        role: codex_cc_proxy_core::responses::ItemRole::User,
+        content: Vec::new(),
+    }];
+    let _session = harness.sessions.resolve(&input);
+    assert_eq!(harness.sessions.len(), 1);
+
+    harness
+        .call_with("accounts.select", json!({ "account": "acct_one" }))
+        .await
+        .unwrap();
+
+    assert!(
+        harness.sessions.is_empty(),
+        "a conversation bound to the previous account survived the switch"
+    );
+}
+
+/// A catalog describes one account's plan. After a switch it describes the
+/// account that is no longer serving, and says so.
+///
+/// It is fetched once, at startup, with the account selected then. Nothing
+/// refetches it, so `models` and the tier validation behind `tiers.set` go on
+/// answering for the previous plan — a free account keeps being told it cannot
+/// have what a Plus account offers, and the other way round. Until a refetch
+/// exists, the answer states that the list was not fetched for the account
+/// being served rather than presenting it as this account's menu.
+#[tokio::test]
+async fn the_catalog_says_when_it_was_fetched_for_another_account() {
+    let harness = Harness::start().await;
+    harness
+        .store
+        .add(&grant("acct_one", "a-one"), None)
+        .unwrap();
+    harness
+        .store
+        .add(&grant("acct_two", "a-two"), None)
+        .unwrap();
+
+    // Fetched for the account serving turns: nothing to flag.
+    let harness = harness.with_catalog_for("acct_two").await;
+    assert_eq!(
+        harness.call("status").await.unwrap()["catalog_stale"],
+        json!(false)
+    );
+    assert_eq!(harness.call("models").await.unwrap()["stale"], json!(false));
+
+    harness
+        .call_with("accounts.select", json!({ "account": "acct_one" }))
+        .await
+        .unwrap();
+
+    let status = harness.call("status").await.unwrap();
+    assert_eq!(
+        status["catalog_stale"],
+        json!(true),
+        "the catalog still claims to describe the account now serving: {status}"
+    );
+    assert_eq!(harness.call("models").await.unwrap()["stale"], json!(true));
+    assert!(
+        render::status(&status).contains("acct_two"),
+        "an operator should be told which account the list belongs to: {}",
+        render::status(&status)
+    );
 }

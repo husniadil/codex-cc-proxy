@@ -112,6 +112,16 @@ pub struct Catalog {
     /// failure is not the same claim as absence, and validation that depends on
     /// the catalog is skipped when it is unavailable rather than failed.
     pub authoritative: bool,
+    /// The account this list was fetched for, where it was fetched at all.
+    ///
+    /// A catalog is one account's menu: the plan decides which models appear
+    /// and which efforts each one offers. Nothing refetches it when the daemon
+    /// starts serving a different account, so the attribution is what lets an
+    /// answer say the list belongs to somebody else instead of presenting it
+    /// as this account's. `None` means unattributed — a fallback list, or one
+    /// parsed directly — and is never stale, because it never claimed an
+    /// account in the first place.
+    pub fetched_for: Option<String>,
 }
 
 impl Catalog {
@@ -145,6 +155,7 @@ impl Catalog {
         Self {
             models,
             authoritative: false,
+            fetched_for: None,
         }
     }
 
@@ -155,6 +166,22 @@ impl Catalog {
     /// only one place it can come from. A model whose entry states a percentage
     /// keeps it: that is the backend describing its own model, and the
     /// configured value is a default, not an override.
+    /// Attribute this list to the account it was fetched for.
+    pub fn fetched_for(mut self, account_id: String) -> Self {
+        self.fetched_for = Some(account_id);
+        self
+    }
+
+    /// Whether this list describes an account other than the one named.
+    pub fn is_stale_for(&self, account_id: Option<&str>) -> bool {
+        match (&self.fetched_for, account_id) {
+            (Some(fetched), Some(serving)) => fetched != serving,
+            // Unattributed, or nothing to compare it against: it makes no
+            // claim about an account, so it cannot be wrong about one.
+            _ => false,
+        }
+    }
+
     pub fn parse(body: &str, default_percent: f64) -> Result<Self, ProxyError> {
         let response: CatalogResponse = serde_json::from_str(body).map_err(|error| {
             ProxyError::upstream(
@@ -205,6 +232,7 @@ impl Catalog {
         Ok(Self {
             models,
             authoritative: true,
+            fetched_for: None,
         })
     }
 
@@ -386,7 +414,15 @@ pub async fn fetch(
         }
     };
 
-    body.as_deref()
-        .and_then(|body| Catalog::parse(body, default_percent).ok())
-        .unwrap_or_else(Catalog::fallback)
+    let catalog = body
+        .as_deref()
+        .and_then(|body| Catalog::parse(body, default_percent).ok());
+
+    match (catalog, account_id) {
+        // Attributed only when it really came back from the backend for a
+        // named account. A fallback list describes no account.
+        (Some(catalog), Some(account)) => catalog.fetched_for(account.to_owned()),
+        (Some(catalog), None) => catalog,
+        (None, _) => Catalog::fallback(),
+    }
 }

@@ -271,6 +271,17 @@ impl SessionStore {
         }
     }
 
+    /// Forget every conversation.
+    ///
+    /// What a session holds is an optimisation — the baseline a delta is
+    /// measured against, and the connection it was sent on — so dropping them
+    /// costs a full upload each and loses nothing else.
+    pub fn clear(&self) {
+        if let Ok(mut sessions) = self.sessions.lock() {
+            sessions.clear();
+        }
+    }
+
     pub fn len(&self) -> usize {
         self.sessions
             .lock()

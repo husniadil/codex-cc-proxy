@@ -402,6 +402,23 @@ impl AccountStore for FileStore {
 
     fn add(&self, credentials: &Credentials, label: Option<&str>) -> Result<String, ProxyError> {
         let mut file = self.read()?;
+
+        // A label that already names a different account. Honouring it would
+        // write this grant over that one, retiring a working grant with
+        // nothing said — the failure the add/save split exists to prevent.
+        // Refusing costs the authorization just spent, which one more login
+        // replaces; the other way costs a grant that may not be.
+        if let Some(label) = label
+            && let Some(entry) = file.index_of(label).and_then(|i| file.accounts.get(i))
+            && entry.grant.account_id.is_some()
+            && entry.grant.account_id != credentials.account_id
+        {
+            return Err(ProxyError::invalid_request(format!(
+                "`{label}` already names account {}; log in again with another label",
+                entry.grant.account_id.as_deref().unwrap_or("unknown")
+            )));
+        }
+
         let name = match label {
             Some(label) => label.to_owned(),
             // Already stored, under whatever it is already called: a login

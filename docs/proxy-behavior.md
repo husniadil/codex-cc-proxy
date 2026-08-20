@@ -663,6 +663,14 @@ also why a mapping validated at startup cannot go stale while running, and why
 the only mismatch worth reporting later is a mapped model the catalog withholds
 (§7.1).
 
+**A catalog is one account's menu.** The plan decides which models appear and
+which efforts each one offers, so a list fetched for one account is not a
+statement about another. It is attributed to the account it was fetched for,
+and every answer built from it says when that is no longer the account serving
+turns (`api.md` §3) — a stale list would otherwise deny models this account has
+and offer ones it does not. Attribution is not a refetch: switching accounts on
+a running daemon leaves the list belonging to the previous one until a restart.
+
 Each entry contributes an id, a visibility flag, and window metadata: a context
 window, an optional maximum context window, and an optional effective percentage.
 Hidden entries and non-conversational pseudo-models are excluded from what is
@@ -885,8 +893,9 @@ a header.
 
 Refresh begins ahead of expiry and is single-flight: concurrent requests share one
 in-flight refresh. A refusal naming an expired, reused, or invalidated grant —
-or any 401 — marks the connection dead and requires re-authentication; it is
-never retried in a loop. Every other refusal is transient and leaves the grant
+or any 401 — retires that refresh token and requires re-authentication; it is
+never retried in a loop, and the retirement follows the token rather than the
+process holding it (§8.1). Every other refusal is transient and leaves the grant
 alone, because marking it dead on a recoverable failure forces a re-login that a
 retry would have made unnecessary.
 
@@ -911,6 +920,12 @@ grant other than the account id is an account id, so a store with neither label
 nor id assigns a name rather than deriving one from a token — a name taken from
 a token would be a fabricated fact about the account, and a secret in a field
 meant to be printed.
+
+A label that already names a *different* account is refused rather than
+honoured. Taking it would write the new grant over the one holding that name,
+which is the silent retirement this split exists to prevent. The refusal costs
+the authorization just spent, and one more login replaces it; the other way
+costs a grant that may not be replaceable.
 
 **A login adds; a refresh saves.** They are different verbs on purpose. An
 authorization produces a new grant, and writing it over whichever account
@@ -941,12 +956,17 @@ usable. What must be kept out of the design is the other arrangement — two
 holders of *one* account — because there the last refresh retires the token
 every other holder is still carrying.
 
-Two things belong to the grant rather than to the daemon, and travel with a
-switch. A refusal is a statement about one refresh token, so selecting another
-account clears it; carrying it across would report the new account as finished
-without ever having spent it. A quota belongs to the account that earned it, so
-the snapshot is dropped and the next turn supplies one — reporting the previous
-account's headroom is wrong in the direction that reads as room to spend.
+**A refusal is about one refresh token**, and is held as that token rather than
+as a flag. Held as a flag it becomes a fact about the process: the message a
+refusal produces tells the operator to log in again, they do, and the grant they
+produce lands in this store — where a flag would go on refusing it until the
+daemon restarted, and a login through the CLI never reaches the daemon at all.
+Held as the token, a grant that is not the refused one is tried and the refused
+one is still never retried, whether it comes back by a switch or by a login.
+
+A quota belongs to the account that earned it, so switching accounts drops the
+snapshot and the next turn supplies one. Reporting the previous account's
+headroom is wrong in the direction that reads as room to spend.
 
 Clearing forgets one account and leaves the rest usable, selecting another to
 serve turns; clearing the last one removes the file, so "not authenticated" is

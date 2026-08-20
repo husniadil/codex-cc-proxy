@@ -213,6 +213,21 @@ pub fn status(result: &Value) -> String {
         lines.push(format!("plan       {plan}{qualifier}"));
     }
 
+    // The model list belongs to whichever account it was fetched for, and
+    // nothing refetches it when the daemon starts serving another. Said out
+    // loud, because every model and effort answer downstream rests on it.
+    if field(result, "catalog_stale")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        let fetched_for = field(result, "catalog_account")
+            .and_then(Value::as_str)
+            .unwrap_or("another account");
+        lines.push(format!(
+            "models     listed for {fetched_for}, not the account serving turns — restart to refresh"
+        ));
+    }
+
     if let Some(tiers) = field(result, "tiers").and_then(Value::as_object) {
         for (tier, model) in tiers {
             lines.push(format!(
