@@ -308,13 +308,30 @@ Credentials are already behind a trait and already carry the account id they
 belong to, so what is missing is naming, selection, and a store that holds
 several.
 
-Rotation was measured not to revoke the superseded token (§L), so a second
-account is not in danger from the first refreshing. Two clients sharing *one*
-account still are, which is the thing to keep out of the design.
+Each account holds its own refresh-token family, so a second account is not in
+danger from the first refreshing. That is a property of separate grants, and
+this entry originally rested it on a measurement instead — that rotation
+supersedes without revoking. §L has since downgraded that measurement to a
+probable grace window, and the argument does not need it: nothing about one
+account's rotation reaches another account's family. Two holders of *one*
+account are still in danger, which is the thing to keep out of the design.
 
 **Done when** logging in twice leaves two usable accounts rather than one, the
 account in use is stated by `status` and selectable without editing a file, and
 a refresh on one account provably leaves the other's grant intact.
+
+**Done.** A store of several grants with one selected, `login --as` and
+`accounts --use` over `accounts` and `accounts.select`, and `status` naming the
+account serving turns beside the rest. Two things turned out to belong to the
+grant rather than to the daemon and had to travel with a switch: a refusal,
+which is about one refresh token, and the quota snapshot, which belongs to the
+account that earned it.
+
+The isolation proof is offline, as everything here is: two accounts in one
+store against the replay server, refreshing one and asserting the other's
+stored grant is unchanged and still spends its own refresh token. What that
+does not settle is whether the *backend* treats two grants from one client as
+independent, which is a §L question rather than a proof this suite can hold.
 
 **Credentials that are not a subscription.** The proxy authenticates one way
 today: an OAuth grant against a consumer subscription. An API key is a different
@@ -361,6 +378,7 @@ alongside what they cost to learn.
 | ~~Does the backend accept the request shape — headers, `instructions`, tools? | **Answered.** Accepted as sent; a turn completes and the frame sequence is correct. |
 | ~~What does the backend expect for a compressed request?~~ | **Answered.** HTTP: a zstd body with `Content-Encoding: zstd`, verified live. WebSocket: `permessage-deflate`, offered by the client and selected by the server on the upgrade — confirmed live, with full context takeover and no window limit. A binary frame means nothing on its own. |
 | Does a refresh return a fresh `id_token`? | **Open.** It matters because the grant's `chatgpt_plan_type` is what `status` falls back to when no turn has been made, and a plan that never updates would report a stale entitlement indefinitely. The refresh path already stores a new id token when one comes back — whether one does is unmeasured. Attempting it on this account returned `refresh_token_reused`, so it cannot be settled here. Mitigated rather than assumed: the backend's own `plan_type`, reported on every turn, is preferred, and the grant's copy is labelled "as of last login" when it is what answered. |
+| Do two grants held by one client stay independent? | **Open.** Two accounts in one store hold two refresh-token families, and the offline proof is that this store never writes one account's rotation into another's slot. Whether the *authorization server* treats two grants issued to one `client_id` as independent is a question only a second live account answers. The design assumes it does, because that is what separate grants mean; the thing already known to be unsafe is the other arrangement — two holders of one account, where the last refresh retires everyone else's token. |
 | Does a superseded refresh token stay redeemable? | **Previously answered yes; now doubtful.** That measurement saw a superseded token still redeem, and this account's stored token is now refused with `refresh_token_reused`. The earlier result most likely described a grace window rather than a durable property. Do not rely on it, and do not run a daemon against a *copy* of a credential file — the refresh-token family is shared, and whichever copy refreshes last leaves the other holding a dead token. |
 | ~~Do the `session-id` and `thread-id` headers matter?~~ | **Answered: yes, and it cost a wrong conclusion twice on the way.** A `session_id` header scopes the prompt cache. The body's `prompt_cache_key` — which §2.1 called the thing that drives caching — produced no cached tokens on its own in any trial. The first probe run appeared to prove the header caused caching outright; it did not, because every condition shared one prompt and cache entries leaked between them. Rerun with a prompt per condition and the order reversed, the effect held. Then the shipping proxy showed **no** improvement end to end, because over WebSocket the incremental path already chains turns with `previous_response_id` and that caches by itself. With the socket disabled the difference is stark: uncached input per turn 4,465–4,497 without the header against 625–657 with it, 3,840 cached from the second turn on. So it is a fallback-path optimisation, and HTTP is a normal operating mode rather than an error path (§4.2). `thread-id` was not isolated and is not sent. |
 | ~~Does the socket actually compress, and by how much?~~ | **Answered, measured live.** The server selects `permessage-deflate` when offered, with context takeover and no window limit. One identical turn, compression on versus off, counted on the wire: 104,566 in / 40,335 out against 300,879 in / 110,608 out — 65% off in both directions, 267 KB on a single first turn. Inbound is the larger half and grows with the conversation. **Zero tokens either way.** |

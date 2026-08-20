@@ -8,6 +8,21 @@ in [`docs/api.md`](docs/api.md) §6.
 
 ### Added
 
+- **More than one account in one credential store.** One file meant one
+  account, so an account out of quota stopped all work rather than some of it.
+  `login` now adds an account and selects it rather than replacing the one
+  already stored, `--as NAME` gives it a local name, `accounts` lists what is
+  stored with the serving one marked, and `accounts --use NAME` switches —
+  through the daemon, which is the side holding the selection. `status` names
+  the account serving turns beside the rest, and `disconnect` says which one it
+  cleared and leaves the others usable. Two things turned out to belong to the
+  grant rather than to the daemon and travel with a switch: a refusal, which is
+  a statement about one refresh token, and the quota snapshot, which belongs to
+  the account that earned it — carrying either across reports the new account as
+  finished, or reports headroom it may not have. A credential file written by an
+  earlier version is read as the single account it describes and migrates on the
+  next write, so an upgrade costs no re-login.
+
 - **`run --detach` starts the daemon in the background.** The command returns
   once the daemon answers the control socket, printing the pid, the log path,
   and `stop` as the counterpart. A child that dies at startup is reported with
