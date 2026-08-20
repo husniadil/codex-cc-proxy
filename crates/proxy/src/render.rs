@@ -155,6 +155,18 @@ pub fn accounts(result: &Value) -> String {
         .join("\n")
 }
 
+/// What a rename says it did. Both halves, because the point of the command is
+/// that the name changed and the operator has to know what to type next.
+pub fn renamed_account(result: &Value) -> String {
+    let from = field(result, "renamed")
+        .and_then(Value::as_str)
+        .unwrap_or("nothing");
+    match field(result, "name").and_then(Value::as_str) {
+        Some(to) => format!("{from} is now {to}"),
+        None => format!("renamed {from}"),
+    }
+}
+
 /// What forgetting an account says it did, and who is left serving turns.
 ///
 /// The second half matters: forgetting the account that was serving hands over

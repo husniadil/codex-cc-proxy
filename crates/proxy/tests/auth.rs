@@ -1611,3 +1611,71 @@ fn a_write_that_lost_a_race_is_redone_rather_than_lost() {
         "the other writer's account was overwritten"
     );
 }
+
+/// Renaming moves the name and nothing else.
+///
+/// A login without `--as` names the account by the id the backend knows it by,
+/// which is a UUID nobody wants to type at `--use`. Changing it should not cost
+/// an authorization: the grant is fine, only what this store calls it is
+/// wrong.
+#[test]
+fn renaming_moves_the_name_and_keeps_the_grant() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = FileStore::new(dir.path().join("credentials.json"));
+    store.add(&sample(), None).unwrap();
+    store.add(&other(), None).unwrap();
+    store.select("acct_123").unwrap();
+
+    store.rename("acct_123", "work").unwrap();
+
+    let accounts = store.accounts().unwrap();
+    assert_eq!(accounts[0].name, "work");
+    assert_eq!(accounts[0].account_id.as_deref(), Some("acct_123"));
+    assert!(
+        accounts[0].selected,
+        "the account serving turns must still be serving: {accounts:?}"
+    );
+    assert_eq!(
+        store.load().unwrap().unwrap().access_token,
+        "access-secret",
+        "the grant should be untouched"
+    );
+    // The other account is where it was.
+    assert_eq!(accounts[1].name, "acct_456");
+    assert_eq!(accounts.len(), 2);
+
+    // And the new name is what selects it from now on.
+    store.select("work").unwrap();
+    assert!(store.select("acct_123").is_err());
+}
+
+/// Renaming to a name another account holds is refused, for the same reason a
+/// colliding label is: the store would otherwise have two accounts answering
+/// to one name, and whichever `--use` found first would be the one that got
+/// the turns.
+#[test]
+fn renaming_onto_another_account_is_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = FileStore::new(dir.path().join("credentials.json"));
+    store.add(&sample(), Some("work")).unwrap();
+    store.add(&other(), Some("spare")).unwrap();
+
+    let error = store.rename("spare", "work").unwrap_err().to_string();
+    assert!(error.contains("work"), "{error}");
+
+    let names: Vec<String> = store
+        .accounts()
+        .unwrap()
+        .into_iter()
+        .map(|account| account.name)
+        .collect();
+    assert_eq!(names, vec!["work".to_owned(), "spare".to_owned()]);
+
+    // Renaming an account to what it is already called is not a collision.
+    store.rename("spare", "spare").unwrap();
+    assert_eq!(store.accounts().unwrap()[1].name, "spare");
+
+    // And a name nobody holds says so.
+    let error = store.rename("ghost", "whatever").unwrap_err().to_string();
+    assert!(error.contains("ghost"), "{error}");
+}

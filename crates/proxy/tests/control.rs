@@ -2714,3 +2714,51 @@ async fn the_account_list_falls_back_to_the_id_when_there_is_no_email() {
     assert!(rendered.contains("acct_nameless"), "{rendered}");
     assert!(!rendered.contains("id unknown"), "{rendered}");
 }
+
+/// `accounts.rename` moves the name in the store every request reads, and the
+/// account keeps serving turns under it.
+#[tokio::test]
+async fn renaming_an_account_moves_the_name_it_is_selected_by() {
+    let harness = Harness::start().await;
+    harness
+        .store
+        .add(&grant("acct_one", "a-one"), None)
+        .unwrap();
+
+    let answer = harness
+        .call_with(
+            "accounts.rename",
+            json!({ "account": "acct_one", "name": "work" }),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(answer["renamed"], json!("acct_one"));
+    assert_eq!(answer["name"], json!("work"));
+
+    let listed = harness.call("accounts").await.unwrap();
+    assert_eq!(listed["accounts"][0]["name"], json!("work"));
+    assert_eq!(listed["selected"], json!("work"));
+    assert_eq!(
+        listed["accounts"][0]["account_id"],
+        json!("acct_one"),
+        "the id the backend knows it by does not move"
+    );
+    assert_eq!(
+        harness.store.load().unwrap().unwrap().access_token,
+        "a-one",
+        "the grant should be untouched"
+    );
+
+    // The new name is what selects it, and a call naming neither half is
+    // refused rather than doing something arbitrary.
+    harness
+        .call_with("accounts.select", json!({ "account": "work" }))
+        .await
+        .unwrap();
+    let error = harness
+        .call_with("accounts.rename", json!({ "account": "work" }))
+        .await
+        .expect_err("a rename with no new name should be refused");
+    assert!(error.contains("name"), "{error}");
+}

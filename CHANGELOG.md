@@ -109,6 +109,12 @@ in [`docs/api.md`](docs/api.md) §6.
   account serving turns. Nothing refetches it yet; what changed is that the
   answers stop presenting another account's plan as this one's.
 
+- **`accounts --rename FROM TO` changes what an account is called.** A login
+  carrying no `--as` names the account by the id the backend knows it by, which
+  is a UUID nobody wants to type at `--use`. Renaming moves that name and
+  nothing else: the grant, the account id, and which account serves turns all
+  stay where they were, and a name another account already holds is refused.
+
 - **`accounts --forget NAME` drops an account from the CLI.** `disconnect` had
   been on the control socket since v0.1 with nothing in the CLI that called it,
   so the only way to undo a login was to delete the credential file by hand. The

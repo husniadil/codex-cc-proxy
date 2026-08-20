@@ -78,6 +78,18 @@ pub struct AccountsArgs {
     /// operator naming which one is the whole safeguard.
     #[arg(long = "forget", value_name = "NAME", conflicts_with = "select")]
     pub forget: Option<String>,
+    /// Change what an account is called here, leaving its grant alone.
+    ///
+    /// Both halves, old name first. A login carrying no `--as` names the
+    /// account by the id the backend knows it by, and changing that should not
+    /// cost an authorization.
+    #[arg(
+        long = "rename",
+        value_names = ["FROM", "TO"],
+        num_args = 2,
+        conflicts_with_all = ["select", "forget"]
+    )]
+    pub rename: Option<Vec<String>>,
 }
 
 #[derive(Debug, clap::Args)]
@@ -208,6 +220,35 @@ mod tests {
             panic!("login should parse");
         };
         assert_eq!(args.label, None);
+    }
+
+    /// Renaming takes both halves and stands alone. One of them missing would
+    /// leave the command guessing which account it was about.
+    #[test]
+    fn accounts_renames_with_both_halves_or_not_at_all() {
+        let cli =
+            Cli::try_parse_from(["codex-cc-proxy", "accounts", "--rename", "old", "new"]).unwrap();
+        let Command::Accounts(args) = cli.command else {
+            panic!("accounts should parse");
+        };
+        assert_eq!(
+            args.rename.as_deref(),
+            Some(["old".to_owned(), "new".to_owned()].as_slice())
+        );
+
+        assert!(Cli::try_parse_from(["codex-cc-proxy", "accounts", "--rename", "old"]).is_err());
+        assert!(
+            Cli::try_parse_from([
+                "codex-cc-proxy",
+                "accounts",
+                "--rename",
+                "old",
+                "new",
+                "--use",
+                "other"
+            ])
+            .is_err()
+        );
     }
 
     /// Forgetting names its account and cannot be combined with switching:

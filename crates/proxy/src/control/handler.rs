@@ -87,6 +87,7 @@ pub async fn dispatch(
         "disconnect" => disconnect(state, params).await,
         "accounts" => accounts(state),
         "accounts.select" => select_account(state, params).await,
+        "accounts.rename" => rename_account(state, params),
         "record.start" => {
             // Defaulting to ingress is the safe default and the documented
             // one: it is the mode that needs no credentials and spends
@@ -694,6 +695,27 @@ fn accounts(state: &ControlState) -> Result<Value, ProxyError> {
             .map(|account| account.name.clone()),
         "accounts": accounts,
     }))
+}
+
+/// `accounts.rename` — change what this daemon calls an account.
+///
+/// The grant is untouched and so is the account id the backend knows it by;
+/// what moves is the name `accounts.select` takes. A login carrying no label
+/// names the account by that id, which is not something anyone wants to type.
+fn rename_account(state: &ControlState, params: Option<&Value>) -> Result<Value, ProxyError> {
+    let named = |key: &str| {
+        params
+            .and_then(|params| params.get(key))
+            .and_then(Value::as_str)
+    };
+    let (Some(from), Some(to)) = (named("account"), named("name")) else {
+        return Err(ProxyError::invalid_request(
+            "name both halves: {\"account\": \"...\", \"name\": \"...\"}",
+        ));
+    };
+
+    state.credentials.rename(from, to)?;
+    Ok(json!({ "renamed": from, "name": to }))
 }
 
 /// `accounts.select` — choose the account every following turn is made as.

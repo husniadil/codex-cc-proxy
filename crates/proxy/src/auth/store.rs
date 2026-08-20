@@ -109,6 +109,13 @@ pub trait AccountStore: CredentialStore {
 
     /// Forget one account, leaving the rest usable.
     fn remove(&self, name: &str) -> Result<(), ProxyError>;
+
+    /// Change what this store calls an account, leaving its grant alone.
+    ///
+    /// A login carrying no label names the account by the id the backend knows
+    /// it by, and that id is not something anyone wants to type. Changing it
+    /// should not cost an authorization.
+    fn rename(&self, from: &str, to: &str) -> Result<(), ProxyError>;
 }
 
 /// The credential file: several accounts, one of them selected.
@@ -546,6 +553,34 @@ impl AccountStore for FileStore {
                 return Err(file.unknown(name));
             }
             file.selected = Some(name.to_owned());
+            Ok(())
+        })
+    }
+
+    fn rename(&self, from: &str, to: &str) -> Result<(), ProxyError> {
+        self.update(|file| {
+            let Some(index) = file.index_of(from) else {
+                return Err(file.unknown(from));
+            };
+            // Another account already answering to that name. Two entries
+            // under one name means whichever `--use` found first would take
+            // the turns, which is not a thing to decide by position.
+            if let Some(held) = file.index_of(to)
+                && held != index
+            {
+                return Err(ProxyError::invalid_request(format!(
+                    "`{to}` already names another account; forget it or pick another name"
+                )));
+            }
+
+            let selected = file.selected_index() == Some(index);
+            if let Some(entry) = file.accounts.get_mut(index) {
+                entry.name = to.to_owned();
+            }
+            // The selection is by name, so it has to follow.
+            if selected {
+                file.selected = Some(to.to_owned());
+            }
             Ok(())
         })
     }

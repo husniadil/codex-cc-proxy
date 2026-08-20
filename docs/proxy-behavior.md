@@ -920,7 +920,12 @@ grants exist and which is selected is the `AccountStore` half.
 
 An account is **identified** by the account id its grant carries, and *named*
 by an operator's label where one was given, otherwise by that same id,
-otherwise by an assigned `account-N`. The two are different questions: a login
+otherwise by an assigned `account-N`. The name can be changed afterwards
+without touching the grant: an id is what the backend calls the account and a
+name is what the operator calls it, and correcting the second is not a reason
+to spend an authorization on the first. A name another account already holds is
+refused, because two entries answering to one name would hand the turns to
+whichever was found first. The two are different questions: a login
 carrying a label for an account already stored renames that account, and a
 login carrying none keeps the name it is already filed under. Neither adds a
 second entry for it. Nothing in a

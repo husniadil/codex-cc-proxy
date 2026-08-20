@@ -196,6 +196,20 @@ async fn login(args: cli::LoginArgs) -> Result<()> {
 /// that wrote the file directly would leave a running daemon serving the
 /// account it read at startup.
 async fn accounts(args: cli::AccountsArgs) -> Result<()> {
+    if let Some(names) = args.rename {
+        let [from, to] = names.as_slice() else {
+            anyhow::bail!("`--rename` takes the old name and the new one");
+        };
+        let result = control::call(
+            &control::default_path(),
+            "accounts.rename",
+            Some(serde_json::json!({ "account": from, "name": to })),
+        )
+        .await?;
+        println!("{}", render::renamed_account(&result));
+        return Ok(());
+    }
+
     if let Some(name) = args.forget {
         let result = control::call(
             &control::default_path(),

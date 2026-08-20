@@ -237,3 +237,31 @@ fn the_binary_forgets_one_account_and_keeps_the_rest() {
     daemon.run(&["accounts", "--forget", "acct_one"]);
     assert!(daemon.run(&["accounts"]).contains("login"));
 }
+
+/// §2 — `accounts --rename` through the shipping binary. What changes is the
+/// name `--use` takes; the grant and the account id stay where they are.
+#[test]
+fn the_binary_renames_an_account_without_touching_its_grant() {
+    let daemon = Daemon::start(&grant("acct_legacy"));
+
+    let renamed = daemon.run(&["accounts", "--rename", "acct_legacy", "work"]);
+    assert!(renamed.contains("work"), "{renamed}");
+
+    let listed = daemon.run(&["accounts"]);
+    assert!(listed.contains("work"), "{listed}");
+    assert!(listed.starts_with('*'), "it still serves turns: {listed}");
+    // The address comes from the grant, so seeing it here is what says the
+    // grant survived the rename.
+    assert!(listed.contains("acct_legacy@example.test"), "{listed}");
+
+    // The new name is what selects it now.
+    daemon.run(&["accounts", "--use", "work"]);
+
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_codex-cc-proxy"))
+        .args(["accounts", "--use", "acct_legacy"])
+        .env("CODEX_CC_PROXY_HOME", daemon.dir.path().join("home"))
+        .env("TMPDIR", daemon.dir.path())
+        .output()
+        .unwrap();
+    assert!(!output.status.success(), "the old name should be gone");
+}
