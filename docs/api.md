@@ -66,7 +66,7 @@ changing an already-sent status.
 
 ```
 codex-cc-proxy run        start the daemon (--detach: in the background)
-codex-cc-proxy login      authenticate (--as NAME labels the account)
+codex-cc-proxy login      authenticate (--as NAME labels it, --key reads one from stdin)
 codex-cc-proxy accounts   stored accounts (--use switches, --rename, --forget drops)
 codex-cc-proxy status     connection, tier mapping, model catalog
 codex-cc-proxy models     available models
@@ -84,7 +84,10 @@ Every verb except `run` and `login` operates through the control socket (§3)
 against a running daemon.
 
 `login` **adds** an account and selects it; it never replaces the one already
-stored (`proxy-behavior.md` §8.1). `--as NAME` is what to call it locally, for
+stored (`proxy-behavior.md` §8.1). `--key` stores a key read from **stdin**
+instead of starting an authorization: no browser, and the secret never appears
+in a command line. `--as NAME` is required with it, because a key carries no id
+to be named by. `--as NAME` is what to call it locally, for
 an operator holding more than one; without it the account id the grant carries
 names it. `accounts` lists what is stored, marking the one serving turns, and
 `--use NAME` switches to another. `--rename FROM TO` changes what an account is
@@ -449,7 +452,7 @@ A Unix domain socket, or a named pipe on Windows, carrying JSON-RPC:
 |---|---|---|
 | `status` | connection state, whether the grant has been **refused**, plan and which source reported it, the tier mapping and the effort ceiling, any mapped model the catalog withholds, whether the catalog was authoritative, the client policy in effect, and the build and `instance` serving the socket | yes |
 | `disconnect` | forgets one account — the selected one, or `{"account": name}` — and answers with the name it cleared and the one serving turns afterwards; the rest stay usable, and an idle account's removal leaves the serving grant's quota alone | yes |
-| `accounts` | every stored account and which one serves turns; no tokens | no — v0.3 |
+| `accounts` | every stored account, what kind of credential each holds, and which one serves turns; no tokens | no — v0.3 |
 | `accounts.select` | `{"account": name}`, the account every following turn is made as, and whether the catalog was refetched for it | no — v0.3 |
 | `accounts.rename` | `{"account": from, "name": to}`, the name this daemon calls an account by; the grant and the account id are untouched | no — v0.3 |
 | `models` | catalog, whether it is the fallback list, and whether it was fetched for an account other than the one serving turns | yes |
@@ -526,7 +529,11 @@ account's and `status.catalog_account` names whose it is.
 
 **`status` names the account.** `auth.account` is what this daemon calls the one
 serving turns and is what selects it; `auth.account_id` is what the backend
-calls it and is what appears on a request. `auth.accounts` lists every stored
+calls it and is what appears on a request; `auth.kind` is `grant` or `key`,
+which decides which endpoint it is spent against and what it can be asked for.
+`auth.connected` means there is a credential to spend, of either kind — a key
+has no grant behind it, and reading only the grant reported a daemon that could
+serve every turn as not connected. `auth.accounts` lists every stored
 account — present and empty rather than absent — carrying names, ids, addresses,
 plans as of each login, and expiries. It carries no tokens: this is the one
 credential-shaped answer that leaves the process.
@@ -609,7 +616,16 @@ effective_window_percent = 95.0
 endpoint                 = "https://..."
 websocket                = "wss://..."
 catalog                  = "https://..."
+
+[upstream.key]
+endpoint = "https://..."
+catalog  = "https://..."
 ```
+
+`[upstream.key]` is where an API key is spent, which is not where a grant is
+(`proxy-behavior.md` §8.2). There is no socket in it: the WebSocket protocol
+belongs to the subscription backend, so a key account uses HTTP. Sending either
+credential to the other's endpoint is refused before anything leaves.
 
 `[upstream]` is entirely optional; every key defaults to what ships. It exists so
 a pinned binary can be repointed rather than rebuilt, and because two of the keys

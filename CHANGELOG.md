@@ -109,6 +109,28 @@ in [`docs/api.md`](docs/api.md) §6.
   account serving turns. Nothing refetches it yet; what changed is that the
   answers stop presenting another account's plan as this one's.
 
+- **An account can hold an API key instead of a subscription grant.**
+  `login --key` reads a secret from stdin — never from an argument, which is
+  visible to every process on the machine — and stores it under the name `--as`
+  gives it; `accounts --use` moves between the two kinds exactly as it moves
+  between accounts. A key has no refresh, no expiry, no account id and no plan,
+  and nothing reports a plausible value in place of any of them.
+
+  One resolver decides what authenticates a request, and every path that
+  authenticates asks it: both transports, the catalog fetch, and the quota
+  fetch. A grant sends its token, the originator identifying a subscription
+  client, and the account id it is spending; a key sends its token and nothing
+  else. A credential is refused against the other kind's endpoint before
+  anything leaves, in a message naming both halves, rather than being answered
+  upstream with something about an invalid token. `[upstream.key]` is where a
+  key is spent; it has no socket, because that protocol belongs to the
+  subscription backend, and a key account has no quota to report, because that
+  figure is a subscription entitlement.
+
+  Proven end to end against the replay server, which is what this suite can
+  hold. Nothing about a real key endpoint has been confirmed — `docs/roadmap.md`
+  §L carries what only a live one can settle.
+
 - **`accounts --rename FROM TO` changes what an account is called.** A login
   carrying no `--as` names the account by the id the backend knows it by, which
   is a UUID nobody wants to type at `--use`. Renaming moves that name and

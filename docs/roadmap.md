@@ -346,6 +346,24 @@ credential kinds are selectable per tier or per account rather than globally,
 and no code path can send one kind of credential to the endpoint that expects
 the other.
 
+**Done**, per account. The store holds accounts already, so the kind rides on
+one: `login --key` stores a secret read from stdin under a name, and
+`accounts --use` moves between kinds exactly as it moves between accounts. Per
+tier would have needed a second selection mechanism for no capability this one
+does not have.
+
+The seam turned out to be in the wrong place rather than wrong. `Transport` was
+a trait; what four paths each assembled by hand was the *authorization*. One
+resolver now answers that, and the header set is where the two kinds actually
+differ — a grant identifies a subscription client and the account it spends, a
+key identifies nothing but itself. Two things fell out of the endpoint pairing
+rather than being decided: a key account has no socket, because that protocol
+is the subscription backend's, and no quota, because that figure is a
+subscription entitlement.
+
+**End to end means against the replay server**, which is what this suite can
+hold. Nothing about a key endpoint has been confirmed live — see §L.
+
 ### v0.4.0
 
 **A graphical front-end.** The control socket was built for exactly this: the
@@ -378,6 +396,7 @@ alongside what they cost to learn.
 | ~~Does the backend accept the request shape — headers, `instructions`, tools? | **Answered.** Accepted as sent; a turn completes and the frame sequence is correct. |
 | ~~What does the backend expect for a compressed request?~~ | **Answered.** HTTP: a zstd body with `Content-Encoding: zstd`, verified live. WebSocket: `permessage-deflate`, offered by the client and selected by the server on the upgrade — confirmed live, with full context takeover and no window limit. A binary frame means nothing on its own. |
 | Does a refresh return a fresh `id_token`? | **Open.** It matters because the grant's `chatgpt_plan_type` is what `status` falls back to when no turn has been made, and a plan that never updates would report a stale entitlement indefinitely. The refresh path already stores a new id token when one comes back — whether one does is unmeasured. Attempting it on this account returned `refresh_token_reused`, so it cannot be settled here. Mitigated rather than assumed: the backend's own `plan_type`, reported on every turn, is preferred, and the grant's copy is labelled "as of last login" when it is what answered. |
+| Does the key endpoint behave as this proxy assumes? | **Open.** The key path is proven end to end against the replay server: the request carries its key, carries neither `originator` nor `chatgpt-account-id`, and the turn completes. What that cannot settle is the real endpoint — whether it accepts this request shape, what its model list looks like (the catalog falls back and says so if the shape is unreadable), and whether anything about streaming differs. Derived, not confirmed. `doctor --live` reports not authenticated while a key account is selected, because its probe path holds a grant's token source. |
 | Do two grants held by one client stay independent? | **Open.** Two accounts in one store hold two refresh-token families, and the offline proof is that this store never writes one account's rotation into another's slot. Whether the *authorization server* treats two grants issued to one `client_id` as independent is a question only a second live account answers. The design assumes it does, because that is what separate grants mean; the thing already known to be unsafe is the other arrangement — two holders of one account, where the last refresh retires everyone else's token. |
 | Does a superseded refresh token stay redeemable? | **Previously answered yes; now doubtful.** That measurement saw a superseded token still redeem, and this account's stored token is now refused with `refresh_token_reused`. The earlier result most likely described a grace window rather than a durable property. Do not rely on it, and do not run a daemon against a *copy* of a credential file — the refresh-token family is shared, and whichever copy refreshes last leaves the other holding a dead token. |
 | ~~Do the `session-id` and `thread-id` headers matter?~~ | **Answered: yes, and it cost a wrong conclusion twice on the way.** A `session_id` header scopes the prompt cache. The body's `prompt_cache_key` — which §2.1 called the thing that drives caching — produced no cached tokens on its own in any trial. The first probe run appeared to prove the header caused caching outright; it did not, because every condition shared one prompt and cache entries leaked between them. Rerun with a prompt per condition and the order reversed, the effect held. Then the shipping proxy showed **no** improvement end to end, because over WebSocket the incremental path already chains turns with `previous_response_id` and that caches by itself. With the socket disabled the difference is stark: uncached input per turn 4,465–4,497 without the header against 625–657 with it, 3,840 cached from the second turn on. So it is a fallback-path optimisation, and HTTP is a normal operating mode rather than an error path (§4.2). `thread-id` was not isolated and is not sent. |

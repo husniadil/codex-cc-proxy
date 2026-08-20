@@ -1002,6 +1002,46 @@ reason to rewrite them. A `selected` naming an account that is not stored falls
 back to the first one, because the file still holds usable grants and answering
 "not authenticated" there sends an operator to re-authorize for nothing.
 
+### 8.2 A credential that is not a subscription
+
+An account holds one of two kinds. A **grant** is the OAuth credential above:
+refreshed, expiring, carrying an account id and a plan. A **key** is one
+secret. It has no refresh, no expiry, no account id and no plan, and nothing
+reports a plausible value in place of any of them — an invented expiry would
+drive a refresh that cannot happen, and an invented account id would put a
+header on the wire the endpoint taking a key never asked for.
+
+Every account verb works on either: list, select, rename, forget. What differs
+is where the credential may be spent, and that difference is the point.
+
+**One place resolves a credential into headers**, and every path that
+authenticates asks it: both transports, the catalog fetch, and the quota fetch.
+A grant answers with its bearer token, the `originator` identifying a
+subscription client, and the account id it is spending. A key answers with its
+bearer token and nothing else. The `originator` moved here from the transports
+for that reason: it belongs to the subscription dialect rather than to every
+request. A transport holding no credential at all still sends it, which is what
+the replay paths have always seen.
+
+**A credential is refused against the other kind's endpoint**, before anything
+is sent, in a message naming both halves. The endpoint would otherwise answer
+with something about an invalid token, which sends whoever reads it looking for
+the wrong problem.
+
+Two things follow from that pairing rather than being decided separately. A key
+account uses **HTTP only**: the WebSocket protocol here belongs to the
+subscription backend, and nothing has been observed about a key endpoint
+speaking it, so there is no socket to fall back from. And a key account has
+**no quota to report**: the figure is a subscription entitlement, so asking for
+one with a key is the same refusal rather than a request spent to be told so.
+
+A key is stored from **stdin**, never from an argument, and under a name the
+operator gives — a command line is visible to every process on the machine and
+lands in shell history, and a key carries no id to be named by.
+
+An account with no kind recorded is a grant, the same read-the-old-shape rule
+§8.1 applies to the file as a whole.
+
 ---
 
 ## 9. Testing
