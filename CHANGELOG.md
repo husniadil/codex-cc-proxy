@@ -4,6 +4,20 @@ All notable changes to this project are recorded here. This project follows
 [semantic versioning](https://semver.org). The semver-bound surfaces are listed
 in [`docs/api.md`](docs/api.md) §6.
 
+## [0.2.1]
+
+### Fixed
+
+- **A client interrupt no longer bricks the conversation.** An abandoned turn
+  drops its WebSocket connection instead of parking it, but the session still
+  remembered the last response id — so the next turn opened a fresh connection
+  and sent a delta naming a response that connection had never seen. The
+  backend refuses that with `400 Invalid previous_response_id`, and because the
+  refusal ends the turn cleanly, the refusing connection was parked and every
+  following delta repeated it: the session never healed on its own. A delta is
+  now planned only for the connection that produced the response it continues;
+  every other case is a full send.
+
 ## [0.2.0]
 
 A daemon a front-end can drive. Every capability below was reachable only by
