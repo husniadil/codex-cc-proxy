@@ -1679,3 +1679,142 @@ fn renaming_onto_another_account_is_refused() {
     let error = store.rename("ghost", "whatever").unwrap_err().to_string();
     assert!(error.contains("ghost"), "{error}");
 }
+
+// ---------------------------------------------------------------------------
+// §8 — a credential that is not a subscription grant.
+// ---------------------------------------------------------------------------
+
+use codex_cc_proxy::auth::store::Credential;
+
+/// A key is an account like any other, of a different kind.
+///
+/// It has no refresh, no expiry and no account id, and nothing invents one for
+/// it: a plausible expiry would drive a refresh that cannot happen, and a
+/// plausible account id would be sent upstream as a header the key endpoint
+/// never asked for.
+#[test]
+fn a_key_is_stored_as_an_account_of_its_own_kind() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = FileStore::new(dir.path().join("credentials.json"));
+
+    store.add_key("billing", "key-secret-value").unwrap();
+
+    let accounts = store.accounts().unwrap();
+    assert_eq!(accounts.len(), 1);
+    assert_eq!(accounts[0].name, "billing");
+    assert_eq!(accounts[0].kind, "key");
+    assert!(accounts[0].selected);
+    assert_eq!(accounts[0].account_id, None);
+    assert_eq!(accounts[0].expires_at, None);
+    assert_eq!(accounts[0].email, None);
+
+    // The listing is the shape that leaves the process.
+    let rendered = format!(
+        "{}{:?}",
+        serde_json::to_string(&accounts).unwrap(),
+        accounts
+    );
+    assert!(
+        !rendered.contains("key-secret-value"),
+        "leaked the key: {rendered}"
+    );
+
+    match store.credential().unwrap() {
+        Some(Credential::Key(key)) => assert_eq!(key.value(), "key-secret-value"),
+        other => panic!("expected a key, got {other:?}"),
+    }
+    // And `Debug` on the credential itself does not carry it either.
+    assert!(
+        !format!("{:?}", store.credential().unwrap()).contains("key-secret-value"),
+        "Debug leaked the key"
+    );
+}
+
+/// A grant and a key coexist, and switching between them is switching
+/// accounts. Nothing about the second kind disturbs the first.
+#[test]
+fn a_key_and_a_grant_are_two_accounts() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = FileStore::new(dir.path().join("credentials.json"));
+    store.add(&sample(), None).unwrap();
+    store.add_key("billing", "key-secret-value").unwrap();
+
+    let accounts = store.accounts().unwrap();
+    assert_eq!(accounts.len(), 2);
+    assert_eq!(accounts[0].kind, "grant");
+    assert_eq!(accounts[1].kind, "key");
+    assert!(accounts[1].selected, "the newest is the one serving turns");
+
+    store.select("acct_123").unwrap();
+    assert!(matches!(
+        store.credential().unwrap(),
+        Some(Credential::Grant(_))
+    ));
+    assert_eq!(store.load().unwrap().unwrap().access_token, "access-secret");
+
+    store.select("billing").unwrap();
+    assert!(matches!(
+        store.credential().unwrap(),
+        Some(Credential::Key(_))
+    ));
+}
+
+/// A credential file written before keys existed is every bit a file of
+/// grants. The kind is absent there, and absent means grant.
+#[test]
+fn a_file_from_before_keys_reads_as_grants() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("credentials.json");
+    std::fs::write(
+        &path,
+        serde_json::json!({
+            "selected": "work",
+            "accounts": [{
+                "name": "work",
+                "access_token": "access-secret",
+                "refresh_token": "refresh-secret",
+                "account_id": "acct_123",
+                "expires_at": 1_800_000_000_u64,
+            }],
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    let store = FileStore::new(&path);
+
+    let accounts = store.accounts().unwrap();
+    assert_eq!(accounts.len(), 1);
+    assert_eq!(accounts[0].kind, "grant");
+    assert_eq!(
+        store.load().unwrap().unwrap().refresh_token,
+        "refresh-secret"
+    );
+
+    // And the single-grant shape from before accounts existed, too.
+    let older = dir.path().join("older.json");
+    std::fs::write(&older, serde_json::to_string(&sample()).unwrap()).unwrap();
+    let store = FileStore::new(&older);
+    assert_eq!(store.accounts().unwrap()[0].kind, "grant");
+}
+
+/// A key cannot be renamed onto a grant's name, forgotten differently, or
+/// otherwise treated as a second class of thing: every account verb works on
+/// it.
+#[test]
+fn the_account_verbs_work_on_a_key() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = FileStore::new(dir.path().join("credentials.json"));
+    store.add(&sample(), None).unwrap();
+    store.add_key("billing", "key-secret-value").unwrap();
+
+    store.rename("billing", "spend").unwrap();
+    assert_eq!(store.accounts().unwrap()[1].name, "spend");
+    assert!(store.accounts().unwrap()[1].selected);
+
+    store.remove("spend").unwrap();
+    let accounts = store.accounts().unwrap();
+    assert_eq!(accounts.len(), 1);
+    assert_eq!(accounts[0].name, "acct_123");
+    assert!(accounts[0].selected);
+}

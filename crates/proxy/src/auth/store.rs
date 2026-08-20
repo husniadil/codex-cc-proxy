@@ -38,6 +38,68 @@ impl std::fmt::Debug for Credentials {
     }
 }
 
+/// A key, which is a secret and nothing else.
+///
+/// No refresh, no expiry, no account id. Where a grant carries claims this
+/// carries one string, and inventing anything beside it would put a header on
+/// the wire that the endpoint taking a key never asked for.
+#[derive(Clone, Deserialize, Serialize)]
+pub struct ApiKey {
+    api_key: String,
+}
+
+impl ApiKey {
+    pub fn new(api_key: impl Into<String>) -> Self {
+        Self {
+            api_key: api_key.into(),
+        }
+    }
+
+    /// The secret itself, for the one caller that puts it on the wire.
+    pub fn value(&self) -> &str {
+        &self.api_key
+    }
+}
+
+impl std::fmt::Debug for ApiKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ApiKey")
+            .field("api_key", &Redacted)
+            .finish()
+    }
+}
+
+/// What an account authenticates with.
+///
+/// The two kinds are not interchangeable: a grant is refreshed, carries an
+/// account id, and belongs to a subscription endpoint; a key is none of those
+/// and belongs to a different endpoint entirely. Keeping them one type is what
+/// lets every account verb work on either, and keeping them distinct
+/// *variants* is what stops one being sent where the other is expected.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum Credential {
+    Grant(Credentials),
+    Key(ApiKey),
+}
+
+impl Credential {
+    /// What this kind is called wherever it is reported.
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Self::Grant(_) => "grant",
+            Self::Key(_) => "key",
+        }
+    }
+
+    pub fn grant(&self) -> Option<&Credentials> {
+        match self {
+            Self::Grant(grant) => Some(grant),
+            Self::Key(_) => None,
+        }
+    }
+}
+
 struct Redacted;
 
 impl std::fmt::Debug for Redacted {
@@ -73,6 +135,9 @@ pub struct Account {
     /// What this store calls the account: an operator's label, else the id the
     /// backend knows it by, else an assigned name.
     pub name: String,
+    /// `grant` or `key`. What it authenticates with decides which endpoint it
+    /// can be spent against, so nothing that reports an account omits it.
+    pub kind: &'static str,
     /// The id the backend knows it by, where the grant carried one.
     pub account_id: Option<String>,
     /// Read from the stored id token, so two accounts are distinguishable by
@@ -110,6 +175,19 @@ pub trait AccountStore: CredentialStore {
     /// Forget one account, leaving the rest usable.
     fn remove(&self, name: &str) -> Result<(), ProxyError>;
 
+    /// The credential of the account serving turns, of either kind.
+    ///
+    /// `CredentialStore::load` answers only for a grant, because that is what
+    /// its callers refresh. This is what a caller that has to authenticate a
+    /// request asks, since the answer decides which headers it sends.
+    fn credential(&self) -> Result<Option<Credential>, ProxyError>;
+
+    /// Store a key under a name and select it.
+    ///
+    /// Separate from `add`, which takes what an authorization produced. A key
+    /// is handed over rather than granted, and there is no flow behind it.
+    fn add_key(&self, name: &str, key: &str) -> Result<(), ProxyError>;
+
     /// Change what this store calls an account, leaving its grant alone.
     ///
     /// A login carrying no label names the account by the id the backend knows
@@ -135,7 +213,17 @@ struct StoredFile {
 struct Entry {
     name: String,
     #[serde(flatten)]
-    grant: Credentials,
+    credential: Credential,
+}
+
+impl Entry {
+    fn grant(&self) -> Option<&Credentials> {
+        self.credential.grant()
+    }
+
+    fn account_id(&self) -> Option<&str> {
+        self.grant().and_then(|grant| grant.account_id.as_deref())
+    }
 }
 
 impl StoredFile {
@@ -168,7 +256,7 @@ impl StoredFile {
         let account_id = account_id?;
         self.accounts
             .iter()
-            .position(|entry| entry.grant.account_id.as_deref() == Some(account_id))
+            .position(|entry| entry.account_id() == Some(account_id))
     }
 
     /// How a refusal describes what is here. With nothing stored, what the
@@ -226,11 +314,11 @@ impl StoredFile {
                 // A label renames the account it was given for; it never
                 // creates a second entry for one already stored.
                 entry.name = name.clone();
-                entry.grant = credentials.clone();
+                entry.credential = Credential::Grant(credentials.clone());
             }
             None => self.accounts.push(Entry {
                 name: name.clone(),
-                grant: credentials.clone(),
+                credential: Credential::Grant(credentials.clone()),
             }),
         }
         self.selected = Some(name);
@@ -316,7 +404,7 @@ impl FileStore {
         // the single account it describes is what keeps an upgrade from
         // costing a re-login.
         if value.get("accounts").is_some() {
-            let file = serde_json::from_value(value).map_err(unreadable)?;
+            let file = serde_json::from_value(Self::name_the_kinds(value)).map_err(unreadable)?;
             return Ok((Some(raw), file));
         }
 
@@ -325,6 +413,28 @@ impl FileStore {
         let name = file.name_for(&grant);
         file.put(name, &grant);
         Ok((Some(raw), file))
+    }
+
+    /// An entry with no kind is a grant.
+    ///
+    /// The kind was added when a second one existed to distinguish, so every
+    /// file written before then names none — and the alternative to filling it
+    /// in is refusing to read a file full of valid grants. The same
+    /// read-the-old-shape rule the accounts migration follows.
+    fn name_the_kinds(mut value: serde_json::Value) -> serde_json::Value {
+        if let Some(accounts) = value
+            .get_mut("accounts")
+            .and_then(serde_json::Value::as_array_mut)
+        {
+            for entry in accounts {
+                if let Some(entry) = entry.as_object_mut()
+                    && !entry.contains_key("kind")
+                {
+                    entry.insert("kind".to_owned(), serde_json::Value::from("grant"));
+                }
+            }
+        }
+        value
     }
 
     /// Read, change, replace — starting over if the file moved underneath.
@@ -443,7 +553,7 @@ impl CredentialStore for FileStore {
         Ok(file
             .selected_index()
             .and_then(|index| file.accounts.get(index))
-            .map(|entry| entry.grant.clone()))
+            .and_then(|entry| entry.grant().cloned()))
     }
 
     /// Write the selected account's grant — what a refresh does.
@@ -466,8 +576,13 @@ impl CredentialStore for FileStore {
                 .or_else(|| file.selected_index())
                 .and_then(|index| file.accounts.get_mut(index))
             {
-                Some(entry) => entry.grant = credentials.clone(),
-                None => {
+                // A grant is only ever written over a grant. An account
+                // holding a key has no refresh behind it, so a rotation
+                // landing there could only be one that lost its way.
+                Some(entry) if entry.grant().is_some() => {
+                    entry.credential = Credential::Grant(credentials.clone());
+                }
+                _ => {
                     let name = file.name_for(credentials);
                     file.put(name, credentials);
                 }
@@ -499,17 +614,47 @@ impl AccountStore for FileStore {
             .iter()
             .enumerate()
             .map(|(index, entry)| {
-                let id_token = entry.grant.id_token.as_deref();
+                let grant = entry.grant();
+                let id_token = grant.and_then(|grant| grant.id_token.as_deref());
                 Account {
                     name: entry.name.clone(),
-                    account_id: entry.grant.account_id.clone(),
+                    kind: entry.credential.kind(),
+                    // All four come from a grant's claims. A key carries none
+                    // of them, and reports none rather than something
+                    // plausible.
+                    account_id: grant.and_then(|grant| grant.account_id.clone()),
                     email: super::jwt::email(id_token),
                     plan: super::jwt::plan(id_token),
-                    expires_at: entry.grant.expires_at,
+                    expires_at: grant.and_then(|grant| grant.expires_at),
                     selected: selected == Some(index),
                 }
             })
             .collect())
+    }
+
+    fn credential(&self) -> Result<Option<Credential>, ProxyError> {
+        let file = self.read()?;
+        Ok(file
+            .selected_index()
+            .and_then(|index| file.accounts.get(index))
+            .map(|entry| entry.credential.clone()))
+    }
+
+    fn add_key(&self, name: &str, key: &str) -> Result<(), ProxyError> {
+        self.update(|file| {
+            match file
+                .index_of(name)
+                .and_then(|index| file.accounts.get_mut(index))
+            {
+                Some(entry) => entry.credential = Credential::Key(ApiKey::new(key)),
+                None => file.accounts.push(Entry {
+                    name: name.to_owned(),
+                    credential: Credential::Key(ApiKey::new(key)),
+                }),
+            }
+            file.selected = Some(name.to_owned());
+            Ok(())
+        })
     }
 
     fn add(&self, credentials: &Credentials, label: Option<&str>) -> Result<String, ProxyError> {
@@ -521,12 +666,12 @@ impl AccountStore for FileStore {
             // replaces; the other way costs a grant that may not be.
             if let Some(label) = label
                 && let Some(entry) = file.index_of(label).and_then(|i| file.accounts.get(i))
-                && entry.grant.account_id.is_some()
-                && entry.grant.account_id != credentials.account_id
+                && entry.account_id().is_some()
+                && entry.account_id() != credentials.account_id.as_deref()
             {
                 return Err(ProxyError::invalid_request(format!(
                     "`{label}` already names account {}; log in again with another label",
-                    entry.grant.account_id.as_deref().unwrap_or("unknown")
+                    entry.account_id().unwrap_or("unknown")
                 )));
             }
 

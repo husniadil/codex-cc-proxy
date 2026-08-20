@@ -2762,3 +2762,34 @@ async fn renaming_an_account_moves_the_name_it_is_selected_by() {
         .expect_err("a rename with no new name should be refused");
     assert!(error.contains("name"), "{error}");
 }
+
+/// §3 — an account says what it authenticates with. The two kinds are spent
+/// against different endpoints, so a listing that did not distinguish them
+/// would leave an operator guessing which of their accounts is which.
+#[tokio::test]
+async fn accounts_and_status_say_what_kind_each_account_is() {
+    let harness = Harness::start().await;
+    harness
+        .store
+        .add(&grant("acct_one", "a-one"), None)
+        .unwrap();
+    harness.store.add_key("billing", "key-secret").unwrap();
+
+    let listed = harness.call("accounts").await.unwrap();
+    assert_eq!(listed["accounts"][0]["kind"], json!("grant"));
+    assert_eq!(listed["accounts"][1]["kind"], json!("key"));
+    assert_eq!(listed["selected"], json!("billing"));
+    assert!(
+        !listed.to_string().contains("key-secret"),
+        "the key reached a caller: {listed}"
+    );
+
+    let status = harness.call("status").await.unwrap();
+    assert_eq!(status["auth"]["accounts"][1]["kind"], json!("key"));
+
+    // And an operator sees it: a key has no address to show, so the column
+    // that tells two accounts apart says what it is instead of nothing.
+    let rendered = render::accounts(&listed);
+    assert!(rendered.contains("key"), "{rendered}");
+    assert!(rendered.contains("acct_one@example.test"), "{rendered}");
+}

@@ -145,9 +145,14 @@ pub fn accounts(result: &Value) -> String {
             // The string, then the fallback. Asking for the field first and
             // reading it as a string afterwards makes a present-but-null
             // `email` shadow an account id that is right there.
+            //
+            // A key has neither an address nor an id — it is one secret — so
+            // the column that tells two accounts apart falls through to what
+            // the account is.
             let who = field(account, "email")
                 .and_then(Value::as_str)
                 .or_else(|| field(account, "account_id").and_then(Value::as_str))
+                .or_else(|| field(account, "kind").and_then(Value::as_str))
                 .unwrap_or("id unknown");
             format!("{marker} {name:<24} {who}")
         })
