@@ -203,3 +203,37 @@ fn the_binary_lists_and_switches_accounts() {
     assert!(stderr.contains("nobody"), "{stderr}");
     assert!(stderr.contains("acct_one"), "{stderr}");
 }
+
+/// §2 — `accounts --forget` through the shipping binary. The named account
+/// goes, the rest stay usable, and something still serves turns.
+#[test]
+fn the_binary_forgets_one_account_and_keeps_the_rest() {
+    let daemon = Daemon::start(&json!({
+        "selected": "spare",
+        "accounts": [
+            { "name": "acct_one", "access_token": "access-acct_one",
+              "refresh_token": "refresh-acct_one", "id_token": id_token("acct_one"),
+              "account_id": "acct_one", "expires_at": 4_000_000_000_u64 },
+            { "name": "spare", "access_token": "access-acct_two",
+              "refresh_token": "refresh-acct_two", "id_token": id_token("acct_two"),
+              "account_id": "acct_two", "expires_at": 4_000_000_000_u64 },
+        ],
+    }));
+
+    let forgotten = daemon.run(&["accounts", "--forget", "spare"]);
+
+    assert!(forgotten.contains("spare"), "{forgotten}");
+    assert!(
+        forgotten.contains("acct_one"),
+        "it should say who serves turns now: {forgotten}"
+    );
+
+    let listed = daemon.run(&["accounts"]);
+    assert!(!listed.contains("spare"), "{listed}");
+    assert!(listed.starts_with('*'), "{listed}");
+    assert!(listed.contains("acct_one"), "{listed}");
+
+    // The last one can go too, and what is left says what to do about it.
+    daemon.run(&["accounts", "--forget", "acct_one"]);
+    assert!(daemon.run(&["accounts"]).contains("login"));
+}

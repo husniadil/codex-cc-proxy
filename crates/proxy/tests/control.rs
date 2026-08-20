@@ -2193,6 +2193,8 @@ async fn disconnect_names_the_account_it_cleared_and_leaves_the_rest() {
     // With nothing named, the account serving turns is the one that goes.
     let answer = harness.call("disconnect").await.unwrap();
     assert_eq!(answer["disconnected"], json!("acct_two"));
+    // Who serves turns now, so a caller does not have to ask again.
+    assert_eq!(answer["serving"], json!("acct_one"));
     assert_eq!(
         harness.store.load().unwrap().unwrap().access_token,
         "a-one",
@@ -2214,7 +2216,8 @@ async fn disconnect_names_the_account_it_cleared_and_leaves_the_rest() {
     assert_eq!(listed["accounts"][0]["name"], json!("acct_two"));
 
     // Clearing the last one empties the store, and doing it again is safe.
-    harness.call("disconnect").await.unwrap();
+    let answer = harness.call("disconnect").await.unwrap();
+    assert_eq!(answer["serving"], Value::Null, "nothing is left to serve");
     assert!(harness.store.load().unwrap().is_none());
     harness.call("disconnect").await.unwrap();
 }
@@ -2684,4 +2687,30 @@ async fn forgetting_the_serving_account_refetches_the_catalog() {
         catalogs.accounts(),
         vec!["acct_two".to_owned(), "acct_one".to_owned()]
     );
+}
+
+/// An account whose grant carried no email is still identified by the id the
+/// backend knows it by. A null field is not a value, and treating it as one
+/// hides something the answer is carrying.
+#[tokio::test]
+async fn the_account_list_falls_back_to_the_id_when_there_is_no_email() {
+    let harness = Harness::start().await;
+    harness
+        .store
+        .add(
+            &Credentials {
+                access_token: "a".to_owned(),
+                refresh_token: "r".to_owned(),
+                id_token: None,
+                account_id: Some("acct_nameless".to_owned()),
+                expires_at: None,
+            },
+            None,
+        )
+        .unwrap();
+
+    let rendered = render::accounts(&harness.call("accounts").await.unwrap());
+
+    assert!(rendered.contains("acct_nameless"), "{rendered}");
+    assert!(!rendered.contains("id unknown"), "{rendered}");
 }

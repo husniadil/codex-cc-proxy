@@ -796,6 +796,15 @@ async fn disconnect(state: &ControlState, params: Option<&Value>) -> Result<Valu
 
     Ok(json!({
         "disconnected": cleared,
+        // Who serves turns now. Forgetting the account that was serving hands
+        // over to another, and a caller that has to ask a second question to
+        // learn which is a caller that will report the wrong one.
+        "serving": state
+            .credentials
+            .accounts()?
+            .into_iter()
+            .find(|account| account.selected)
+            .map(|account| account.name),
         "catalog_refreshed": handed_over && refresh_catalog(state).await,
     }))
 }

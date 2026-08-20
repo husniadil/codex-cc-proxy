@@ -196,6 +196,17 @@ async fn login(args: cli::LoginArgs) -> Result<()> {
 /// that wrote the file directly would leave a running daemon serving the
 /// account it read at startup.
 async fn accounts(args: cli::AccountsArgs) -> Result<()> {
+    if let Some(name) = args.forget {
+        let result = control::call(
+            &control::default_path(),
+            "disconnect",
+            Some(serde_json::json!({ "account": name })),
+        )
+        .await?;
+        println!("{}", render::forgotten_account(&result));
+        return Ok(());
+    }
+
     if let Some(name) = args.select {
         let result = control::call(
             &control::default_path(),

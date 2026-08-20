@@ -67,7 +67,7 @@ changing an already-sent status.
 ```
 codex-cc-proxy run        start the daemon (--detach: in the background)
 codex-cc-proxy login      authenticate (--as NAME labels the account)
-codex-cc-proxy accounts   stored accounts (--use NAME switches)
+codex-cc-proxy accounts   stored accounts (--use NAME switches, --forget NAME drops)
 codex-cc-proxy status     connection, tier mapping, model catalog
 codex-cc-proxy models     available models
 codex-cc-proxy env        environment for Claude Code, as shell exports
@@ -87,9 +87,11 @@ against a running daemon.
 stored (`proxy-behavior.md` §8.1). `--as NAME` is what to call it locally, for
 an operator holding more than one; without it the account id the grant carries
 names it. `accounts` lists what is stored, marking the one serving turns, and
-`--use NAME` switches to another. Both go through the socket, because the daemon
-holds the selection: a CLI that edited the file directly would leave a running
-daemon serving the account it read at startup.
+`--use NAME` switches to another. `--forget NAME` drops one, leaving the rest
+usable; the name is required, because an account is gone once it returns. All of
+them go through the socket, because the daemon holds the selection: a CLI that
+edited the file directly would leave a running daemon serving the account it
+read at startup.
 
 `login` runs in the CLI **and** in the daemon (§3), and the two are alternatives
 rather than a duplication. The CLI's exists because the daemon need not be
@@ -443,7 +445,7 @@ A Unix domain socket, or a named pipe on Windows, carrying JSON-RPC:
 | Method | Returns | v0.1 |
 |---|---|---|
 | `status` | connection state, whether the grant has been **refused**, plan and which source reported it, the tier mapping and the effort ceiling, any mapped model the catalog withholds, whether the catalog was authoritative, the client policy in effect, and the build and `instance` serving the socket | yes |
-| `disconnect` | forgets one account — the selected one, or `{"account": name}` — and answers with the name it cleared; the rest stay usable, and an idle account's removal leaves the serving grant's quota and refusal alone | yes |
+| `disconnect` | forgets one account — the selected one, or `{"account": name}` — and answers with the name it cleared and the one serving turns afterwards; the rest stay usable, and an idle account's removal leaves the serving grant's quota alone | yes |
 | `accounts` | every stored account and which one serves turns; no tokens | no — v0.3 |
 | `accounts.select` | `{"account": name}`, the account every following turn is made as, and whether the catalog was refetched for it | no — v0.3 |
 | `models` | catalog, whether it is the fallback list, and whether it was fetched for an account other than the one serving turns | yes |

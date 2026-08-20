@@ -109,6 +109,13 @@ in [`docs/api.md`](docs/api.md) §6.
   account serving turns. Nothing refetches it yet; what changed is that the
   answers stop presenting another account's plan as this one's.
 
+- **`accounts --forget NAME` drops an account from the CLI.** `disconnect` had
+  been on the control socket since v0.1 with nothing in the CLI that called it,
+  so the only way to undo a login was to delete the credential file by hand. The
+  name is required and cannot be combined with `--use`: an account is gone once
+  the command returns. The answer says which one went and which one serves turns
+  afterwards.
+
 - **A credential write that lost a race is redone rather than lost.** Every
   write rewrites the whole file, so the CLI's `login` landing while the daemon
   persisted a refresh could discard an entire account. A write that finds the

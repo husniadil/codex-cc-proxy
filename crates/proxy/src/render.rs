@@ -142,14 +142,31 @@ pub fn accounts(result: &Value) -> String {
             } else {
                 " "
             };
+            // The string, then the fallback. Asking for the field first and
+            // reading it as a string afterwards makes a present-but-null
+            // `email` shadow an account id that is right there.
             let who = field(account, "email")
-                .or_else(|| field(account, "account_id"))
                 .and_then(Value::as_str)
+                .or_else(|| field(account, "account_id").and_then(Value::as_str))
                 .unwrap_or("id unknown");
             format!("{marker} {name:<24} {who}")
         })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+/// What forgetting an account says it did, and who is left serving turns.
+///
+/// The second half matters: forgetting the account that was serving hands over
+/// to another one, and an operator who is not told has to go and look.
+pub fn forgotten_account(result: &Value) -> String {
+    let forgotten = field(result, "disconnected")
+        .and_then(Value::as_str)
+        .unwrap_or("nothing");
+    match field(result, "serving").and_then(Value::as_str) {
+        Some(serving) => format!("forgot {forgotten}; serving turns as {serving}"),
+        None => format!("forgot {forgotten}; no accounts left — run `codex-cc-proxy login`"),
+    }
 }
 
 /// What a switch says it did. The name, because the caller may have typed a

@@ -72,6 +72,12 @@ pub struct AccountsArgs {
     /// changed by a mistyped positional is a turn billed to the wrong one.
     #[arg(long = "use", value_name = "NAME")]
     pub select: Option<String>,
+    /// Forget this account, leaving the rest usable.
+    ///
+    /// The name is required: an account is gone once this returns, and the
+    /// operator naming which one is the whole safeguard.
+    #[arg(long = "forget", value_name = "NAME", conflicts_with = "select")]
+    pub forget: Option<String>,
 }
 
 #[derive(Debug, clap::Args)]
@@ -202,6 +208,27 @@ mod tests {
             panic!("login should parse");
         };
         assert_eq!(args.label, None);
+    }
+
+    /// Forgetting names its account and cannot be combined with switching:
+    /// one call, one thing, and the destructive one always says what it is
+    /// about to lose.
+    #[test]
+    fn accounts_forgets_only_the_account_it_is_given() {
+        let cli = Cli::try_parse_from(["codex-cc-proxy", "accounts", "--forget", "spare"]).unwrap();
+        let Command::Accounts(args) = cli.command else {
+            panic!("accounts should parse");
+        };
+        assert_eq!(args.forget.as_deref(), Some("spare"));
+        assert_eq!(args.select, None);
+
+        // A bare `--forget` has no default target.
+        assert!(Cli::try_parse_from(["codex-cc-proxy", "accounts", "--forget"]).is_err());
+        // And it is not a switch.
+        assert!(
+            Cli::try_parse_from(["codex-cc-proxy", "accounts", "--use", "a", "--forget", "b"])
+                .is_err()
+        );
     }
 
     /// Listing is the default; switching has to be asked for. A bare
