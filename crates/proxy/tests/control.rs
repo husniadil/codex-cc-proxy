@@ -10,6 +10,7 @@ use codex_cc_proxy::auth::store::CredentialStore;
 use codex_cc_proxy::auth::store::Credentials;
 use codex_cc_proxy::auth::store::FileStore;
 use codex_cc_proxy::catalog::Catalog;
+use codex_cc_proxy::catalog::CatalogSource;
 use codex_cc_proxy::config::ResolvedTier;
 use codex_cc_proxy::control;
 use codex_cc_proxy::control::handler::ControlState;
@@ -102,14 +103,14 @@ impl Harness {
         let state = ControlState {
             port: 8787,
             policy: Arc::clone(&policy),
-            catalog: Arc::new(
+            catalog: Arc::new(CatalogSource::fixed(
                 Catalog::parse(
                     r#"{"data":[{"id":"gpt-5.6-terra","context_window":272000},
                                 {"id":"gpt-5.4-mini","context_window":200000}]}"#,
                     95.0,
                 )
                 .unwrap(),
-            ),
+            )),
             credentials: Arc::clone(&store) as Arc<dyn AccountStore>,
             capture: Arc::clone(&switches),
             usage: Arc::clone(&usage),
@@ -193,7 +194,7 @@ impl Harness {
         let state = ControlState {
             port: 8787,
             policy: Arc::clone(&policy),
-            catalog: Arc::new(catalog),
+            catalog: Arc::new(CatalogSource::fixed(catalog)),
             credentials: Arc::clone(&self.store) as Arc<dyn AccountStore>,
             capture: Arc::clone(&self.switches),
             usage: Arc::clone(&self.usage),
@@ -201,6 +202,56 @@ impl Harness {
             client: Arc::clone(&self.client),
             shutdown: Arc::clone(&self.shutdown),
             tokens: None,
+            usage_endpoint: String::new(),
+            sessions: Arc::clone(&self.sessions),
+            config_path: Some(self.config.clone()),
+        };
+        let socket = path.clone();
+        tokio::spawn(async move {
+            let _ = control::serve(&socket, state).await;
+        });
+        for _ in 0..100 {
+            if path.exists() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        Self { path, ..self }
+    }
+
+    /// The same harness, whose catalog comes from a real endpoint and can be
+    /// fetched again. The daemon starts holding what it fetched for the
+    /// account selected now, exactly as `run` does.
+    async fn with_catalog_source(self, endpoint: &str) -> Self {
+        let tokens = Arc::new(codex_cc_proxy::auth::tokens::TokenSource::new(
+            Arc::clone(&self.store) as Arc<dyn CredentialStore>,
+            String::new(),
+            "client-abc",
+            Arc::new(codex_cc_proxy::auth::tokens::SystemClock),
+        ));
+        let catalog = Arc::new(CatalogSource::new(
+            Catalog::fallback(),
+            endpoint.to_owned(),
+            "0.0.0",
+            95.0,
+        ));
+        let token = tokens.access_token().await.expect("a stored grant");
+        catalog
+            .refresh(&token, tokens.account_id().as_deref())
+            .await;
+
+        let path = self._dir.path().join("control-4.sock");
+        let state = ControlState {
+            port: 8787,
+            policy: Arc::clone(&self.policy),
+            catalog,
+            credentials: Arc::clone(&self.store) as Arc<dyn AccountStore>,
+            capture: Arc::clone(&self.switches),
+            usage: Arc::clone(&self.usage),
+            login: Arc::new(codex_cc_proxy::auth::daemon_login::LoginFlow::default()),
+            client: Arc::clone(&self.client),
+            shutdown: Arc::clone(&self.shutdown),
+            tokens: Some(tokens),
             usage_endpoint: String::new(),
             sessions: Arc::clone(&self.sessions),
             config_path: Some(self.config.clone()),
@@ -251,7 +302,7 @@ impl Harness {
         let state = ControlState {
             port: 8787,
             policy: Arc::clone(&policy),
-            catalog: Arc::new(Catalog::parse(catalog, 95.0).unwrap()),
+            catalog: Arc::new(CatalogSource::fixed(Catalog::parse(catalog, 95.0).unwrap())),
             credentials: Arc::clone(&self.store) as Arc<dyn AccountStore>,
             capture: Arc::clone(&self.switches),
             usage: Arc::clone(&self.usage),
@@ -559,7 +610,7 @@ async fn an_unknown_window_is_reported_as_null() {
         policy: Arc::new(codex_cc_proxy::policy::Policy::new(
             codex_cc_proxy::policy::Snapshot::new(tiers(), None),
         )),
-        catalog: Arc::new(Catalog::fallback()),
+        catalog: Arc::new(CatalogSource::fixed(Catalog::fallback())),
         credentials: Arc::new(FileStore::new(dir.path().join("c.json"))),
         capture: Arc::new(codex_cc_proxy::recorder::Switches::default()),
         usage: Arc::new(codex_cc_proxy::usage::UsageStore::default()),
@@ -709,7 +760,7 @@ async fn a_malformed_request_is_reported_without_closing_the_socket() {
         policy: Arc::new(codex_cc_proxy::policy::Policy::new(
             codex_cc_proxy::policy::Snapshot::new(tiers(), None),
         )),
-        catalog: Arc::new(Catalog::fallback()),
+        catalog: Arc::new(CatalogSource::fixed(Catalog::fallback())),
         credentials: Arc::new(FileStore::new(dir.path().join("c.json"))),
         capture: Arc::new(codex_cc_proxy::recorder::Switches::default()),
         usage: Arc::new(codex_cc_proxy::usage::UsageStore::default()),
@@ -1038,7 +1089,7 @@ async fn status_says_when_the_catalog_was_unavailable() {
         policy: Arc::new(codex_cc_proxy::policy::Policy::new(
             codex_cc_proxy::policy::Snapshot::new(tiers(), None),
         )),
-        catalog: Arc::new(Catalog::fallback()),
+        catalog: Arc::new(CatalogSource::fixed(Catalog::fallback())),
         credentials: Arc::new(FileStore::new(dir.path().join("c.json"))),
         capture: Arc::new(codex_cc_proxy::recorder::Switches::default()),
         usage: Arc::new(codex_cc_proxy::usage::UsageStore::default()),
@@ -1071,7 +1122,7 @@ async fn models_prints_unknown_rather_than_a_number() {
         policy: Arc::new(codex_cc_proxy::policy::Policy::new(
             codex_cc_proxy::policy::Snapshot::new(tiers(), None),
         )),
-        catalog: Arc::new(Catalog::fallback()),
+        catalog: Arc::new(CatalogSource::fixed(Catalog::fallback())),
         credentials: Arc::new(FileStore::new(dir.path().join("c.json"))),
         capture: Arc::new(codex_cc_proxy::recorder::Switches::default()),
         usage: Arc::new(codex_cc_proxy::usage::UsageStore::default()),
@@ -1144,7 +1195,7 @@ async fn env_states_no_window_when_the_catalog_is_unavailable() {
         policy: Arc::new(codex_cc_proxy::policy::Policy::new(
             codex_cc_proxy::policy::Snapshot::new(tiers(), None),
         )),
-        catalog: Arc::new(Catalog::fallback()),
+        catalog: Arc::new(CatalogSource::fixed(Catalog::fallback())),
         credentials: Arc::new(FileStore::new(dir.path().join("c.json"))),
         capture: Arc::new(codex_cc_proxy::recorder::Switches::default()),
         usage: Arc::new(codex_cc_proxy::usage::UsageStore::default()),
@@ -2426,5 +2477,211 @@ async fn the_catalog_says_when_it_was_fetched_for_another_account() {
         render::status(&status).contains("acct_two"),
         "an operator should be told which account the list belongs to: {}",
         render::status(&status)
+    );
+}
+
+/// A switch refetches the catalog for the account now serving.
+///
+/// The list is one account's menu, so after a switch it has to be asked for
+/// again. Nothing here reaches the network: the stub answers on loopback and
+/// keys its answer on the account header, which is also what proves the
+/// refetch was made *as* the new account rather than merely made.
+#[tokio::test]
+async fn selecting_an_account_refetches_the_catalog_as_that_account() {
+    let catalogs = CatalogServer::start().await;
+    let harness = Harness::start().await;
+    harness
+        .store
+        .add(&grant("acct_one", "a-one"), None)
+        .unwrap();
+    harness
+        .store
+        .add(&grant("acct_two", "a-two"), None)
+        .unwrap();
+
+    let harness = harness.with_catalog_source(&catalogs.url).await;
+
+    // The daemon started holding what it fetched for the account selected
+    // then, which the stub answers with a model only that account has.
+    let models = harness.call("models").await.unwrap();
+    assert_eq!(models["models"][0]["id"], json!("model-for-acct_two"));
+
+    let answer = harness
+        .call_with("accounts.select", json!({ "account": "acct_one" }))
+        .await
+        .unwrap();
+    assert_eq!(answer["catalog_refreshed"], json!(true));
+
+    let models = harness.call("models").await.unwrap();
+    assert_eq!(
+        models["models"][0]["id"],
+        json!("model-for-acct_one"),
+        "the list still describes the account that stopped serving turns"
+    );
+    assert_eq!(
+        models["stale"],
+        json!(false),
+        "a list fetched for this account is not stale"
+    );
+    assert_eq!(
+        harness.call("status").await.unwrap()["catalog_stale"],
+        json!(false)
+    );
+
+    assert_eq!(
+        catalogs.accounts(),
+        vec!["acct_two".to_owned(), "acct_one".to_owned()],
+        "the refetch has to be made as the account now serving"
+    );
+}
+
+/// A refetch that fails keeps the list already in force.
+///
+/// Fetch failure is not evidence that a model went away (§7.1). Replacing a
+/// real list with the fallback on a network blink would withdraw models the
+/// account has, and every tier mapped to one would start reading as withheld.
+#[tokio::test]
+async fn a_failed_refetch_keeps_the_catalog_already_in_force() {
+    let catalogs = CatalogServer::start().await;
+    let harness = Harness::start().await;
+    harness
+        .store
+        .add(&grant("acct_one", "a-one"), None)
+        .unwrap();
+    harness
+        .store
+        .add(&grant("acct_two", "a-two"), None)
+        .unwrap();
+    let harness = harness.with_catalog_source(&catalogs.url).await;
+    assert_eq!(
+        harness.call("models").await.unwrap()["models"][0]["id"],
+        json!("model-for-acct_two")
+    );
+
+    catalogs.refuse();
+    let answer = harness
+        .call_with("accounts.select", json!({ "account": "acct_one" }))
+        .await
+        .unwrap();
+
+    assert_eq!(
+        answer["selected"],
+        json!("acct_one"),
+        "the switch still happened"
+    );
+    assert_eq!(answer["catalog_refreshed"], json!(false));
+    let models = harness.call("models").await.unwrap();
+    assert_eq!(
+        models["models"][0]["id"],
+        json!("model-for-acct_two"),
+        "a failed fetch replaced the list with something else"
+    );
+    // And it says the list is not this account's, which is the honest report
+    // when it could not be replaced.
+    assert_eq!(models["stale"], json!(true));
+}
+
+/// What the stub carries: what it was asked for, and whether it is refusing.
+type CatalogState = (
+    Arc<std::sync::Mutex<Vec<String>>>,
+    Arc<std::sync::atomic::AtomicBool>,
+);
+
+/// A catalog stub on loopback, answering per account.
+struct CatalogServer {
+    url: String,
+    seen: Arc<std::sync::Mutex<Vec<String>>>,
+    refusing: Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl CatalogServer {
+    async fn start() -> Self {
+        let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let refusing = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let state = (Arc::clone(&seen), Arc::clone(&refusing));
+
+        let app = axum::Router::new().route(
+            "/models",
+            axum::routing::get(
+                |axum::extract::State(state): axum::extract::State<CatalogState>,
+                 headers: axum::http::HeaderMap| async move {
+                    let (seen, refusing) = state;
+                    let account = headers
+                        .get("chatgpt-account-id")
+                        .and_then(|value| value.to_str().ok())
+                        .unwrap_or("unknown")
+                        .to_owned();
+                    if refusing.load(std::sync::atomic::Ordering::SeqCst) {
+                        return (axum::http::StatusCode::SERVICE_UNAVAILABLE, String::new());
+                    }
+                    if let Ok(mut seen) = seen.lock() {
+                        seen.push(account.clone());
+                    }
+                    (
+                        axum::http::StatusCode::OK,
+                        json!({ "data": [
+                            { "id": format!("model-for-{account}"), "context_window": 272_000 }
+                        ] })
+                        .to_string(),
+                    )
+                },
+            ),
+        );
+        let app = app.with_state(state);
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+
+        Self {
+            url: format!("http://{addr}/models"),
+            seen,
+            refusing,
+        }
+    }
+
+    fn refuse(&self) {
+        self.refusing
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    fn accounts(&self) -> Vec<String> {
+        self.seen
+            .lock()
+            .map(|seen| seen.clone())
+            .unwrap_or_default()
+    }
+}
+
+/// Forgetting the account that was serving turns hands over to another one,
+/// which is a switch by another name: the catalog is asked for again as
+/// whoever serves now.
+#[tokio::test]
+async fn forgetting_the_serving_account_refetches_the_catalog() {
+    let catalogs = CatalogServer::start().await;
+    let harness = Harness::start().await;
+    harness
+        .store
+        .add(&grant("acct_one", "a-one"), None)
+        .unwrap();
+    harness
+        .store
+        .add(&grant("acct_two", "a-two"), None)
+        .unwrap();
+    let harness = harness.with_catalog_source(&catalogs.url).await;
+
+    let answer = harness.call("disconnect").await.unwrap();
+
+    assert_eq!(answer["disconnected"], json!("acct_two"));
+    assert_eq!(answer["catalog_refreshed"], json!(true));
+    assert_eq!(
+        harness.call("models").await.unwrap()["models"][0]["id"],
+        json!("model-for-acct_one")
+    );
+    assert_eq!(
+        catalogs.accounts(),
+        vec!["acct_two".to_owned(), "acct_one".to_owned()]
     );
 }

@@ -23,6 +23,17 @@ in [`docs/api.md`](docs/api.md) §6.
   earlier version is read as the single account it describes and migrates on the
   next write, so an upgrade costs no re-login.
 
+  Three things about that store are worth stating on their own, because each
+  was a way to lose a grant rather than a feature. An account is identified by
+  the account id its grant carries, not by the name it is filed under, so
+  authorizing one already stored replaces it instead of leaving two entries
+  sharing one refresh-token family; a label already naming a *different*
+  account is refused rather than honoured. A refresh writes the account its
+  grant belongs to, not whichever is selected when the write lands, so
+  switching accounts during one cannot drop A's rotated grant into B's entry.
+  And the file is replaced rather than truncated in place, because it now holds
+  every account and a write that stops halfway would take all of them.
+
 - **`run --detach` starts the daemon in the background.** The command returns
   once the daemon answers the control socket, printing the pid, the log path,
   and `stop` as the counterpart. A child that dies at startup is reported with
@@ -75,6 +86,39 @@ in [`docs/api.md`](docs/api.md) §6.
   when the daemon is not answering, and when the forwarded arguments already
   carry `--settings`, because the client keeps only the last such flag and drops
   the first without a word.
+
+### Changed
+
+- **A refusal follows the grant, not the process.** The backend refusing a
+  refresh used to latch a flag for the life of the daemon, so the re-login its
+  own message asks for did not help until a restart — and a login through the
+  CLI never reaches the daemon at all. The refused refresh token is what is
+  remembered now: a different grant is tried, and that one is still never
+  retried. `status.auth.dead` means the grant currently stored is the refused
+  one, and answers itself again if the account is selected back.
+
+- **Switching accounts reaches conversations already running.** A WebSocket
+  conduit fixes its account when it dials and reuses that connection for the
+  conversation's life, so a switch used to leave every live session billed to
+  the account just moved off. They are dropped and dial again, each paying one
+  full upload.
+
+- **The model catalog says which account it belongs to.** It is fetched once, at
+  startup, for the account selected then, and `status.catalog_stale`,
+  `status.catalog_account`, and `models.stale` report when that is no longer the
+  account serving turns. Nothing refetches it yet; what changed is that the
+  answers stop presenting another account's plan as this one's.
+
+- **A credential write that lost a race is redone rather than lost.** Every
+  write rewrites the whole file, so the CLI's `login` landing while the daemon
+  persisted a refresh could discard an entire account. A write that finds the
+  file changed since it read starts over. The window is narrowed rather than
+  closed — the comparison and the replacement are two operations — and what
+  would close it is a filesystem lock.
+
+- **`login` states the label actually in force.** A second call while a flow is
+  running joins it, and now says which name that flow will give the account
+  rather than echoing the one it was handed.
 
 ## [0.2.1]
 

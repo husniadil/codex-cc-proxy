@@ -47,7 +47,7 @@ pub struct AppState {
     /// started with.
     pub policy: Arc<crate::policy::Policy>,
     /// §7.2 — what the mapped models can actually hold.
-    pub catalog: Arc<crate::catalog::Catalog>,
+    pub catalog: Arc<crate::catalog::CatalogSource>,
     /// Used when no factory is supplied — a single stateless transport, which
     /// is what the probes and most tests want.
     pub transport: Arc<dyn Transport>,
@@ -175,13 +175,18 @@ async fn messages(
     // behind it stops at `xhigh` while another goes to `max`. Forwarding an
     // effort the model does not support fails the turn for a reason the client
     // could not have anticipated or fixed.
+    // One catalog for the whole turn. Taking it twice could straddle a switch
+    // and cap an effort against a model from a list the other half of this
+    // function never saw.
+    let catalog = state.catalog.current();
+
     let catalog_entry = policy
         .models()
         .iter()
         .find(|mapping| mapping.requested == request.model)
         .map(|mapping| mapping.upstream.as_str())
         .or(Some(request.model.as_str()))
-        .and_then(|model| state.catalog.get(model));
+        .and_then(|model| catalog.get(model));
 
     let supported_efforts = catalog_entry
         .map(crate::catalog::Model::supported_efforts)
@@ -193,7 +198,7 @@ async fn messages(
         .find(|mapping| mapping.requested == request.model)
         .map(|mapping| mapping.upstream.as_str())
         .or(Some(request.model.as_str()))
-        .and_then(|model| state.catalog.get(model))
+        .and_then(|model| catalog.get(model))
         .and_then(crate::catalog::Model::highest_effort);
 
     let effort_ceiling = match (policy.effort_ceiling(), model_ceiling) {
@@ -289,6 +294,7 @@ async fn messages(
     // have worked.
     if let Some(window) = state
         .catalog
+        .current()
         .get(&translated.model)
         .and_then(crate::catalog::Model::effective_window)
         && estimate > window

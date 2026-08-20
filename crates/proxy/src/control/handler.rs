@@ -5,7 +5,6 @@
 //! needs no new daemon work.
 
 use crate::auth::store::AccountStore;
-use crate::catalog::Catalog;
 use crate::error::ProxyError;
 use serde_json::Value;
 use serde_json::json;
@@ -29,7 +28,7 @@ pub struct ControlState {
     /// the ingress so a change here moves what routes turns rather than only
     /// what this socket reports.
     pub policy: Arc<crate::policy::Policy>,
-    pub catalog: Arc<Catalog>,
+    pub catalog: Arc<crate::catalog::CatalogSource>,
     pub credentials: Arc<dyn AccountStore>,
     /// The same switches the ingress path reads, so starting a capture here
     /// changes what the next turn does.
@@ -85,9 +84,9 @@ pub async fn dispatch(
             "settings": state.client.settings(),
         })),
         "usage" => Ok(usage(state)),
-        "disconnect" => disconnect(state, params),
+        "disconnect" => disconnect(state, params).await,
         "accounts" => accounts(state),
-        "accounts.select" => select_account(state, params),
+        "accounts.select" => select_account(state, params).await,
         "record.start" => {
             // Defaulting to ingress is the safe default and the documented
             // one: it is the mode that needs no credentials and spends
@@ -150,6 +149,7 @@ static INSTANCE: std::sync::LazyLock<String> =
 
 fn status(state: &ControlState) -> Value {
     let stored = state.credentials.accounts().unwrap_or_default();
+    let catalog = state.catalog.current();
     let authenticated = state
         .credentials
         .load()
@@ -221,18 +221,18 @@ fn status(state: &ControlState) -> Value {
         // so without this nothing would ever mention that a tier points at a
         // model the backend does not offer. Present and empty rather than
         // absent, so "nothing withheld" is distinguishable from "not reported".
-        "unlisted_tiers": state.catalog.unlisted(&mapped_models(state)),
+        "unlisted_tiers": catalog.unlisted(&mapped_models(state)),
         // Whether the catalog is the backend's or the fallback list. A caller
         // that cannot tell would report an unvalidated mapping as a validated
         // one.
-        "catalog_authoritative": state.catalog.authoritative,
+        "catalog_authoritative": catalog.authoritative,
         // Whether the list describes the account now serving turns. It is
         // fetched once, for the account selected then, and nothing refetches
         // it — so after a switch it is the previous account's menu, and
         // presenting it as this one's would deny models this account has and
         // offer models it does not.
-        "catalog_stale": state.catalog.is_stale_for(serving_account(state).as_deref()),
-        "catalog_account": state.catalog.fetched_for,
+        "catalog_stale": catalog.is_stale_for(serving_account(state).as_deref()),
+        "catalog_account": catalog.fetched_for.clone(),
         // The build actually serving this socket, which is not necessarily the
         // build the caller was invoked from.
         "version": VERSION,
@@ -252,8 +252,8 @@ fn status(state: &ControlState) -> Value {
 }
 
 fn models(state: &ControlState) -> Value {
-    let entries: Vec<Value> = state
-        .catalog
+    let catalog = state.catalog.current();
+    let entries: Vec<Value> = catalog
         .selectable()
         .iter()
         .map(|model| {
@@ -269,8 +269,8 @@ fn models(state: &ControlState) -> Value {
 
     json!({
         "models": entries,
-        "authoritative": state.catalog.authoritative,
-        "stale": state.catalog.is_stale_for(serving_account(state).as_deref()),
+        "authoritative": catalog.authoritative,
+        "stale": catalog.is_stale_for(serving_account(state).as_deref()),
     })
 }
 
@@ -345,6 +345,7 @@ fn usage(state: &ControlState) -> Value {
 /// tier, so an unmapped haiku breaks it in a way that looks unrelated to tier
 /// mapping.
 pub fn environment(state: &ControlState) -> Vec<(String, String)> {
+    let catalog = state.catalog.current();
     let mut variables = vec![
         (
             "ANTHROPIC_BASE_URL".to_owned(),
@@ -377,7 +378,7 @@ pub fn environment(state: &ControlState) -> Vec<(String, String)> {
         .get()
         .tiers()
         .iter()
-        .filter_map(|tier| state.catalog.get(&tier.model))
+        .filter_map(|tier| catalog.get(&tier.model))
         .filter_map(crate::catalog::Model::effective_window)
         .min()
     {
@@ -487,7 +488,7 @@ fn set_tiers(state: &ControlState, params: Option<&Value>) -> Result<Value, Prox
         entry.defaulted = false;
     }
 
-    state.catalog.validate(
+    state.catalog.current().validate(
         &tiers
             .iter()
             .map(|tier| tier.model.clone())
@@ -701,7 +702,7 @@ fn accounts(state: &ControlState) -> Result<Value, ProxyError> {
 /// it moves what routes turns rather than only what this socket reports. Two
 /// things travel with it: the quota, which belongs to the account that was
 /// serving, and a refusal, which belongs to the grant that was being spent.
-fn select_account(state: &ControlState, params: Option<&Value>) -> Result<Value, ProxyError> {
+async fn select_account(state: &ControlState, params: Option<&Value>) -> Result<Value, ProxyError> {
     let name = params
         .and_then(|params| params.get("account"))
         .and_then(Value::as_str)
@@ -717,7 +718,34 @@ fn select_account(state: &ControlState, params: Option<&Value>) -> Result<Value,
     // to an account the operator has just moved off.
     state.sessions.clear();
 
-    Ok(json!({ "selected": name }))
+    Ok(json!({
+        "selected": name,
+        // The catalog is one account's menu (`proxy-behavior.md` §7.0), so it
+        // is asked for again as the account now serving. Said out loud because
+        // a fetch that failed leaves the previous account's list in force, and
+        // everything downstream of it — the models offered, the efforts
+        // allowed, what `tiers.set` will accept — still describes that account.
+        "catalog_refreshed": refresh_catalog(state).await,
+    }))
+}
+
+/// Fetch the catalog again for the account now serving turns.
+///
+/// Best effort. A failure keeps the list already in force rather than
+/// replacing it with the fallback: fetch failure is not evidence that a model
+/// went away (§7.1), and withdrawing models the account has would be the worse
+/// wrong answer. The caller is told which happened.
+async fn refresh_catalog(state: &ControlState) -> bool {
+    let Some(tokens) = state.tokens.as_ref() else {
+        return false;
+    };
+    let Ok(token) = tokens.access_token().await else {
+        return false;
+    };
+    state
+        .catalog
+        .refresh(&token, tokens.account_id().as_deref())
+        .await
 }
 
 /// `disconnect` — forget one account.
@@ -726,7 +754,7 @@ fn select_account(state: &ControlState, params: Option<&Value>) -> Result<Value,
 /// caller that knows of only one means by it. The rest stay usable, and the
 /// answer says which one went: a front-end that could not tell would have to
 /// guess what it just did.
-fn disconnect(state: &ControlState, params: Option<&Value>) -> Result<Value, ProxyError> {
+async fn disconnect(state: &ControlState, params: Option<&Value>) -> Result<Value, ProxyError> {
     let named = params
         .and_then(|params| params.get("account"))
         .and_then(Value::as_str);
@@ -756,11 +784,20 @@ fn disconnect(state: &ControlState, params: Option<&Value>) -> Result<Value, Pro
     // its quota there costs a figure for nothing — while forgetting its
     // refusal would leave `status` reporting a healthy grant while every
     // dispatch failed.
-    if cleared.is_some() && cleared == serving {
+    // Handing over to another account is a switch by another name, so what
+    // travels with a switch travels here: the quota that belonged to the grant
+    // that went, the conversations bound to it, and the catalog that described
+    // its plan.
+    let handed_over = cleared.is_some() && cleared == serving;
+    if handed_over {
         state.usage.clear();
+        state.sessions.clear();
     }
 
-    Ok(json!({ "disconnected": cleared }))
+    Ok(json!({
+        "disconnected": cleared,
+        "catalog_refreshed": handed_over && refresh_catalog(state).await,
+    }))
 }
 
 /// `usage.refresh` — ask the backend for a quota figure now.

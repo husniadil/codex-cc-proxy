@@ -164,12 +164,21 @@ impl StoredFile {
             .position(|entry| entry.grant.account_id.as_deref() == Some(account_id))
     }
 
-    fn names(&self) -> String {
-        self.accounts
+    /// How a refusal describes what is here. With nothing stored, what the
+    /// reader needs is not an empty list.
+    fn unknown(&self, name: &str) -> ProxyError {
+        if self.accounts.is_empty() {
+            return ProxyError::invalid_request(format!(
+                "no account named `{name}`; none are stored — run `login`"
+            ));
+        }
+        let stored = self
+            .accounts
             .iter()
             .map(|entry| entry.name.as_str())
             .collect::<Vec<_>>()
-            .join(", ")
+            .join(", ");
+        ProxyError::invalid_request(format!("no account named `{name}`; stored: {stored}"))
     }
 
     /// The name a grant gets when nothing else names it.
@@ -186,6 +195,17 @@ impl StoredFile {
             .map(|n| format!("account-{n}"))
             .find(|name| self.index_of(name).is_none())
             .unwrap_or_else(|| "account".to_owned())
+    }
+
+    /// Drop one account by position, leaving something selected behind it.
+    fn remove_at(&mut self, index: usize) {
+        if index >= self.accounts.len() {
+            return;
+        }
+        let removed = self.accounts.remove(index);
+        if self.selected.as_deref() == Some(removed.name.as_str()) {
+            self.selected = self.accounts.first().map(|entry| entry.name.clone());
+        }
     }
 
     /// Put a grant under a name, replacing whatever was there.
@@ -224,11 +244,32 @@ pub trait CredentialStore: Send + Sync {
 /// rewrite them.
 pub struct FileStore {
     path: PathBuf,
+    /// Fired between a write's read and its replacement, so a test can make
+    /// the file change underneath one. Nothing outside a test sets it.
+    #[allow(clippy::type_complexity)]
+    on_write: std::sync::Mutex<Option<Box<dyn Fn() + Send + Sync>>>,
 }
+
+/// How many times a write will start over when it finds the file changed.
+///
+/// Each attempt is a read, a change and a replacement, with nothing slow in
+/// between: losing five in a row is not contention, it is something writing the
+/// file in a loop, and answering that with an error beats spinning.
+const WRITE_ATTEMPTS: usize = 5;
 
 impl FileStore {
     pub fn new(path: impl Into<PathBuf>) -> Self {
-        Self { path: path.into() }
+        Self {
+            path: path.into(),
+            on_write: std::sync::Mutex::new(None),
+        }
+    }
+
+    /// Test seam: run this between reading the file and replacing it.
+    pub fn on_write_for_test(&self, hook: impl Fn() + Send + Sync + 'static) {
+        if let Ok(mut on_write) = self.on_write.lock() {
+            *on_write = Some(Box::new(hook));
+        }
     }
 
     pub fn path(&self) -> &Path {
@@ -236,10 +277,19 @@ impl FileStore {
     }
 
     fn read(&self) -> Result<StoredFile, ProxyError> {
+        Ok(self.read_raw()?.1)
+    }
+
+    /// The file as it is on disk, and as this store understands it.
+    ///
+    /// The bytes come back too: a write compares them against what is there
+    /// when it lands, and starting over is what keeps two writers from
+    /// discarding each other's accounts.
+    fn read_raw(&self) -> Result<(Option<String>, StoredFile), ProxyError> {
         let raw = match std::fs::read_to_string(&self.path) {
             Ok(raw) => raw,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                return Ok(StoredFile::default());
+                return Ok((None, StoredFile::default()));
             }
             Err(error) => {
                 return Err(ProxyError::authentication(format!(
@@ -259,14 +309,75 @@ impl FileStore {
         // the single account it describes is what keeps an upgrade from
         // costing a re-login.
         if value.get("accounts").is_some() {
-            return serde_json::from_value(value).map_err(unreadable);
+            let file = serde_json::from_value(value).map_err(unreadable)?;
+            return Ok((Some(raw), file));
         }
 
         let grant: Credentials = serde_json::from_value(value).map_err(unreadable)?;
         let mut file = StoredFile::default();
         let name = file.name_for(&grant);
         file.put(name, &grant);
-        Ok(file)
+        Ok((Some(raw), file))
+    }
+
+    /// Read, change, replace — starting over if the file moved underneath.
+    ///
+    /// Every write here rewrites the whole file, so two overlapping writers
+    /// used to mean one discarded whatever the other had just done. That is a
+    /// whole account now, not one stale token, and the pair that overlaps in
+    /// practice is real: `login` in the CLI writes this file directly while
+    /// the daemon may be persisting a refresh.
+    ///
+    /// **This narrows the window rather than closing it.** The comparison and
+    /// the replacement are two operations, and a writer that lands between
+    /// them is still lost. Closing it needs a lock the filesystem enforces.
+    fn update<T>(
+        &self,
+        mutate: impl Fn(&mut StoredFile) -> Result<T, ProxyError>,
+    ) -> Result<T, ProxyError> {
+        for _ in 0..WRITE_ATTEMPTS {
+            let (raw, mut file) = self.read_raw()?;
+            // Before the write, never after: an error here is the caller's
+            // answer, and retrying it would only produce the same one.
+            let outcome = mutate(&mut file)?;
+
+            if let Ok(hook) = self.on_write.lock()
+                && let Some(hook) = hook.as_ref()
+            {
+                hook();
+            }
+
+            if self.replace_if_unchanged(&file, raw.as_deref())? {
+                return Ok(outcome);
+            }
+        }
+
+        Err(ProxyError::authentication(
+            "the credential file kept changing while it was being written; try again",
+        ))
+    }
+
+    /// Replace the file, unless it is no longer what was read.
+    fn replace_if_unchanged(
+        &self,
+        file: &StoredFile,
+        expected: Option<&str>,
+    ) -> Result<bool, ProxyError> {
+        let current = match std::fs::read_to_string(&self.path) {
+            Ok(current) => Some(current),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(error) => {
+                return Err(ProxyError::authentication(format!(
+                    "could not read credentials: {error}"
+                )));
+            }
+        };
+        if current.as_deref() != expected {
+            return Ok(false);
+        }
+
+        self.write(file)?;
+        Ok(true)
     }
 
     fn write(&self, file: &StoredFile) -> Result<(), ProxyError> {
@@ -317,15 +428,6 @@ impl FileStore {
             ))),
         }
     }
-
-    /// Drop one account by position, leaving something selected behind it.
-    fn remove_at(&self, mut file: StoredFile, index: usize) -> Result<(), ProxyError> {
-        let removed = file.accounts.remove(index);
-        if file.selected.as_deref() == Some(removed.name.as_str()) {
-            file.selected = file.accounts.first().map(|entry| entry.name.clone());
-        }
-        self.write(&file)
-    }
 }
 
 impl CredentialStore for FileStore {
@@ -344,25 +446,27 @@ impl CredentialStore for FileStore {
     /// account is `AccountStore::add`, and a refresh that appended would leave
     /// two entries sharing one refresh-token family.
     fn save(&self, credentials: &Credentials) -> Result<(), ProxyError> {
-        let mut file = self.read()?;
-        // The account the grant belongs to, and only failing that the selected
-        // one. A refresh is a read, a network round trip, and a write; between
-        // the read and the write the selection can move, and resolving the
-        // target by selection would drop one account's rotated grant into
-        // another's entry — destroying a refresh token only a re-login
-        // replaces, and leaving that account authenticating as somebody else.
-        match file
-            .index_by_account(credentials.account_id.as_deref())
-            .or_else(|| file.selected_index())
-            .and_then(|index| file.accounts.get_mut(index))
-        {
-            Some(entry) => entry.grant = credentials.clone(),
-            None => {
-                let name = file.name_for(credentials);
-                file.put(name, credentials);
+        self.update(|file| {
+            // The account the grant belongs to, and only failing that the
+            // selected one. A refresh is a read, a network round trip, and a
+            // write; between the read and the write the selection can move,
+            // and resolving the target by selection would drop one account's
+            // rotated grant into another's entry — destroying a refresh token
+            // only a re-login replaces, and leaving that account
+            // authenticating as somebody else.
+            match file
+                .index_by_account(credentials.account_id.as_deref())
+                .or_else(|| file.selected_index())
+                .and_then(|index| file.accounts.get_mut(index))
+            {
+                Some(entry) => entry.grant = credentials.clone(),
+                None => {
+                    let name = file.name_for(credentials);
+                    file.put(name, credentials);
+                }
             }
-        }
-        self.write(&file)
+            Ok(())
+        })
     }
 
     /// Forget the account serving turns, leaving the rest usable.
@@ -370,11 +474,12 @@ impl CredentialStore for FileStore {
     /// Clearing what is already gone is not an error: `disconnect` must be
     /// safe to run twice.
     fn clear(&self) -> Result<(), ProxyError> {
-        let file = self.read()?;
-        match file.selected_index() {
-            Some(index) => self.remove_at(file, index),
-            None => self.remove_file(),
-        }
+        self.update(|file| {
+            if let Some(index) = file.selected_index() {
+                file.remove_at(index);
+            }
+            Ok(())
+        })
     }
 }
 
@@ -401,62 +506,58 @@ impl AccountStore for FileStore {
     }
 
     fn add(&self, credentials: &Credentials, label: Option<&str>) -> Result<String, ProxyError> {
-        let mut file = self.read()?;
-
-        // A label that already names a different account. Honouring it would
-        // write this grant over that one, retiring a working grant with
-        // nothing said — the failure the add/save split exists to prevent.
-        // Refusing costs the authorization just spent, which one more login
-        // replaces; the other way costs a grant that may not be.
-        if let Some(label) = label
-            && let Some(entry) = file.index_of(label).and_then(|i| file.accounts.get(i))
-            && entry.grant.account_id.is_some()
-            && entry.grant.account_id != credentials.account_id
-        {
-            return Err(ProxyError::invalid_request(format!(
-                "`{label}` already names account {}; log in again with another label",
-                entry.grant.account_id.as_deref().unwrap_or("unknown")
-            )));
-        }
-
-        let name = match label {
-            Some(label) => label.to_owned(),
-            // Already stored, under whatever it is already called: a login
-            // carrying no label is not a request to rename anything.
-            None => match file
-                .index_by_account(credentials.account_id.as_deref())
-                .and_then(|index| file.accounts.get(index))
+        self.update(|file| {
+            // A label that already names a different account. Honouring it would
+            // write this grant over that one, retiring a working grant with
+            // nothing said — the failure the add/save split exists to prevent.
+            // Refusing costs the authorization just spent, which one more login
+            // replaces; the other way costs a grant that may not be.
+            if let Some(label) = label
+                && let Some(entry) = file.index_of(label).and_then(|i| file.accounts.get(i))
+                && entry.grant.account_id.is_some()
+                && entry.grant.account_id != credentials.account_id
             {
-                Some(entry) => entry.name.clone(),
-                None => file.name_for(credentials),
-            },
-        };
-        file.put(name.clone(), credentials);
-        self.write(&file)?;
-        Ok(name)
+                return Err(ProxyError::invalid_request(format!(
+                    "`{label}` already names account {}; log in again with another label",
+                    entry.grant.account_id.as_deref().unwrap_or("unknown")
+                )));
+            }
+
+            let name = match label {
+                Some(label) => label.to_owned(),
+                // Already stored, under whatever it is already called: a login
+                // carrying no label is not a request to rename anything.
+                None => match file
+                    .index_by_account(credentials.account_id.as_deref())
+                    .and_then(|index| file.accounts.get(index))
+                {
+                    Some(entry) => entry.name.clone(),
+                    None => file.name_for(credentials),
+                },
+            };
+            file.put(name.clone(), credentials);
+            Ok(name)
+        })
     }
 
     fn select(&self, name: &str) -> Result<(), ProxyError> {
-        let mut file = self.read()?;
-        if file.index_of(name).is_none() {
-            return Err(ProxyError::invalid_request(format!(
-                "no account named `{name}`; stored: {}",
-                file.names()
-            )));
-        }
-        file.selected = Some(name.to_owned());
-        self.write(&file)
+        self.update(|file| {
+            if file.index_of(name).is_none() {
+                return Err(file.unknown(name));
+            }
+            file.selected = Some(name.to_owned());
+            Ok(())
+        })
     }
 
     fn remove(&self, name: &str) -> Result<(), ProxyError> {
-        let file = self.read()?;
-        let Some(index) = file.index_of(name) else {
-            return Err(ProxyError::invalid_request(format!(
-                "no account named `{name}`; stored: {}",
-                file.names()
-            )));
-        };
-        self.remove_at(file, index)
+        self.update(|file| {
+            let Some(index) = file.index_of(name) else {
+                return Err(file.unknown(name));
+            };
+            file.remove_at(index);
+            Ok(())
+        })
     }
 }
 

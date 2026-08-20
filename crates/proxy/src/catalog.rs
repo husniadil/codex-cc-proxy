@@ -8,6 +8,7 @@ use crate::error::ProxyError;
 const DEFAULT_PREFERENCE: [&str; 3] = ["gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.5"];
 use serde::Deserialize;
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Model {
@@ -374,6 +375,11 @@ impl Catalog {
 /// The identity headers of §2.8 are not only for the responses endpoint. This
 /// request is rejected without them, and the rejection is a bare 400 that says
 /// nothing about which header is missing.
+/// Ask the backend for the model list.
+///
+/// `None` where it could not be had at all, so a caller can tell a failed
+/// fetch from a list that came back empty — the two mean opposite things
+/// (§7.0), and only one of them is a reason to keep what is already in force.
 pub async fn fetch(
     client: &reqwest::Client,
     endpoint: &str,
@@ -381,7 +387,7 @@ pub async fn fetch(
     account_id: Option<&str>,
     client_version: &str,
     default_percent: f64,
-) -> Catalog {
+) -> Option<Catalog> {
     let mut request = client
         .get(endpoint)
         // Required, and its absence is a bare 400 that names nothing. The
@@ -421,8 +427,91 @@ pub async fn fetch(
     match (catalog, account_id) {
         // Attributed only when it really came back from the backend for a
         // named account. A fallback list describes no account.
-        (Some(catalog), Some(account)) => catalog.fetched_for(account.to_owned()),
-        (Some(catalog), None) => catalog,
-        (None, _) => Catalog::fallback(),
+        (Some(catalog), Some(account)) => Some(catalog.fetched_for(account.to_owned())),
+        (Some(catalog), None) => Some(catalog),
+        (None, _) => None,
+    }
+}
+
+/// The catalog in force, and what it takes to fetch another.
+///
+/// A catalog is one account's menu (§7.0), so it stops describing what this
+/// daemon serves the moment the daemon serves a different account. Held in a
+/// slot rather than as a value so a switch can replace it, and shared with the
+/// ingress so a replacement moves what *routes turns* rather than only what the
+/// control socket reports.
+pub struct CatalogSource {
+    current: std::sync::RwLock<Arc<Catalog>>,
+    /// What a refetch needs. Empty where there is nothing to refetch from —
+    /// a fixed catalog, which is what tests and the probe path hold.
+    endpoint: String,
+    client_version: String,
+    default_percent: f64,
+}
+
+impl CatalogSource {
+    pub fn new(
+        catalog: Catalog,
+        endpoint: impl Into<String>,
+        client_version: impl Into<String>,
+        default_percent: f64,
+    ) -> Self {
+        Self {
+            current: std::sync::RwLock::new(Arc::new(catalog)),
+            endpoint: endpoint.into(),
+            client_version: client_version.into(),
+            default_percent,
+        }
+    }
+
+    /// A catalog that never changes, for callers with nothing to refetch from.
+    pub fn fixed(catalog: Catalog) -> Self {
+        Self::new(catalog, String::new(), String::new(), 0.0)
+    }
+
+    /// The catalog in force. Cloned rather than borrowed: a reader holding a
+    /// lock across a turn would block the switch it is racing with, and a
+    /// turn keeps the catalog it started with either way.
+    pub fn current(&self) -> Arc<Catalog> {
+        match self.current.read() {
+            Ok(current) => Arc::clone(&current),
+            // A poisoned lock means a writer panicked mid-replacement. The
+            // value is still a whole catalog, so this reads it rather than
+            // failing a turn over it.
+            Err(poisoned) => Arc::clone(&poisoned.into_inner()),
+        }
+    }
+
+    /// Fetch the catalog for this account and put it in force.
+    ///
+    /// **A failed fetch keeps what is already there.** Fetch failure is not
+    /// evidence that a model went away (§7.1), and replacing a real list with
+    /// the fallback on a network blink would withdraw models the account has.
+    /// The answer says which happened rather than leaving it to be discovered.
+    pub async fn refresh(&self, token: &str, account_id: Option<&str>) -> bool {
+        if self.endpoint.is_empty() {
+            return false;
+        }
+
+        let fetched = fetch(
+            &reqwest::Client::new(),
+            &self.endpoint,
+            token,
+            account_id,
+            &self.client_version,
+            self.default_percent,
+        )
+        .await;
+
+        let Some(catalog) = fetched else {
+            tracing::warn!("could not refetch the model catalog; keeping the list in force");
+            return false;
+        };
+
+        match self.current.write() {
+            Ok(mut current) => *current = Arc::new(catalog),
+            Err(poisoned) => *poisoned.into_inner() = Arc::new(catalog),
+        }
+        true
     }
 }

@@ -1542,3 +1542,72 @@ fn a_label_already_naming_another_account_is_refused() {
     store.add(&sample(), Some("work")).unwrap();
     assert_eq!(store.accounts().unwrap().len(), 1);
 }
+
+/// Naming an account in an empty store says the store is empty.
+///
+/// The refusal lists what is stored, and with nothing stored that list is a
+/// blank the reader has to interpret. What they need to be told is to log in.
+#[test]
+fn selecting_from_an_empty_store_says_so() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = FileStore::new(dir.path().join("credentials.json"));
+
+    let error = store.select("work").unwrap_err().to_string();
+
+    assert!(error.contains("login"), "{error}");
+    assert!(
+        !error.contains("stored: "),
+        "an empty list is not an answer: {error}"
+    );
+}
+
+/// A write that finds the file changed since it read starts over.
+///
+/// Every write is a read, a change, and a replacement of the whole file, so two
+/// writers overlapping used to mean one of them silently lost everything the
+/// other had done — and with several accounts in one file, "everything" is an
+/// account, not a stale token. The CLI's `login` writes the file directly while
+/// the daemon may be refreshing, which is the pair that actually overlaps.
+#[test]
+fn a_write_that_lost_a_race_is_redone_rather_than_lost() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("credentials.json");
+    let store = FileStore::new(&path);
+    store.add(&sample(), None).unwrap();
+
+    // Another writer, landing between this one's read and its replacement.
+    // Once, so the retry has something to converge on.
+    let interloper = FileStore::new(&path);
+    let raced = std::sync::atomic::AtomicBool::new(false);
+    store.on_write_for_test(move || {
+        if !raced.swap(true, std::sync::atomic::Ordering::SeqCst) {
+            interloper
+                .add(
+                    &Credentials {
+                        account_id: Some("acct_interloper".to_owned()),
+                        ..other()
+                    },
+                    Some("interloper"),
+                )
+                .unwrap();
+        }
+    });
+
+    store.add(&other(), None).unwrap();
+
+    let names: Vec<String> = store
+        .accounts()
+        .unwrap()
+        .into_iter()
+        .map(|account| account.name)
+        .collect();
+    assert_eq!(
+        names,
+        vec![
+            "acct_123".to_owned(),
+            "interloper".to_owned(),
+            "acct_456".to_owned()
+        ],
+        "the other writer's account was overwritten"
+    );
+}

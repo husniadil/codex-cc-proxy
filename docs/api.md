@@ -445,7 +445,7 @@ A Unix domain socket, or a named pipe on Windows, carrying JSON-RPC:
 | `status` | connection state, whether the grant has been **refused**, plan and which source reported it, the tier mapping and the effort ceiling, any mapped model the catalog withholds, whether the catalog was authoritative, the client policy in effect, and the build and `instance` serving the socket | yes |
 | `disconnect` | forgets one account — the selected one, or `{"account": name}` — and answers with the name it cleared; the rest stay usable, and an idle account's removal leaves the serving grant's quota and refusal alone | yes |
 | `accounts` | every stored account and which one serves turns; no tokens | no — v0.3 |
-| `accounts.select` | `{"account": name}`, the account every following turn is made as | no — v0.3 |
+| `accounts.select` | `{"account": name}`, the account every following turn is made as, and whether the catalog was refetched for it | no — v0.3 |
 | `models` | catalog, whether it is the fallback list, and whether it was fetched for an account other than the one serving turns | yes |
 | `tiers.get` | tier mapping | yes |
 | `usage` | quota snapshot as of the last turn, or that no turn has been made, plus `models` — the ids this daemon serves | yes |
@@ -509,12 +509,14 @@ toward anyway.
 that was refused, so it ends when the stored grant is no longer that token and
 returns if it comes back.
 
-**A catalog belongs to the account it was fetched for.** It is fetched once, at
-startup, so switching accounts on a running daemon leaves it describing the
-previous one's plan (`proxy-behavior.md` §7.0). `status.catalog_stale` and
-`models.stale` say when that has happened, and `status.catalog_account` names
-the account the list belongs to. Nothing refetches it: the answers stop
-claiming it is this account's menu, and a restart is what replaces it.
+**A catalog belongs to the account it was fetched for** (`proxy-behavior.md`
+§7.0). `accounts.select` and a `disconnect` that hands over to another account
+fetch it again as whoever serves now, and their answers carry
+`catalog_refreshed` — a fetch that failed keeps the previous list in force, and
+everything downstream of it still describes that account. Where the change
+happened without this socket, a login completed in the CLI being the case that
+matters, `status.catalog_stale` and `models.stale` say the list is not this
+account's and `status.catalog_account` names whose it is.
 
 **`status` names the account.** `auth.account` is what this daemon calls the one
 serving turns and is what selects it; `auth.account_id` is what the backend

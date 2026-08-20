@@ -332,7 +332,9 @@ async fn run_one(probe: &probe::Probe, fixture: &Fixture, backend: &Backend) -> 
         policy: Arc::new(crate::policy::Policy::new(
             crate::policy::Snapshot::routing_only(models.as_ref().clone(), effort_ceiling),
         )),
-        catalog: Arc::new(crate::catalog::Catalog::fallback()),
+        catalog: Arc::new(crate::catalog::CatalogSource::fixed(
+            crate::catalog::Catalog::fallback(),
+        )),
         transport: Arc::clone(&transport) as Arc<dyn Transport>,
         conduits: None,
         recorder: None,

@@ -656,20 +656,28 @@ Before a session's first completed request the estimate is uncalibrated.
 
 ### 7.0 Catalog
 
-The catalog is fetched from the backend **once, at startup**, and held for the
-life of the daemon. There is no TTL and no refetch: a model added, renamed, or
-withdrawn after the daemon started is not noticed until it restarts. That is
-also why a mapping validated at startup cannot go stale while running, and why
-the only mismatch worth reporting later is a mapped model the catalog withholds
-(§7.1).
+The catalog is fetched from the backend at startup and held for the life of the
+daemon. There is no TTL: a model added, renamed, or withdrawn after the daemon
+started is not noticed until something else makes it ask again. The one thing
+that does is the daemon changing which account it serves, for the reason below.
+That is also why a mapping validated at startup cannot go stale on its own, and
+why the only mismatch worth reporting otherwise is a mapped model the catalog
+withholds (§7.1).
 
 **A catalog is one account's menu.** The plan decides which models appear and
 which efforts each one offers, so a list fetched for one account is not a
 statement about another. It is attributed to the account it was fetched for,
-and every answer built from it says when that is no longer the account serving
-turns (`api.md` §3) — a stale list would otherwise deny models this account has
-and offer ones it does not. Attribution is not a refetch: switching accounts on
-a running daemon leaves the list belonging to the previous one until a restart.
+and fetched again when the daemon changes which account it serves — selecting
+another, or forgetting the one that was serving. A failed refetch **keeps the
+list already in force**: fetch failure is not evidence that a model went away
+(§7.1), and replacing a real list with the fallback would withdraw models the
+account has.
+
+Attribution is what covers the rest. A grant that arrives without the daemon
+being asked — a login completed in the CLI — changes which account serves turns
+without any socket call, and there is nothing to refetch on. The list stays the
+previous account's, and every answer built from it says so (`api.md` §3) rather
+than presenting it as this account's.
 
 Each entry contributes an id, a visibility flag, and window metadata: a context
 window, an optional maximum context window, and an optional effective percentage.
@@ -946,6 +954,16 @@ The file is **replaced, never truncated in place**: the new content is written
 beside it and moved over it, under a name carrying the writing process's id so
 two writers cannot interleave into a file that is neither. One account's
 rotated token is not worth risking every account to a write that stops halfway.
+
+A write that finds the file changed since it read **starts over** rather than
+replacing it. Every write rewrites the whole file, so two overlapping writers
+would otherwise mean one discarding whatever the other had just done — a whole
+account now, not a stale token — and the pair that overlaps in practice is
+real: `login` in the CLI writes this file directly while the daemon may be
+persisting a refresh. This narrows the window rather than closing it: the
+comparison and the replacement are two operations, and a writer landing between
+them is still lost. Closing it needs a lock the filesystem enforces, which is
+not here yet.
 
 **Accounts do not interfere with each other.** Each holds its own
 refresh-token family, so rotating one leaves every other exactly where it was.

@@ -736,29 +736,41 @@ async fn run_with(args: RunArgs, capture: Capture) -> Result<()> {
     // catalog falls back rather than failing: fetch failure is not evidence
     // that a model went away (§7.1), and a daemon that will not start because
     // the network blinked is the worse failure.
-    let catalog = Arc::new(match tokens.access_token().await {
-        Ok(token) => {
-            codex_cc_proxy::catalog::fetch(
-                &reqwest::Client::new(),
-                &config.upstream.catalog,
-                &token,
-                tokens.account_id().as_deref(),
-                &config.upstream.client_version,
-                config.upstream.effective_window_percent,
-            )
-            .await
-        }
+    let fetched = match tokens.access_token().await {
+        Ok(token) => codex_cc_proxy::catalog::fetch(
+            &reqwest::Client::new(),
+            &config.upstream.catalog,
+            &token,
+            tokens.account_id().as_deref(),
+            &config.upstream.client_version,
+            config.upstream.effective_window_percent,
+        )
+        .await
+        .unwrap_or_else(codex_cc_proxy::catalog::Catalog::fallback),
         Err(error) => {
             tracing::info!(%error, "not authenticated; the model list is the fallback");
             codex_cc_proxy::catalog::Catalog::fallback()
         }
-    });
+    };
+
+    // In a slot, not as a value: a catalog describes the plan of the account
+    // it was fetched for, so switching accounts on a running daemon has to be
+    // able to replace it. Shared with the ingress, or a replacement would move
+    // what the socket reports and not what routes turns.
+    let catalog = Arc::new(codex_cc_proxy::catalog::CatalogSource::new(
+        fetched,
+        config.upstream.catalog.clone(),
+        config.upstream.client_version.clone(),
+        config.upstream.effective_window_percent,
+    ));
 
     // A shipped default naming a model this account cannot see is replaced
     // rather than refused: `gpt-5.6-sol` is plan-gated, so the default mapping
     // would otherwise fail to start for most accounts. A model the operator
     // stated is left alone and validated below.
-    let substituted = catalog.substitute_unavailable_defaults(&mut tiers);
+    let substituted = catalog
+        .current()
+        .substitute_unavailable_defaults(&mut tiers);
     if !substituted.is_empty() {
         tracing::info!(
             tiers = substituted.join(", "),
@@ -768,7 +780,7 @@ async fn run_with(args: RunArgs, capture: Capture) -> Result<()> {
 
     // An unknown model id is refused here, and the error names what the catalog
     // does have — which is the fastest way to find the id you actually meant.
-    catalog.validate(
+    catalog.current().validate(
         &tiers
             .iter()
             .map(|tier| tier.model.clone())
@@ -846,8 +858,8 @@ async fn run_with(args: RunArgs, capture: Capture) -> Result<()> {
     // reads it from here, and a fallback entry states neither, so handing one
     // over leaves all three silently doing nothing.
     tracing::info!(
-        models = catalog.ids().len(),
-        authoritative = catalog.authoritative,
+        models = catalog.current().ids().len(),
+        authoritative = catalog.current().authoritative,
         "model catalog in use"
     );
 

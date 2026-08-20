@@ -376,7 +376,8 @@ async fn the_configured_client_version_is_the_one_sent() {
         "9.9.9",
         SHIPPING,
     )
-    .await;
+    .await
+    .expect("the stub answers, so a catalog comes back");
 
     assert!(catalog.authoritative);
     let queries = seen.lock().unwrap().clone();
@@ -397,7 +398,8 @@ async fn a_fetched_catalog_carries_the_configured_share() {
         "2.0.0",
         25.0,
     )
-    .await;
+    .await
+    .expect("the stub answers, so a catalog comes back");
 
     assert_eq!(
         catalog.get("gpt-5.6-luna").unwrap().effective_window(),
