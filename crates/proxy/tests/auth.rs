@@ -925,11 +925,17 @@ fn a_migrated_account_keeps_its_place_through_the_next_save() {
     let path = dir.path().join("credentials.json");
     std::fs::write(&path, serde_json::to_string(&sample()).unwrap().as_bytes()).unwrap();
 
+    // What a refresh does: read the grant, then write it back rotated. A store
+    // that dropped the old file on the way in would have nothing to read here.
     let store = FileStore::new(&path);
+    let loaded = store
+        .load()
+        .unwrap()
+        .expect("the migrated grant should load");
     store
         .save(&Credentials {
             access_token: "rotated".to_owned(),
-            ..sample()
+            ..loaded
         })
         .unwrap();
 
@@ -940,7 +946,12 @@ fn a_migrated_account_keeps_its_place_through_the_next_save() {
         "the save added an account instead of updating one"
     );
     assert_eq!(accounts[0].name, "acct_123");
-    assert_eq!(store.load().unwrap().unwrap().access_token, "rotated");
+    let stored = store.load().unwrap().unwrap();
+    assert_eq!(stored.access_token, "rotated");
+    assert_eq!(
+        stored.refresh_token, "refresh-secret",
+        "the rest of the migrated grant should survive the write"
+    );
 }
 
 /// Logging in twice leaves two usable grants rather than one. The second
