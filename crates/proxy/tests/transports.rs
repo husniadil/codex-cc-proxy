@@ -234,6 +234,11 @@ enum WsBehavior {
     /// Serve one turn, then close — the idle connection the backend reaps
     /// between turns. The next turn finds a socket that is already gone.
     CloseAfterTurn,
+    /// Answer the second generate frame ever received with only
+    /// `response.created`, then go silent on that connection — the turn a
+    /// client abandons while the model is still generating. Every other frame
+    /// gets the full replay.
+    AbandonSecondTurn,
 }
 
 impl WsServer {
@@ -244,12 +249,14 @@ impl WsServer {
         let sink = Arc::clone(&received);
         let connections = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let counter = Arc::clone(&connections);
+        let generates = Arc::new(std::sync::atomic::AtomicUsize::new(0));
 
         tokio::spawn(async move {
             while let Ok((stream, _)) = listener.accept().await {
                 let events = events.clone();
                 let sink = Arc::clone(&sink);
                 let counter = Arc::clone(&counter);
+                let generates = Arc::clone(&generates);
                 tokio::spawn(async move {
                     let Ok(mut socket) = tokio_tungstenite::accept_async(stream).await else {
                         return;
@@ -293,6 +300,18 @@ impl WsServer {
 
                         // A prewarm produces nothing at all.
                         if prewarm {
+                            continue;
+                        }
+
+                        let turn = generates.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                        if matches!(behavior, WsBehavior::AbandonSecondTurn) && turn == 1 {
+                            if let Some(first) = events.first() {
+                                let _ = socket
+                                    .send(tokio_tungstenite::tungstenite::Message::Text(
+                                        first.to_string().into(),
+                                    ))
+                                    .await;
+                            }
                             continue;
                         }
 
@@ -986,4 +1005,98 @@ async fn a_stale_pooled_connection_retries_as_a_full_send() {
     let http_addr = start_http().await;
     let (http_state, _) = drive(&http_only(http_addr), 2).await;
     assert_eq!(state, http_state);
+}
+
+/// §4.3 — a delta never names a response the pooled connection did not
+/// produce.
+///
+/// The state this guards against is left behind by an abandoned turn: the
+/// client walks away mid-generation, the connection is dropped rather than
+/// parked, but the session still remembers the last completed response. The
+/// next turn then finds no pooled connection — and a fresh one handed that
+/// response id is refused upstream (`400 Invalid previous_response_id`),
+/// observed live. The refusal ends the turn cleanly, so the refusing
+/// connection is parked and every later delta repeats the refusal: the
+/// session never heals on its own. The full send is what breaks the loop
+/// before it starts.
+#[tokio::test]
+async fn an_abandoned_turn_does_not_poison_the_next_upload() {
+    let ws = WsServer::start(stream_events(), WsBehavior::AbandonSecondTurn).await;
+    let addr = start_http().await;
+    let conduit = Conduit::new(
+        Arc::new(HttpTransport::new(format!("http://{addr}/responses"))),
+        Some(Arc::new(
+            WebSocketTransport::new(ws.url.clone()).with_compression(false),
+        )),
+        "test-session".to_owned(),
+    );
+
+    // Turn 1 completes normally.
+    let mut baseline = Baseline::new();
+    let mut conversation = items(json!([message("turn 0")]));
+    let first = request(conversation.clone());
+    let (events, sent) = conduit
+        .send(&first, &baseline, None, None)
+        .await
+        .expect("the first turn should complete");
+    let _: Vec<_> = events.collect().await;
+    assert_eq!(sent, Sent::Full);
+
+    let returned = items(json!([{
+        "type": "message",
+        "role": "assistant",
+        "content": [{ "type": "output_text", "text": "reply 0" }],
+    }]));
+    baseline.advance(&first.input, &returned);
+    conversation.extend(returned);
+
+    // Parking happens on the pump task, after the last event is delivered.
+    for _ in 0..200 {
+        if conduit.has_pooled_connection().await {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    }
+    assert!(
+        conduit.has_pooled_connection().await,
+        "the completed turn never parked its connection"
+    );
+
+    // Turn 2 is abandoned: the model starts answering, the client walks away.
+    // The session keeps the request (it was remembered before the stream) and
+    // the response id of turn 1; the baseline never advances, and the
+    // connection is never parked.
+    conversation.extend(items(json!([message("turn 1")])));
+    let second = request(conversation.clone());
+    let (events, sent) = conduit
+        .send(&second, &baseline, Some(&first), Some("resp_ws"))
+        .await
+        .expect("the abandoned turn should still start");
+    assert_eq!(
+        sent,
+        Sent::Delta,
+        "the reused connection should carry a delta"
+    );
+    drop(events);
+
+    // Turn 3 finds no pooled connection. What the session remembers would
+    // plan a delta; the wire must carry a full send.
+    conversation.extend(items(json!([message("turn 2")])));
+    let third = request(conversation.clone());
+    let (events, sent) = conduit
+        .send(&third, &baseline, Some(&second), Some("resp_ws"))
+        .await
+        .expect("the turn after the abandoned one should complete");
+    let _: Vec<_> = events.collect().await;
+
+    assert_eq!(
+        sent,
+        Sent::Full,
+        "a delta was planned for a connection that never saw the response it names"
+    );
+    let last: Value = serde_json::from_str(ws.received().last().expect("a frame")).unwrap();
+    assert!(
+        last.get("previous_response_id").is_none_or(Value::is_null),
+        "a fresh connection was handed a response id it has never seen: {last}"
+    );
 }

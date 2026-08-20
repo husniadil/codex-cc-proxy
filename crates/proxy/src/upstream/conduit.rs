@@ -83,7 +83,24 @@ impl Conduit {
         if let Some(websocket) = &self.websocket
             && !self.is_latched_to_http()
         {
-            let upload = plan_upload(baseline, request, previous_request, previous_response_id);
+            // The connection is taken before the upload is planned, because
+            // the plan depends on it: a delta continues a specific response,
+            // and only the connection that produced that response holds it.
+            // Handed to any other connection — a fresh one after an abandoned
+            // turn, one parked by a turn that failed — the id names a response
+            // that connection has never seen, and the backend refuses it with
+            // `400 Invalid previous_response_id`. The refusal ends the turn
+            // cleanly, so the refusing connection would be parked and every
+            // later delta would repeat it (§4.3).
+            let pooled = self.connection.lock().await.take();
+
+            let upload = match previous_response_id {
+                Some(id) if !pooled.as_ref().is_some_and(|connection| connection.saw(id)) => {
+                    tracing::debug!("full: no pooled connection produced the response");
+                    Upload::Full
+                }
+                _ => plan_upload(baseline, request, previous_request, previous_response_id),
+            };
 
             let (payload, previous, sent) = match &upload {
                 Upload::Delta {
@@ -104,7 +121,7 @@ impl Conduit {
             );
 
             let attempt = self
-                .send_over_websocket(websocket, &payload, previous)
+                .send_over_websocket(websocket, &payload, previous, pooled)
                 .await;
 
             let attempt = match attempt {
@@ -119,7 +136,10 @@ impl Conduit {
                 // full send exists to avoid.
                 Err(failure) if failure.reused => {
                     tracing::debug!(error = %failure.error, "the pooled connection had expired");
-                    match self.send_over_websocket(websocket, request, None).await {
+                    match self
+                        .send_over_websocket(websocket, request, None, None)
+                        .await
+                    {
                         Ok(events) => return Ok((events, Sent::Full)),
                         Err(failure) => failure,
                     }
@@ -139,7 +159,7 @@ impl Conduit {
         Ok((events, Sent::Full))
     }
 
-    /// Send over the pooled connection, opening one if there is none.
+    /// Send over the given connection, opening a fresh one if there is none.
     ///
     /// The failure says whether it happened on a connection this session had
     /// been holding, because that distinguishes "the WebSocket does not work
@@ -150,8 +170,8 @@ impl Conduit {
         websocket: &WebSocketTransport,
         request: &ResponsesRequest,
         previous_response_id: Option<String>,
+        pooled: Option<crate::upstream::pool::PooledConnection>,
     ) -> Result<super::EventStream, WebSocketFailure> {
-        let pooled = self.connection.lock().await.take();
         let reused = pooled.is_some();
         let failed = |error: ProxyError| WebSocketFailure { error, reused };
 

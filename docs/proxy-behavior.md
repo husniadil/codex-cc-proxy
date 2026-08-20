@@ -391,6 +391,17 @@ input is a strict extension of the previous input plus the output items the
 server added. Server-returned items are part of the baseline and are never
 resent.
 
+The connection is part of that validity, not just the session. A response id
+names a response held by the connection that produced it, so a delta may only be
+sent on the connection that has seen that response. Handed to any other — a
+fresh connection opened after an abandoned turn dropped the previous one, or a
+connection parked by a turn that produced no response — the backend refuses it
+with `400 Invalid previous_response_id` (observed live). That refusal ends the
+turn cleanly, so the refusing connection is parked and every following delta
+repeats the refusal: the session never heals on its own. A turn whose pooled
+connection did not produce the response it would continue is therefore a full
+send.
+
 Any mismatch sends the full input. So does a delta that would be empty: the
 backend given a previous response id and no new items answers from that
 response, so a client retrying an unchanged conversation would be handed the

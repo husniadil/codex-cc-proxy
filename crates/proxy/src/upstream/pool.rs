@@ -18,11 +18,23 @@ type Socket = yawc::TcpWebSocket;
 /// A connection that outlives the turn that opened it.
 pub struct PooledConnection {
     socket: Socket,
+    /// The last response id an event on this connection named. A delta may
+    /// only continue a response through the connection that produced it
+    /// (§4.3); this is what that check reads.
+    seen_response_id: Option<String>,
 }
 
 impl PooledConnection {
     pub fn new(socket: Socket) -> Self {
-        Self { socket }
+        Self {
+            socket,
+            seen_response_id: None,
+        }
+    }
+
+    /// Whether this connection has seen the response a delta would continue.
+    pub fn saw(&self, response_id: &str) -> bool {
+        self.seen_response_id.as_deref() == Some(response_id)
     }
 
     /// Send one frame.
@@ -93,6 +105,15 @@ impl PooledConnection {
     }
 }
 
+/// The response id an event names, if any.
+fn response_id(payload: &str) -> Option<String> {
+    serde_json::from_str::<serde_json::Value>(payload)
+        .ok()?
+        .pointer("/response/id")?
+        .as_str()
+        .map(str::to_owned)
+}
+
 /// Whether this event ends the turn.
 ///
 /// The connection stays open past it, which is the whole point — but the
@@ -133,6 +154,11 @@ pub fn pump(
         .map(|payload| ends_turn(payload))
         .unwrap_or(false);
     let first_failed = first.is_err();
+    if let Ok(payload) = &first
+        && let Some(id) = response_id(payload)
+    {
+        connection.seen_response_id = Some(id);
+    }
     let _ = sender.unbounded_send(first);
 
     tokio::spawn(async move {
@@ -152,6 +178,11 @@ pub fn pump(
                 Err(_) => false,
             };
             let failed = event.is_err();
+            if let Ok(payload) = &event
+                && let Some(id) = response_id(payload)
+            {
+                connection.seen_response_id = Some(id);
+            }
 
             if sender.unbounded_send(event).is_err() {
                 // The client went away. Dropping the connection propagates the
