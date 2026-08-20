@@ -116,6 +116,51 @@ fn quote(value: &str) -> String {
     }
 }
 
+/// The stored accounts, and which one serves turns.
+///
+/// The name comes first because it is what selects the account; the id and the
+/// address are what tell two of them apart.
+pub fn accounts(result: &Value) -> String {
+    let Some(accounts) = field(result, "accounts").and_then(Value::as_array) else {
+        return "no accounts".to_owned();
+    };
+    if accounts.is_empty() {
+        return "no accounts — run `codex-cc-proxy login`".to_owned();
+    }
+
+    accounts
+        .iter()
+        .map(|account| {
+            let name = field(account, "name")
+                .and_then(Value::as_str)
+                .unwrap_or("unnamed");
+            let marker = if field(account, "selected")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+            {
+                "*"
+            } else {
+                " "
+            };
+            let who = field(account, "email")
+                .or_else(|| field(account, "account_id"))
+                .and_then(Value::as_str)
+                .unwrap_or("id unknown");
+            format!("{marker} {name:<24} {who}")
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// What a switch says it did. The name, because the caller may have typed a
+/// label and the daemon is the side that resolved it.
+pub fn selected_account(result: &Value) -> String {
+    match field(result, "selected").and_then(Value::as_str) {
+        Some(name) => format!("serving turns as {name}"),
+        None => "no account selected".to_owned(),
+    }
+}
+
 pub fn status(result: &Value) -> String {
     let mut lines = Vec::new();
 

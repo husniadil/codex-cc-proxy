@@ -196,6 +196,15 @@ codex-cc-proxy settings          # the whole thing, for a settings file you merg
 browser is signed into is the one being authorized, and that is not a choice to
 make on someone's behalf — open it in a private window to pick a different one.
 
+Logging in again adds an account rather than replacing the one you have. Each
+holds its own grant, so they do not interfere:
+
+```sh
+codex-cc-proxy login --as spare  # a second account, under a name you choose
+codex-cc-proxy accounts          # what is stored; * is the one serving turns
+codex-cc-proxy accounts --use spare
+```
+
 | | |
 |---|---|
 | `status`, `models` | connection, catalog, and the client policy in effect |

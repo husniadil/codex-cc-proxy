@@ -83,12 +83,14 @@ pub mod codes {
 /// Listed as a constant rather than left implicit so the CLI, the tests, and
 /// any future front-end all agree on the surface, and so removing one is a
 /// visible change.
-pub const METHODS: [&str; 15] = [
+pub const METHODS: [&str; 17] = [
     "status",
     "shutdown",
     "login",
     "login.cancel",
     "disconnect",
+    "accounts",
+    "accounts.select",
     "models",
     "tiers.get",
     "tiers.set",

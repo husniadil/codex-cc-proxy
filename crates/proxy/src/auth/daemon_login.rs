@@ -18,7 +18,7 @@
 
 use crate::auth::flow;
 use crate::auth::login;
-use crate::auth::store::CredentialStore;
+use crate::auth::store::AccountStore;
 use crate::error::ProxyError;
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -56,7 +56,8 @@ impl LoginFlow {
     /// surfacing later as a login that never completes.
     pub async fn start(
         self: &Arc<Self>,
-        credentials: Arc<dyn CredentialStore>,
+        credentials: Arc<dyn AccountStore>,
+        label: Option<String>,
     ) -> Result<Started, ProxyError> {
         if let Some(existing) = self.existing() {
             return Ok(Started {
@@ -84,7 +85,12 @@ impl LoginFlow {
         let flow_state = Arc::clone(self);
         tokio::spawn(async move {
             let outcome = tokio::select! {
-                result = login::complete_from_listener(&listener, &authorization, &credentials) => {
+                result = login::complete_from_listener(
+                    &listener,
+                    &authorization,
+                    &credentials,
+                    label.as_deref(),
+                ) => {
                     Some(result)
                 }
                 _ = cancelled => None,

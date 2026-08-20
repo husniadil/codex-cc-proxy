@@ -4,7 +4,7 @@
 //! interface. The CLI has no privileged path of its own, so a second front-end
 //! needs no new daemon work.
 
-use crate::auth::store::CredentialStore;
+use crate::auth::store::AccountStore;
 use crate::catalog::Catalog;
 use crate::error::ProxyError;
 use serde_json::Value;
@@ -30,7 +30,7 @@ pub struct ControlState {
     /// what this socket reports.
     pub policy: Arc<crate::policy::Policy>,
     pub catalog: Arc<Catalog>,
-    pub credentials: Arc<dyn CredentialStore>,
+    pub credentials: Arc<dyn AccountStore>,
     /// The same switches the ingress path reads, so starting a capture here
     /// changes what the next turn does.
     pub capture: Arc<crate::recorder::Switches>,
@@ -80,10 +80,9 @@ pub async fn dispatch(
             "settings": state.client.settings(),
         })),
         "usage" => Ok(usage(state)),
-        "disconnect" => {
-            state.credentials.clear()?;
-            Ok(json!({ "disconnected": true }))
-        }
+        "disconnect" => disconnect(state, params),
+        "accounts" => accounts(state),
+        "accounts.select" => select_account(state, params),
         "record.start" => {
             // Defaulting to ingress is the safe default and the documented
             // one: it is the mode that needs no credentials and spends
@@ -116,7 +115,7 @@ pub async fn dispatch(
             state.capture.stop();
             Ok(json!({ "recording": false }))
         }
-        "login" => login(state).await,
+        "login" => login(state, params).await,
         "login.cancel" => Ok(json!({ "cancelled": state.login.cancel() })),
         "tiers.set" => set_tiers(state, params),
         "effort.set" => set_effort(state, params),
@@ -145,6 +144,7 @@ static INSTANCE: std::sync::LazyLock<String> =
     std::sync::LazyLock::new(|| uuid::Uuid::new_v4().to_string());
 
 fn status(state: &ControlState) -> Value {
+    let stored = state.credentials.accounts().unwrap_or_default();
     let authenticated = state
         .credentials
         .load()
@@ -172,7 +172,18 @@ fn status(state: &ControlState) -> Value {
                 // front-end that could not tell would show a healthy provider
                 // while every dispatch failed.
                 "dead": state.tokens.as_ref().is_some_and(|tokens| tokens.is_dead()),
+                // What this daemon calls the account, and what the backend
+                // calls it. The first is what selects it; the second is what
+                // appears on a request.
+                "account": stored
+                    .iter()
+                    .find(|account| account.selected)
+                    .map(|account| account.name.clone()),
                 "account_id": credentials.account_id,
+                // Every stored account, so the answer that says a connection
+                // exists also says what else could serve one. Present and
+                // empty rather than absent.
+                "accounts": &stored,
                 // Reported, never acted on. Null where neither source said
                 // anything: a defaulted plan would either explain away a
                 // refusal that has another cause or deny one that is real.
@@ -617,8 +628,17 @@ fn set_effort(state: &ControlState, params: Option<&Value>) -> Result<Value, Pro
 /// `status` is what says whether it did. A control call that blocked until the
 /// operator finished in a browser would hold the socket for minutes and give a
 /// front-end nothing to render in the meantime.
-async fn login(state: &ControlState) -> Result<Value, ProxyError> {
-    let started = state.login.start(Arc::clone(&state.credentials)).await?;
+async fn login(state: &ControlState, params: Option<&Value>) -> Result<Value, ProxyError> {
+    // What to call the account this authorization produces. Without one it is
+    // named by the account id the grant carries.
+    let label = params
+        .and_then(|params| params.get("label"))
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    let started = state
+        .login
+        .start(Arc::clone(&state.credentials), label)
+        .await?;
 
     Ok(json!({
         "authorization_url": started.url,
@@ -627,6 +647,80 @@ async fn login(state: &ControlState) -> Result<Value, ProxyError> {
         "already_in_flight": started.already_in_flight,
         "detail": "open the URL to authorize; `status` reports when it completed",
     }))
+}
+
+/// `accounts` — every stored grant, and which one serves turns.
+fn accounts(state: &ControlState) -> Result<Value, ProxyError> {
+    let accounts = state.credentials.accounts()?;
+    Ok(json!({
+        "selected": accounts
+            .iter()
+            .find(|account| account.selected)
+            .map(|account| account.name.clone()),
+        "accounts": accounts,
+    }))
+}
+
+/// `accounts.select` — choose the account every following turn is made as.
+///
+/// The selection is written to the store the ingress authenticates through, so
+/// it moves what routes turns rather than only what this socket reports. Two
+/// things travel with it: the quota, which belongs to the account that was
+/// serving, and a refusal, which belongs to the grant that was being spent.
+fn select_account(state: &ControlState, params: Option<&Value>) -> Result<Value, ProxyError> {
+    let name = params
+        .and_then(|params| params.get("account"))
+        .and_then(Value::as_str)
+        .ok_or_else(|| {
+            ProxyError::invalid_request("name the account to select: {\"account\": \"...\"}")
+        })?;
+
+    state.credentials.select(name)?;
+    state.usage.clear();
+    if let Some(tokens) = state.tokens.as_ref() {
+        tokens.forget_refusal();
+    }
+
+    Ok(json!({ "selected": name }))
+}
+
+/// `disconnect` — forget one account.
+///
+/// With nothing named it clears the account serving turns, which is what a
+/// caller that knows of only one means by it. The rest stay usable, and the
+/// answer says which one went: a front-end that could not tell would have to
+/// guess what it just did.
+fn disconnect(state: &ControlState, params: Option<&Value>) -> Result<Value, ProxyError> {
+    let named = params
+        .and_then(|params| params.get("account"))
+        .and_then(Value::as_str);
+
+    let cleared = match named {
+        Some(name) => {
+            state.credentials.remove(name)?;
+            Some(name.to_owned())
+        }
+        None => {
+            let serving = state
+                .credentials
+                .accounts()?
+                .into_iter()
+                .find(|account| account.selected)
+                .map(|account| account.name);
+            // Clearing what is already gone is not an error: `disconnect` has
+            // always been safe to run twice.
+            state.credentials.clear()?;
+            serving
+        }
+    };
+
+    // The quota and any refusal belonged to a grant that is no longer here.
+    state.usage.clear();
+    if let Some(tokens) = state.tokens.as_ref() {
+        tokens.forget_refusal();
+    }
+
+    Ok(json!({ "disconnected": cleared }))
 }
 
 /// `usage.refresh` — ask the backend for a quota figure now.

@@ -26,7 +26,8 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Command::Run(args) => run(args).await,
-        Command::Login => login().await,
+        Command::Login(args) => login(args).await,
+        Command::Accounts(args) => accounts(args).await,
         Command::Status => print_status().await,
         Command::Models => print_models().await,
         Command::Env(args) => print_env(args).await,
@@ -157,12 +158,12 @@ async fn doctor(args: cli::DoctorArgs) -> Result<()> {
 /// choice this command has no basis for making — the grant it produces is the
 /// one every later request spends. Printing it leaves the choice where it
 /// belongs, and costs one paste.
-async fn login() -> Result<()> {
-    let store: Arc<dyn codex_cc_proxy::auth::store::CredentialStore> = Arc::new(
+async fn login(args: cli::LoginArgs) -> Result<()> {
+    let store: Arc<dyn codex_cc_proxy::auth::store::AccountStore> = Arc::new(
         codex_cc_proxy::auth::store::FileStore::new(credential_path()),
     );
 
-    let credentials = codex_cc_proxy::auth::login::run(store, |url| {
+    let credentials = codex_cc_proxy::auth::login::run(store, args.label.as_deref(), |url| {
         println!(
             "Open this URL to authorize:\n\n{url}\n\n\
              It authorizes whichever ChatGPT account that browser is signed into. \
@@ -176,6 +177,28 @@ async fn login() -> Result<()> {
         Some(account) => println!("Signed in ({account})."),
         None => println!("Signed in."),
     }
+    Ok(())
+}
+
+/// Stored accounts, and which one serves turns.
+///
+/// Through the socket, because the daemon is what holds the selection: a CLI
+/// that wrote the file directly would leave a running daemon serving the
+/// account it read at startup.
+async fn accounts(args: cli::AccountsArgs) -> Result<()> {
+    if let Some(name) = args.select {
+        let result = control::call(
+            &control::default_path(),
+            "accounts.select",
+            Some(serde_json::json!({ "account": name })),
+        )
+        .await?;
+        println!("{}", render::selected_account(&result));
+        return Ok(());
+    }
+
+    let result = control::call(&control::default_path(), "accounts", None).await?;
+    println!("{}", render::accounts(&result));
     Ok(())
 }
 
@@ -688,12 +711,12 @@ async fn run_with(args: RunArgs, capture: Capture) -> Result<()> {
     let addr = listener.local_addr()?;
     tracing::info!(%addr, "listening");
 
-    let credentials: Arc<dyn codex_cc_proxy::auth::store::CredentialStore> = Arc::new(
+    let credentials: Arc<dyn codex_cc_proxy::auth::store::AccountStore> = Arc::new(
         codex_cc_proxy::auth::store::FileStore::new(credential_path()),
     );
 
     let tokens = Arc::new(codex_cc_proxy::auth::tokens::TokenSource::new(
-        Arc::clone(&credentials),
+        Arc::clone(&credentials) as Arc<dyn codex_cc_proxy::auth::store::CredentialStore>,
         codex_cc_proxy::auth::flow::token_endpoint(),
         codex_cc_proxy::auth::flow::CLIENT_ID,
         Arc::new(codex_cc_proxy::auth::tokens::SystemClock),

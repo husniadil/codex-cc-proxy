@@ -66,7 +66,8 @@ changing an already-sent status.
 
 ```
 codex-cc-proxy run        start the daemon (--detach: in the background)
-codex-cc-proxy login      authenticate
+codex-cc-proxy login      authenticate (--as NAME labels the account)
+codex-cc-proxy accounts   stored accounts (--use NAME switches)
 codex-cc-proxy status     connection, tier mapping, model catalog
 codex-cc-proxy models     available models
 codex-cc-proxy env        environment for Claude Code, as shell exports
@@ -81,6 +82,14 @@ codex-cc-proxy record     capture exchanges as fixtures
 
 Every verb except `run` and `login` operates through the control socket (§3)
 against a running daemon.
+
+`login` **adds** an account and selects it; it never replaces the one already
+stored (`proxy-behavior.md` §8.1). `--as NAME` is what to call it locally, for
+an operator holding more than one; without it the account id the grant carries
+names it. `accounts` lists what is stored, marking the one serving turns, and
+`--use NAME` switches to another. Both go through the socket, because the daemon
+holds the selection: a CLI that edited the file directly would leave a running
+daemon serving the account it read at startup.
 
 `login` runs in the CLI **and** in the daemon (§3), and the two are alternatives
 rather than a duplication. The CLI's exists because the daemon need not be
@@ -434,7 +443,9 @@ A Unix domain socket, or a named pipe on Windows, carrying JSON-RPC:
 | Method | Returns | v0.1 |
 |---|---|---|
 | `status` | connection state, whether the grant has been **refused**, plan and which source reported it, the tier mapping and the effort ceiling, any mapped model the catalog withholds, whether the catalog was authoritative, the client policy in effect, and the build and `instance` serving the socket | yes |
-| `disconnect` | clears credentials | yes |
+| `disconnect` | forgets one account — the selected one, or `{"account": name}` — and answers with the name it cleared; the rest stay usable | yes |
+| `accounts` | every stored account and which one serves turns; no tokens | no — v0.3 |
+| `accounts.select` | `{"account": name}`, the account every following turn is made as | no — v0.3 |
 | `models` | catalog, and whether it is the fallback list | yes |
 | `tiers.get` | tier mapping | yes |
 | `usage` | quota snapshot as of the last turn, or that no turn has been made, plus `models` — the ids this daemon serves | yes |
@@ -442,7 +453,7 @@ A Unix domain socket, or a named pipe on Windows, carrying JSON-RPC:
 | `env` | the §2.2 block: `variables`, and `settings` always present | yes |
 | `shutdown` | `{"stopping": true, "version": ...}`, then the process goes once the answer is written | yes |
 | `record.start` / `record.stop` | fixture capture | yes — `{"mode": "ingress"}` by default, `"upstream"` must be named because it bills every turn that follows |
-| `login` | authorization URL, then completion in the background; `status` reports when it landed | yes |
+| `login` | authorization URL, then completion in the background; `status` reports when it landed. `{"label": name}` names the account it produces | yes |
 | `login.cancel` | abandons a flow and releases the callback port | yes |
 | `tiers.set` | tier mapping, validated against the catalog and in effect until the daemon stops | yes |
 | `effort.set` | the effort ceiling, or `null` to remove it; in effect until the daemon stops | yes |
@@ -478,6 +489,21 @@ argument as the whole mapping would let a caller that knows about one tier
 silently unset the three it did not mention. Every set is validated against the
 catalog exactly as startup validates it — that check is why this daemon owns the
 mapping rather than a front-end, since it is the side holding the catalog.
+
+**A selection moves what routes turns.** `accounts.select` writes to the store
+the ingress authenticates through, so the next turn is made as the account
+named rather than the one this socket merely reports. Two things go with it,
+because they belong to the grant and not to the daemon: a refusal is about one
+refresh token and is cleared, and the quota snapshot is dropped so the next turn
+supplies one for whoever is serving now. `disconnect` does the same for the same
+reason.
+
+**`status` names the account.** `auth.account` is what this daemon calls the one
+serving turns and is what selects it; `auth.account_id` is what the backend
+calls it and is what appears on a request. `auth.accounts` lists every stored
+account — present and empty rather than absent — carrying names, ids, addresses,
+plans as of each login, and expiries. It carries no tokens: this is the one
+credential-shaped answer that leaves the process.
 
 **`login` runs in the daemon.** It answers with the authorization URL and
 returns; the flow completes in the background and `status` is what reports that

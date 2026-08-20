@@ -63,6 +63,134 @@ impl Credentials {
     }
 }
 
+/// One account as it is reported, never as it is stored.
+///
+/// This is the shape that leaves the process — `status` renders it — so it
+/// carries what tells two accounts apart and nothing that would authenticate
+/// as either. There is no token in it, and there must never be one.
+#[derive(Clone, Debug, Serialize)]
+pub struct Account {
+    /// What this store calls the account: an operator's label, else the id the
+    /// backend knows it by, else an assigned name.
+    pub name: String,
+    /// The id the backend knows it by, where the grant carried one.
+    pub account_id: Option<String>,
+    /// Read from the stored id token, so two accounts are distinguishable by
+    /// something a person recognizes.
+    pub email: Option<String>,
+    /// The plan as of the last login, which is the only thing a stored grant
+    /// can say about it. The backend's own figure outranks it wherever a turn
+    /// has been made.
+    pub plan: Option<String>,
+    pub expires_at: Option<u64>,
+    /// Whether this is the account serving turns.
+    pub selected: bool,
+}
+
+/// A store that holds more than one grant.
+///
+/// `CredentialStore` is about *the* grant — the one serving turns — and every
+/// caller that only needs to authenticate a request stays on it. This is the
+/// second half: which grants exist, and which of them is that one.
+pub trait AccountStore: CredentialStore {
+    /// Every stored account, in the order they were added.
+    fn accounts(&self) -> Result<Vec<Account>, ProxyError>;
+
+    /// Store a grant as an account and select it, returning the name it got.
+    ///
+    /// This is what a login does. `save` writes the grant of the account
+    /// already selected — a refresh — and the two are deliberately different
+    /// verbs: a login that overwrote whichever account happened to be selected
+    /// would silently retire a working grant.
+    fn add(&self, credentials: &Credentials, label: Option<&str>) -> Result<String, ProxyError>;
+
+    /// Choose the account that serves turns from now on.
+    fn select(&self, name: &str) -> Result<(), ProxyError>;
+
+    /// Forget one account, leaving the rest usable.
+    fn remove(&self, name: &str) -> Result<(), ProxyError>;
+}
+
+/// The credential file: several accounts, one of them selected.
+///
+/// A file written before this store held more than one is a bare grant, and is
+/// read as the single account it describes. Refusing it would cost a re-login
+/// for a grant that is present and still valid.
+#[derive(Debug, Default, Deserialize, Serialize)]
+struct StoredFile {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    selected: Option<String>,
+    #[serde(default)]
+    accounts: Vec<Entry>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct Entry {
+    name: String,
+    #[serde(flatten)]
+    grant: Credentials,
+}
+
+impl StoredFile {
+    /// Which account serves turns.
+    ///
+    /// A selection naming an account that is not stored falls back to the
+    /// first one. The file still holds usable grants, and answering "not
+    /// authenticated" there sends an operator to re-login for nothing.
+    fn selected_index(&self) -> Option<usize> {
+        if self.accounts.is_empty() {
+            return None;
+        }
+        self.selected
+            .as_deref()
+            .and_then(|name| self.accounts.iter().position(|entry| entry.name == name))
+            .or(Some(0))
+    }
+
+    fn index_of(&self, name: &str) -> Option<usize> {
+        self.accounts.iter().position(|entry| entry.name == name)
+    }
+
+    fn names(&self) -> String {
+        self.accounts
+            .iter()
+            .map(|entry| entry.name.as_str())
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+
+    /// The name a grant gets when nothing else names it.
+    ///
+    /// The account id where there is one. Where there is not, an assigned name
+    /// rather than anything derived from the grant: nothing inside it is an
+    /// account id, and treating a token as one would be a fabricated fact
+    /// about an account.
+    fn name_for(&self, credentials: &Credentials) -> String {
+        if let Some(account_id) = credentials.account_id.as_deref() {
+            return account_id.to_owned();
+        }
+        (1..)
+            .map(|n| format!("account-{n}"))
+            .find(|name| self.index_of(name).is_none())
+            .unwrap_or_else(|| "account".to_owned())
+    }
+
+    /// Put a grant under a name, replacing whatever was there.
+    fn put(&mut self, name: String, credentials: &Credentials) {
+        match self
+            .index_of(&name)
+            .and_then(|index| self.accounts.get_mut(index))
+        {
+            Some(entry) => entry.grant = credentials.clone(),
+            None => self.accounts.push(Entry {
+                name: name.clone(),
+                grant: credentials.clone(),
+            }),
+        }
+        self.selected = Some(name);
+    }
+}
+
 pub trait CredentialStore: Send + Sync {
     fn load(&self) -> Result<Option<Credentials>, ProxyError>;
     fn save(&self, credentials: &Credentials) -> Result<(), ProxyError>;
@@ -70,6 +198,11 @@ pub trait CredentialStore: Send + Sync {
 }
 
 /// The default implementation: one JSON file, created `0600`.
+///
+/// The file holds every account and the name of the one serving turns. A file
+/// written before it held more than one is a bare grant, and migrates on the
+/// next write rather than on read: reading credentials is not a reason to
+/// rewrite them.
 pub struct FileStore {
     path: PathBuf,
 }
@@ -82,13 +215,13 @@ impl FileStore {
     pub fn path(&self) -> &Path {
         &self.path
     }
-}
 
-impl CredentialStore for FileStore {
-    fn load(&self) -> Result<Option<Credentials>, ProxyError> {
+    fn read(&self) -> Result<StoredFile, ProxyError> {
         let raw = match std::fs::read_to_string(&self.path) {
             Ok(raw) => raw,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(StoredFile::default());
+            }
             Err(error) => {
                 return Err(ProxyError::authentication(format!(
                     "could not read credentials: {error}"
@@ -96,13 +229,35 @@ impl CredentialStore for FileStore {
             }
         };
 
-        serde_json::from_str(&raw).map(Some).map_err(|error| {
-            // The error names the parse failure, never the content.
+        // The error names the parse failure, never the content.
+        let unreadable = |error: serde_json::Error| {
             ProxyError::authentication(format!("stored credentials are unreadable: {error}"))
-        })
+        };
+        let value: serde_json::Value = serde_json::from_str(&raw).map_err(unreadable)?;
+
+        // `accounts` is the key the current shape is built around, so its
+        // absence is what identifies the older one. Reading a bare grant as
+        // the single account it describes is what keeps an upgrade from
+        // costing a re-login.
+        if value.get("accounts").is_some() {
+            return serde_json::from_value(value).map_err(unreadable);
+        }
+
+        let grant: Credentials = serde_json::from_value(value).map_err(unreadable)?;
+        let mut file = StoredFile::default();
+        let name = file.name_for(&grant);
+        file.put(name, &grant);
+        Ok(file)
     }
 
-    fn save(&self, credentials: &Credentials) -> Result<(), ProxyError> {
+    fn write(&self, file: &StoredFile) -> Result<(), ProxyError> {
+        // Nothing left to hold. The file goes rather than staying behind as an
+        // empty list, so `load` answers "not authenticated" from its absence
+        // the same way it always has.
+        if file.accounts.is_empty() {
+            return self.remove_file();
+        }
+
         if let Some(parent) = self.path.parent() {
             std::fs::create_dir_all(parent).map_err(|error| {
                 ProxyError::authentication(format!(
@@ -111,7 +266,7 @@ impl CredentialStore for FileStore {
             })?;
         }
 
-        let body = serde_json::to_string_pretty(credentials).map_err(|error| {
+        let body = serde_json::to_string_pretty(file).map_err(|error| {
             ProxyError::authentication(format!("could not serialize credentials: {error}"))
         })?;
 
@@ -121,7 +276,7 @@ impl CredentialStore for FileStore {
         write_private(&self.path, &body)
     }
 
-    fn clear(&self) -> Result<(), ProxyError> {
+    fn remove_file(&self) -> Result<(), ProxyError> {
         match std::fs::remove_file(&self.path) {
             Ok(()) => Ok(()),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
@@ -129,6 +284,115 @@ impl CredentialStore for FileStore {
                 "could not clear credentials: {error}"
             ))),
         }
+    }
+
+    /// Drop one account by position, leaving something selected behind it.
+    fn remove_at(&self, mut file: StoredFile, index: usize) -> Result<(), ProxyError> {
+        let removed = file.accounts.remove(index);
+        if file.selected.as_deref() == Some(removed.name.as_str()) {
+            file.selected = file.accounts.first().map(|entry| entry.name.clone());
+        }
+        self.write(&file)
+    }
+}
+
+impl CredentialStore for FileStore {
+    fn load(&self) -> Result<Option<Credentials>, ProxyError> {
+        let file = self.read()?;
+        Ok(file
+            .selected_index()
+            .and_then(|index| file.accounts.get(index))
+            .map(|entry| entry.grant.clone()))
+    }
+
+    /// Write the selected account's grant — what a refresh does.
+    ///
+    /// On an empty store this creates the account, so a caller holding nothing
+    /// but this trait still works. It never creates a *second* one: adding an
+    /// account is `AccountStore::add`, and a refresh that appended would leave
+    /// two entries sharing one refresh-token family.
+    fn save(&self, credentials: &Credentials) -> Result<(), ProxyError> {
+        let mut file = self.read()?;
+        match file
+            .selected_index()
+            .and_then(|index| file.accounts.get_mut(index))
+        {
+            Some(entry) => entry.grant = credentials.clone(),
+            None => {
+                let name = file.name_for(credentials);
+                file.put(name, credentials);
+            }
+        }
+        self.write(&file)
+    }
+
+    /// Forget the account serving turns, leaving the rest usable.
+    ///
+    /// Clearing what is already gone is not an error: `disconnect` must be
+    /// safe to run twice.
+    fn clear(&self) -> Result<(), ProxyError> {
+        let file = self.read()?;
+        match file.selected_index() {
+            Some(index) => self.remove_at(file, index),
+            None => self.remove_file(),
+        }
+    }
+}
+
+impl AccountStore for FileStore {
+    fn accounts(&self) -> Result<Vec<Account>, ProxyError> {
+        let file = self.read()?;
+        let selected = file.selected_index();
+        Ok(file
+            .accounts
+            .iter()
+            .enumerate()
+            .map(|(index, entry)| {
+                let id_token = entry.grant.id_token.as_deref();
+                Account {
+                    name: entry.name.clone(),
+                    account_id: entry.grant.account_id.clone(),
+                    email: super::jwt::email(id_token),
+                    plan: super::jwt::plan(id_token),
+                    expires_at: entry.grant.expires_at,
+                    selected: selected == Some(index),
+                }
+            })
+            .collect())
+    }
+
+    fn add(&self, credentials: &Credentials, label: Option<&str>) -> Result<String, ProxyError> {
+        let mut file = self.read()?;
+        let name = match label {
+            Some(label) => label.to_owned(),
+            None => file.name_for(credentials),
+        };
+        file.put(name.clone(), credentials);
+        self.write(&file)?;
+        Ok(name)
+    }
+
+    fn select(&self, name: &str) -> Result<(), ProxyError> {
+        let mut file = self.read()?;
+        if file.index_of(name).is_none() {
+            return Err(ProxyError::invalid_request(format!(
+                "no account named `{name}`; stored: {}",
+                file.names()
+            )));
+        }
+        file.selected = Some(name.to_owned());
+        self.write(&file)
+    }
+
+    fn remove(&self, name: &str) -> Result<(), ProxyError> {
+        let file = self.read()?;
+        let Some(index) = file.index_of(name) else {
+            return Err(ProxyError::invalid_request(format!(
+                "no account named `{name}`; stored: {}",
+                file.names()
+            )));
+        };
+        self.remove_at(file, index)
     }
 }
 

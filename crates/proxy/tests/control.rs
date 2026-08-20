@@ -5,6 +5,7 @@
 
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::indexing_slicing)]
 
+use codex_cc_proxy::auth::store::AccountStore;
 use codex_cc_proxy::auth::store::CredentialStore;
 use codex_cc_proxy::auth::store::Credentials;
 use codex_cc_proxy::auth::store::FileStore;
@@ -105,7 +106,7 @@ impl Harness {
                 )
                 .unwrap(),
             ),
-            credentials: Arc::clone(&store) as Arc<dyn CredentialStore>,
+            credentials: Arc::clone(&store) as Arc<dyn AccountStore>,
             capture: Arc::clone(&switches),
             usage: Arc::clone(&usage),
             login: Arc::new(codex_cc_proxy::auth::daemon_login::LoginFlow::default()),
@@ -209,7 +210,7 @@ impl Harness {
             port: 8787,
             policy: Arc::clone(&policy),
             catalog: Arc::new(Catalog::parse(catalog, 95.0).unwrap()),
-            credentials: Arc::clone(&self.store) as Arc<dyn CredentialStore>,
+            credentials: Arc::clone(&self.store) as Arc<dyn AccountStore>,
             capture: Arc::clone(&self.switches),
             usage: Arc::clone(&self.usage),
             login: Arc::new(codex_cc_proxy::auth::daemon_login::LoginFlow::default()),
@@ -1884,4 +1885,340 @@ async fn status_carries_an_identity_for_the_process_answering() {
     // restart on every poll.
     let second = harness.call("status").await.unwrap();
     assert_eq!(second["instance"], first["instance"]);
+}
+
+// ---------------------------------------------------------------------------
+// §3 — more than one account.
+// ---------------------------------------------------------------------------
+
+fn grant(account: &str, token: &str) -> Credentials {
+    Credentials {
+        access_token: token.to_owned(),
+        refresh_token: format!("refresh-{account}"),
+        id_token: Some(id_token(json!({
+            "email": format!("{account}@example.test"),
+            "https://api.openai.com/auth": {
+                "chatgpt_account_id": account,
+                "chatgpt_plan_type": "plus",
+            },
+        }))),
+        account_id: Some(account.to_owned()),
+        expires_at: Some(1_800_000_000),
+    }
+}
+
+/// `accounts` lists what is stored and says which one serves turns. A
+/// front-end that could not tell would offer a switch with no current value.
+#[tokio::test]
+async fn accounts_lists_what_is_stored_and_which_one_serves_turns() {
+    let harness = Harness::start().await;
+    harness
+        .store
+        .add(&grant("acct_one", "a-one"), None)
+        .unwrap();
+    harness
+        .store
+        .add(&grant("acct_two", "a-two"), None)
+        .unwrap();
+
+    let listed = harness.call("accounts").await.unwrap();
+    let accounts = listed["accounts"].as_array().expect("a list of accounts");
+
+    assert_eq!(accounts.len(), 2);
+    assert_eq!(accounts[0]["name"], json!("acct_one"));
+    assert_eq!(accounts[0]["selected"], json!(false));
+    assert_eq!(accounts[1]["name"], json!("acct_two"));
+    assert_eq!(accounts[1]["selected"], json!(true));
+    // Something a person can tell two accounts apart by.
+    assert_eq!(accounts[1]["email"], json!("acct_two@example.test"));
+    assert_eq!(listed["selected"], json!("acct_two"));
+
+    // And no token reaches a caller. This answer leaves the process.
+    let rendered = listed.to_string();
+    for secret in ["a-one", "a-two", "refresh-acct_one", "refresh-acct_two"] {
+        assert!(!rendered.contains(secret), "leaked {secret}: {rendered}");
+    }
+}
+
+/// `accounts.select` moves what serves turns, not only what `status` reports.
+///
+/// The store is what every request authenticates through, so the assertion is
+/// on the grant that comes out of it rather than on the answer this method
+/// gives about itself.
+#[tokio::test]
+async fn selecting_an_account_moves_the_grant_that_serves_turns() {
+    let harness = Harness::start().await;
+    harness
+        .store
+        .add(&grant("acct_one", "a-one"), None)
+        .unwrap();
+    harness
+        .store
+        .add(&grant("acct_two", "a-two"), None)
+        .unwrap();
+    assert_eq!(harness.store.load().unwrap().unwrap().access_token, "a-two");
+
+    let answer = harness
+        .call_with("accounts.select", json!({ "account": "acct_one" }))
+        .await
+        .unwrap();
+
+    assert_eq!(answer["selected"], json!("acct_one"));
+    assert_eq!(
+        harness.store.load().unwrap().unwrap().access_token,
+        "a-one",
+        "the selection did not reach the store every request reads"
+    );
+
+    let status = harness.call("status").await.unwrap();
+    assert_eq!(status["auth"]["account"], json!("acct_one"));
+    assert_eq!(status["auth"]["account_id"], json!("acct_one"));
+}
+
+/// A quota belongs to an account. Carrying the previous account's snapshot
+/// across a switch would report headroom the new account may not have, which
+/// is the direction that costs something.
+#[tokio::test]
+async fn selecting_an_account_drops_the_previous_accounts_quota() {
+    let harness = Harness::start().await;
+    harness
+        .store
+        .add(&grant("acct_one", "a-one"), None)
+        .unwrap();
+    harness
+        .store
+        .add(&grant("acct_two", "a-two"), None)
+        .unwrap();
+    harness.usage.record(&codex_cc_proxy::usage::Snapshot {
+        plan: Some("plus".to_owned()),
+        ..Default::default()
+    });
+    assert!(harness.call("usage").await.unwrap()["known"] == json!(true));
+
+    harness
+        .call_with("accounts.select", json!({ "account": "acct_one" }))
+        .await
+        .unwrap();
+
+    let usage = harness.call("usage").await.unwrap();
+    assert_eq!(
+        usage["known"],
+        json!(false),
+        "the previous account's quota survived the switch: {usage}"
+    );
+}
+
+/// Selecting something that is not stored says what is.
+#[tokio::test]
+async fn selecting_an_unknown_account_names_the_stored_ones() {
+    let harness = Harness::start().await;
+    harness
+        .store
+        .add(&grant("acct_one", "a-one"), None)
+        .unwrap();
+
+    let error = harness
+        .call_with("accounts.select", json!({ "account": "ghost" }))
+        .await
+        .expect_err("an unknown account should be refused");
+
+    assert!(error.contains("ghost"), "{error}");
+    assert!(error.contains("acct_one"), "{error}");
+
+    // And naming nothing at all is refused rather than silently doing nothing.
+    let error = harness
+        .call_with("accounts.select", json!({}))
+        .await
+        .expect_err("a call naming no account should be refused");
+    assert!(error.contains("account"), "{error}");
+}
+
+/// `status` names the account serving turns and what else is stored, so the
+/// answer that reports a connection also reports what it is connected as.
+#[tokio::test]
+async fn status_names_the_serving_account_and_the_others() {
+    let harness = Harness::start().await;
+    harness
+        .store
+        .add(&grant("acct_one", "a-one"), None)
+        .unwrap();
+    harness
+        .store
+        .add(&grant("acct_two", "a-two"), None)
+        .unwrap();
+
+    let status = harness.call("status").await.unwrap();
+
+    assert_eq!(status["auth"]["connected"], json!(true));
+    assert_eq!(status["auth"]["account"], json!("acct_two"));
+    let accounts = status["auth"]["accounts"]
+        .as_array()
+        .expect("status should list the stored accounts");
+    assert_eq!(accounts.len(), 2);
+    assert_eq!(accounts[0]["name"], json!("acct_one"));
+    assert_eq!(accounts[1]["selected"], json!(true));
+}
+
+/// `disconnect` names the account it cleared and leaves the rest usable.
+#[tokio::test]
+async fn disconnect_names_the_account_it_cleared_and_leaves_the_rest() {
+    let harness = Harness::start().await;
+    harness
+        .store
+        .add(&grant("acct_one", "a-one"), None)
+        .unwrap();
+    harness
+        .store
+        .add(&grant("acct_two", "a-two"), None)
+        .unwrap();
+
+    // With nothing named, the account serving turns is the one that goes.
+    let answer = harness.call("disconnect").await.unwrap();
+    assert_eq!(answer["disconnected"], json!("acct_two"));
+    assert_eq!(
+        harness.store.load().unwrap().unwrap().access_token,
+        "a-one",
+        "the remaining account must still serve turns"
+    );
+
+    // Naming one clears that one.
+    harness
+        .store
+        .add(&grant("acct_two", "a-two"), None)
+        .unwrap();
+    let answer = harness
+        .call_with("disconnect", json!({ "account": "acct_one" }))
+        .await
+        .unwrap();
+    assert_eq!(answer["disconnected"], json!("acct_one"));
+    let listed = harness.call("accounts").await.unwrap();
+    assert_eq!(listed["accounts"].as_array().unwrap().len(), 1);
+    assert_eq!(listed["accounts"][0]["name"], json!("acct_two"));
+
+    // Clearing the last one empties the store, and doing it again is safe.
+    harness.call("disconnect").await.unwrap();
+    assert!(harness.store.load().unwrap().is_none());
+    harness.call("disconnect").await.unwrap();
+}
+
+/// A refusal is about a grant. Switching accounts replaces the grant, so the
+/// refusal has to go with it — otherwise the daemon reports the new account as
+/// dead and refuses to spend it without ever having tried.
+#[tokio::test]
+async fn switching_accounts_clears_a_refusal_that_belonged_to_the_old_grant() {
+    let harness = Harness::start().await;
+    harness
+        .store
+        .add(&grant("acct_one", "a-one"), None)
+        .unwrap();
+    harness
+        .store
+        .add(
+            &Credentials {
+                expires_at: Some(1),
+                ..grant("acct_two", "a-two")
+            },
+            None,
+        )
+        .unwrap();
+
+    // A token source whose refresh endpoint refuses, so the grant is marked
+    // dead exactly as a real refusal would mark it. No network: the endpoint
+    // is a loopback stub that answers every request with a dead-grant refusal.
+    let server = RefusingTokens::start().await;
+    let tokens = Arc::new(codex_cc_proxy::auth::tokens::TokenSource::new(
+        Arc::clone(&harness.store) as Arc<dyn CredentialStore>,
+        server.url.clone(),
+        "client-abc",
+        Arc::new(codex_cc_proxy::auth::tokens::SystemClock),
+    ));
+    tokens
+        .access_token()
+        .await
+        .expect_err("the grant is refused");
+    assert!(tokens.is_dead());
+
+    let harness = harness.with_tokens(Arc::clone(&tokens)).await;
+    assert_eq!(
+        harness.call("status").await.unwrap()["auth"]["dead"],
+        json!(true)
+    );
+
+    harness
+        .call_with("accounts.select", json!({ "account": "acct_one" }))
+        .await
+        .unwrap();
+
+    assert!(
+        !tokens.is_dead(),
+        "the refusal belonged to the grant that was just switched away from"
+    );
+    assert_eq!(
+        harness.call("status").await.unwrap()["auth"]["dead"],
+        json!(false)
+    );
+}
+
+/// A loopback stub that refuses every refresh the way a retired grant is
+/// refused. Nothing here reaches the network.
+struct RefusingTokens {
+    url: String,
+}
+
+impl RefusingTokens {
+    async fn start() -> Self {
+        use axum::routing::post;
+        let app = axum::Router::new().route(
+            "/token",
+            post(|_body: String| async {
+                (
+                    axum::http::StatusCode::BAD_REQUEST,
+                    r#"{"error":"refresh_token_reused"}"#,
+                )
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+        Self {
+            url: format!("http://{addr}/token"),
+        }
+    }
+}
+
+/// What an operator sees. The account serving turns is marked, because a list
+/// of names with no current value is the one thing this verb must not print.
+#[tokio::test]
+async fn the_rendered_account_list_marks_the_one_serving_turns() {
+    let harness = Harness::start().await;
+    harness
+        .store
+        .add(&grant("acct_one", "a-one"), None)
+        .unwrap();
+    harness
+        .store
+        .add(&grant("acct_two", "a-two"), None)
+        .unwrap();
+
+    let rendered = render::accounts(&harness.call("accounts").await.unwrap());
+
+    let serving: Vec<&str> = rendered
+        .lines()
+        .filter(|line| line.starts_with('*'))
+        .collect();
+    assert_eq!(
+        serving.len(),
+        1,
+        "exactly one account serves turns: {rendered}"
+    );
+    assert!(serving[0].contains("acct_two"), "{rendered}");
+    assert!(rendered.contains("acct_one@example.test"), "{rendered}");
+
+    // An empty store says what to do about it rather than printing nothing.
+    harness.call("disconnect").await.unwrap();
+    harness.call("disconnect").await.unwrap();
+    let rendered = render::accounts(&harness.call("accounts").await.unwrap());
+    assert!(rendered.contains("login"), "{rendered}");
 }

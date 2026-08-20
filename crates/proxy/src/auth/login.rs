@@ -2,7 +2,7 @@
 
 use super::flow::Authorization;
 use super::jwt;
-use super::store::CredentialStore;
+use super::store::AccountStore;
 use super::store::Credentials;
 use crate::error::ProxyError;
 use serde::Deserialize;
@@ -16,7 +16,12 @@ struct ExchangeResponse {
     id_token: Option<String>,
 }
 
-/// Exchange an authorization code for a grant, and store it.
+/// Exchange an authorization code for a grant, and store it as an account.
+///
+/// The grant is **added**, not saved over: an authorization is a new grant,
+/// and writing it into whichever account happened to be selected would retire
+/// a working one silently. `label` names it where the operator gave a name;
+/// otherwise the account id it belongs to does.
 ///
 /// The state is checked before the code is spent. A response carrying the wrong
 /// state is not this flow's response, and exchanging its code would attach
@@ -28,7 +33,8 @@ pub async fn complete(
     authorization: &Authorization,
     returned_state: &str,
     code: &str,
-    store: &Arc<dyn CredentialStore>,
+    store: &Arc<dyn AccountStore>,
+    label: Option<&str>,
 ) -> Result<Credentials, ProxyError> {
     if returned_state != authorization.state {
         return Err(ProxyError::authentication(
@@ -79,7 +85,7 @@ pub async fn complete(
         id_token: parsed.id_token,
     };
 
-    store.save(&credentials)?;
+    store.add(&credentials, label)?;
     Ok(credentials)
 }
 
@@ -163,7 +169,8 @@ fn percent_decode(value: &str) -> String {
 /// authorization response, and stops. It is not a general-purpose server and
 /// must not outlive the flow.
 pub async fn run(
-    store: Arc<dyn CredentialStore>,
+    store: Arc<dyn AccountStore>,
+    label: Option<&str>,
     open_url: impl FnOnce(&str),
 ) -> Result<Credentials, ProxyError> {
     let authorization = super::flow::begin(super::flow::CALLBACK_PORT);
@@ -181,7 +188,7 @@ pub async fn run(
 
     open_url(&authorization.url);
 
-    complete_from_listener(&listener, &authorization, &store).await
+    complete_from_listener(&listener, &authorization, &store, label).await
 }
 
 /// Wait for the one authorization response and exchange it.
@@ -192,7 +199,8 @@ pub async fn run(
 pub async fn complete_from_listener(
     listener: &tokio::net::TcpListener,
     authorization: &Authorization,
-    store: &Arc<dyn CredentialStore>,
+    store: &Arc<dyn AccountStore>,
+    label: Option<&str>,
 ) -> Result<Credentials, ProxyError> {
     let query = accept_callback(listener).await?;
     let (code, state) = parse_callback(&query)?;
@@ -205,6 +213,7 @@ pub async fn complete_from_listener(
         &state,
         &code,
         store,
+        label,
     )
     .await
 }

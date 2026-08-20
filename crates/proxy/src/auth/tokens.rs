@@ -107,6 +107,17 @@ impl TokenSource {
         self.refreshes.load(Ordering::SeqCst)
     }
 
+    /// Forget a refusal, because the grant it was about is no longer the one
+    /// being served.
+    ///
+    /// `dead` is a fact about one grant: the backend said that specific
+    /// refresh token is finished. Switching accounts replaces it, and carrying
+    /// the flag across would report the new account as refused without ever
+    /// having spent it.
+    pub fn forget_refusal(&self) {
+        self.dead.store(false, Ordering::SeqCst);
+    }
+
     pub fn is_dead(&self) -> bool {
         self.dead.load(Ordering::SeqCst)
     }

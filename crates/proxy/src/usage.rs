@@ -240,6 +240,18 @@ impl UsageStore {
         }
     }
 
+    /// Forget the snapshot.
+    ///
+    /// A quota belongs to an account, so switching accounts has to drop it:
+    /// reporting the previous account's headroom for the new one is wrong in
+    /// the direction that reads as room to spend. The next turn supplies a
+    /// figure for whoever is serving now.
+    pub fn clear(&self) {
+        if let Ok(mut latest) = self.latest.lock() {
+            *latest = None;
+        }
+    }
+
     pub fn latest(&self) -> Option<Snapshot> {
         self.latest.lock().ok().and_then(|latest| latest.clone())
     }

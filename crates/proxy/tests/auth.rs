@@ -710,7 +710,7 @@ use codex_cc_proxy::auth::login;
 async fn a_mismatched_state_is_refused_before_the_code_is_spent() {
     let dir = tempfile::tempdir().unwrap();
     let server = AuthServer::start(200, "{}", 0).await;
-    let store: Arc<dyn CredentialStore> =
+    let store: Arc<dyn AccountStore> =
         Arc::new(FileStore::new(dir.path().join("credentials.json")));
     let authorization = flow::begin(1455);
 
@@ -722,6 +722,7 @@ async fn a_mismatched_state_is_refused_before_the_code_is_spent() {
         "a-different-state",
         "the-code",
         &store,
+        None,
     )
     .await
     .expect_err("a mismatched state should be refused");
@@ -748,7 +749,7 @@ async fn the_code_exchange_sends_the_verifier_form_encoded() {
     .to_string();
 
     let server = AuthServer::start(200, &response, 0).await;
-    let store: Arc<dyn CredentialStore> =
+    let store: Arc<dyn AccountStore> =
         Arc::new(FileStore::new(dir.path().join("credentials.json")));
     let authorization = flow::begin(1455);
 
@@ -760,6 +761,7 @@ async fn the_code_exchange_sends_the_verifier_form_encoded() {
         &authorization.state,
         "the-code",
         &store,
+        None,
     )
     .await
     .expect("the exchange should succeed");
@@ -789,7 +791,7 @@ async fn the_code_exchange_sends_the_verifier_form_encoded() {
 async fn a_refused_exchange_stores_nothing() {
     let dir = tempfile::tempdir().unwrap();
     let server = AuthServer::start(400, r#"{"error":"invalid_grant"}"#, 0).await;
-    let store: Arc<dyn CredentialStore> =
+    let store: Arc<dyn AccountStore> =
         Arc::new(FileStore::new(dir.path().join("credentials.json")));
     let authorization = flow::begin(1455);
 
@@ -801,6 +803,7 @@ async fn a_refused_exchange_stores_nothing() {
         &authorization.state,
         "bad-code",
         &store,
+        None,
     )
     .await
     .expect_err("a refused exchange should fail");
@@ -867,4 +870,425 @@ fn the_authorization_request_asks_for_no_scope_it_does_not_use() {
             .url
             .contains("scope=openid%20profile%20email%20offline_access&")
     );
+}
+
+// ---------------------------------------------------------------------------
+// §8 — more than one account in one store.
+// ---------------------------------------------------------------------------
+
+use codex_cc_proxy::auth::store::AccountStore;
+
+/// A grant belonging to somebody else, distinguishable from `sample()` in
+/// every field that matters.
+fn other() -> Credentials {
+    Credentials {
+        access_token: "other-access".to_owned(),
+        refresh_token: "other-refresh".to_owned(),
+        id_token: Some("other-id".to_owned()),
+        account_id: Some("acct_456".to_owned()),
+        expires_at: Some(1_900_000_000),
+    }
+}
+
+/// A credential file written before this store held more than one account is
+/// read as the one account it describes. Anything else costs a re-login for a
+/// grant that is sitting right there and still valid.
+#[test]
+fn a_file_from_the_single_account_build_loads_as_one_selected_account() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("credentials.json");
+    std::fs::write(
+        &path,
+        serde_json::to_string_pretty(&sample()).unwrap().as_bytes(),
+    )
+    .unwrap();
+
+    let store = FileStore::new(&path);
+
+    let loaded = store.load().unwrap().expect("the stored grant should load");
+    assert_eq!(loaded.access_token, "access-secret");
+    assert_eq!(loaded.refresh_token, "refresh-secret");
+
+    let accounts = store.accounts().unwrap();
+    assert_eq!(accounts.len(), 1);
+    assert_eq!(accounts[0].name, "acct_123");
+    assert_eq!(accounts[0].account_id.as_deref(), Some("acct_123"));
+    assert!(accounts[0].selected, "the only account serves turns");
+}
+
+/// The migration survives the next write. A refresh saves the rotated grant,
+/// and it must land in the account the old file described rather than beside
+/// it.
+#[test]
+fn a_migrated_account_keeps_its_place_through_the_next_save() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("credentials.json");
+    std::fs::write(&path, serde_json::to_string(&sample()).unwrap().as_bytes()).unwrap();
+
+    let store = FileStore::new(&path);
+    store
+        .save(&Credentials {
+            access_token: "rotated".to_owned(),
+            ..sample()
+        })
+        .unwrap();
+
+    let accounts = store.accounts().unwrap();
+    assert_eq!(
+        accounts.len(),
+        1,
+        "the save added an account instead of updating one"
+    );
+    assert_eq!(accounts[0].name, "acct_123");
+    assert_eq!(store.load().unwrap().unwrap().access_token, "rotated");
+}
+
+/// Logging in twice leaves two usable grants rather than one. The second
+/// login serves turns from then on, and the first is still there to go back
+/// to.
+#[test]
+fn logging_in_twice_leaves_two_usable_grants() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = FileStore::new(dir.path().join("credentials.json"));
+
+    assert_eq!(store.add(&sample(), None).unwrap(), "acct_123");
+    assert_eq!(store.add(&other(), None).unwrap(), "acct_456");
+
+    let accounts = store.accounts().unwrap();
+    assert_eq!(accounts.len(), 2);
+    assert!(
+        !accounts[0].selected,
+        "the first login no longer serves turns"
+    );
+    assert!(accounts[1].selected, "the newest login serves turns");
+    assert_eq!(store.load().unwrap().unwrap().access_token, "other-access");
+
+    store.select("acct_123").unwrap();
+    assert_eq!(
+        store.load().unwrap().unwrap().access_token,
+        "access-secret",
+        "the first account is still usable"
+    );
+}
+
+/// Authorizing the same account twice replaces its grant. Two entries for one
+/// account would be two refresh-token families against one grant, which is the
+/// arrangement §8 exists to prevent.
+#[test]
+fn authorizing_the_same_account_again_replaces_its_grant() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = FileStore::new(dir.path().join("credentials.json"));
+
+    store.add(&sample(), None).unwrap();
+    store
+        .add(
+            &Credentials {
+                refresh_token: "re-authorized".to_owned(),
+                ..sample()
+            },
+            None,
+        )
+        .unwrap();
+
+    assert_eq!(store.accounts().unwrap().len(), 1);
+    assert_eq!(
+        store.load().unwrap().unwrap().refresh_token,
+        "re-authorized"
+    );
+}
+
+/// A label names the account. The id is what the backend calls it; a label is
+/// what the operator calls it, and one of the two is memorable.
+#[test]
+fn a_label_names_the_account() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = FileStore::new(dir.path().join("credentials.json"));
+
+    assert_eq!(store.add(&sample(), Some("work")).unwrap(), "work");
+
+    let accounts = store.accounts().unwrap();
+    assert_eq!(accounts[0].name, "work");
+    // The id it belongs to is still reported: the label is a local name, not a
+    // replacement for what the backend knows.
+    assert_eq!(accounts[0].account_id.as_deref(), Some("acct_123"));
+}
+
+/// A grant whose id token carried no account id is still storable. The name is
+/// assigned rather than invented from the grant: nothing in it is an account
+/// id, and treating a token as one would be exactly the fabrication §8
+/// forbids.
+#[test]
+fn an_account_with_no_id_is_named_rather_than_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = FileStore::new(dir.path().join("credentials.json"));
+
+    let name = store
+        .add(
+            &Credentials {
+                account_id: None,
+                ..sample()
+            },
+            None,
+        )
+        .unwrap();
+
+    assert_eq!(name, "account-1");
+    assert_eq!(store.accounts().unwrap()[0].account_id, None);
+}
+
+/// Selecting something that is not there says what is.
+#[test]
+fn selecting_an_unknown_account_names_the_known_ones() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = FileStore::new(dir.path().join("credentials.json"));
+    store.add(&sample(), None).unwrap();
+
+    let error = store.select("nobody").unwrap_err().to_string();
+
+    assert!(error.contains("nobody"), "{error}");
+    assert!(error.contains("acct_123"), "{error}");
+}
+
+/// Clearing one account leaves the rest usable, and something still serves
+/// turns afterwards.
+#[test]
+fn clearing_one_account_leaves_the_rest_usable() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = FileStore::new(dir.path().join("credentials.json"));
+    store.add(&sample(), None).unwrap();
+    store.add(&other(), None).unwrap();
+
+    // `clear` is the selected account, which is the one the second login left
+    // serving turns.
+    store.clear().unwrap();
+
+    let accounts = store.accounts().unwrap();
+    assert_eq!(accounts.len(), 1);
+    assert_eq!(accounts[0].name, "acct_123");
+    assert!(accounts[0].selected, "something must still serve turns");
+    assert_eq!(store.load().unwrap().unwrap().access_token, "access-secret");
+
+    // And clearing the last one empties the store, as it always did.
+    store.clear().unwrap();
+    assert!(store.load().unwrap().is_none());
+    assert!(store.accounts().unwrap().is_empty());
+}
+
+/// Removing an account that is not selected leaves the selection alone.
+#[test]
+fn removing_an_unselected_account_leaves_the_selection_alone() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = FileStore::new(dir.path().join("credentials.json"));
+    store.add(&sample(), None).unwrap();
+    store.add(&other(), None).unwrap();
+
+    store.remove("acct_123").unwrap();
+
+    let accounts = store.accounts().unwrap();
+    assert_eq!(accounts.len(), 1);
+    assert_eq!(accounts[0].name, "acct_456");
+    assert_eq!(store.load().unwrap().unwrap().access_token, "other-access");
+}
+
+/// A selection naming an account that is not there falls back to the first
+/// stored one. A file that names a missing account still holds usable grants,
+/// and reporting "not authenticated" there would send an operator to re-login
+/// for nothing.
+#[test]
+fn a_selection_naming_nothing_falls_back_to_the_first_account() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("credentials.json");
+    let store = FileStore::new(&path);
+    store.add(&sample(), None).unwrap();
+
+    let mut file: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    file["selected"] = Value::from("departed");
+    std::fs::write(&path, file.to_string()).unwrap();
+
+    assert_eq!(store.load().unwrap().unwrap().access_token, "access-secret");
+    assert!(store.accounts().unwrap()[0].selected);
+}
+
+/// The account list is rendered to whoever asks `status`. Nothing in it may be
+/// a token: this is the one shape in the credential module that is meant to
+/// leave the process.
+#[test]
+fn the_account_list_carries_no_secrets() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = FileStore::new(dir.path().join("credentials.json"));
+    store.add(&sample(), None).unwrap();
+
+    let accounts = store.accounts().unwrap();
+    let rendered = format!(
+        "{}{:?}",
+        serde_json::to_string(&accounts).unwrap(),
+        accounts
+    );
+
+    for secret in ["access-secret", "refresh-secret", "id-secret"] {
+        assert!(!rendered.contains(secret), "leaked {secret}: {rendered}");
+    }
+    assert!(rendered.contains("acct_123"), "{rendered}");
+}
+
+/// §8 — a refresh moves one account's grant and nothing else.
+///
+/// Refresh-token families rotate. Two accounts in one store hold two separate
+/// families, so refreshing one must leave the other's byte for byte where it
+/// was: an account whose stored token was overwritten by another account's
+/// rotation is an account one refresh away from holding nothing, and the
+/// failure would not appear until the operator switched to it.
+#[tokio::test]
+async fn a_refresh_on_one_account_leaves_the_other_grant_untouched() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = AuthServer::start(200, &fresh_token_response(9_000), 0).await;
+    let store = Arc::new(FileStore::new(dir.path().join("credentials.json")));
+
+    // Both expired, so either would refresh if asked.
+    store
+        .add(
+            &Credentials {
+                expires_at: Some(1_000),
+                ..sample()
+            },
+            None,
+        )
+        .unwrap();
+    store
+        .add(
+            &Credentials {
+                expires_at: Some(1_000),
+                ..other()
+            },
+            None,
+        )
+        .unwrap();
+    store.select("acct_123").unwrap();
+
+    let untouched = {
+        let all = store.accounts().unwrap();
+        all.iter()
+            .find(|account| account.name == "acct_456")
+            .cloned()
+            .expect("the second account should be stored")
+    };
+
+    let source = TokenSource::new(
+        Arc::clone(&store) as Arc<dyn CredentialStore>,
+        server.url.clone(),
+        "client-abc",
+        Arc::new(FixedClock(2_000)),
+    );
+    source.access_token().await.unwrap();
+
+    // The selected account rotated.
+    assert_eq!(store.load().unwrap().unwrap().refresh_token, "new-refresh");
+
+    // The other one did not.
+    store.select("acct_456").unwrap();
+    let stored = store.load().unwrap().unwrap();
+    assert_eq!(stored.refresh_token, "other-refresh");
+    assert_eq!(stored.access_token, "other-access");
+    assert_eq!(stored.expires_at, Some(1_000));
+    assert_eq!(
+        store
+            .accounts()
+            .unwrap()
+            .iter()
+            .find(|account| account.name == "acct_456")
+            .map(|account| account.expires_at),
+        Some(untouched.expires_at)
+    );
+
+    // And it still serves a turn, spending its own refresh token rather than
+    // the one the first account just rotated into place.
+    let second = TokenSource::new(
+        Arc::clone(&store) as Arc<dyn CredentialStore>,
+        server.url.clone(),
+        "client-abc",
+        Arc::new(FixedClock(2_000)),
+    );
+    second.access_token().await.unwrap();
+
+    let bodies = server.bodies();
+    assert_eq!(bodies.len(), 2, "one refresh each");
+    let sent = |body: &str| -> String {
+        serde_json::from_str::<Value>(body).unwrap()["refresh_token"]
+            .as_str()
+            .unwrap_or_default()
+            .to_owned()
+    };
+    assert_eq!(sent(&bodies[0]), "refresh-secret");
+    assert_eq!(sent(&bodies[1]), "other-refresh");
+}
+
+/// A login adds an account rather than overwriting whichever one was there.
+///
+/// The store is where that rule lives, and this is the wiring: an exchange
+/// that called `save` would pass every store-level test and still retire a
+/// working grant the first time an operator authorized a second account.
+#[tokio::test]
+async fn a_second_login_adds_an_account_rather_than_replacing_one() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Arc::new(FileStore::new(dir.path().join("credentials.json")));
+    let handle: Arc<dyn AccountStore> = Arc::clone(&store) as Arc<dyn AccountStore>;
+
+    for (account, refresh) in [("acct_first", "r-first"), ("acct_second", "r-second")] {
+        let response = serde_json::json!({
+            "access_token": token_with(serde_json::json!({ "exp": 4_000 })),
+            "refresh_token": refresh,
+            "id_token": token_with(serde_json::json!({
+                "https://api.openai.com/auth": { "chatgpt_account_id": account },
+            })),
+        })
+        .to_string();
+        let server = AuthServer::start(200, &response, 0).await;
+        let authorization = flow::begin(1455);
+
+        login::complete(
+            &reqwest::Client::new(),
+            &server.url,
+            "client-abc",
+            &authorization,
+            &authorization.state,
+            "the-code",
+            &handle,
+            None,
+        )
+        .await
+        .expect("the exchange should succeed");
+    }
+
+    let accounts = store.accounts().unwrap();
+    assert_eq!(accounts.len(), 2, "the second login replaced the first");
+    assert_eq!(accounts[0].name, "acct_first");
+    assert_eq!(accounts[1].name, "acct_second");
+    assert!(accounts[1].selected, "the newest login serves turns");
+    assert_eq!(store.load().unwrap().unwrap().refresh_token, "r-second");
+
+    // The label an operator gives names the account instead.
+    let response = serde_json::json!({
+        "access_token": token_with(serde_json::json!({ "exp": 4_000 })),
+        "refresh_token": "r-third",
+        "id_token": token_with(serde_json::json!({
+            "https://api.openai.com/auth": { "chatgpt_account_id": "acct_third" },
+        })),
+    })
+    .to_string();
+    let server = AuthServer::start(200, &response, 0).await;
+    let authorization = flow::begin(1455);
+    login::complete(
+        &reqwest::Client::new(),
+        &server.url,
+        "client-abc",
+        &authorization,
+        &authorization.state,
+        "the-code",
+        &handle,
+        Some("spare"),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(store.accounts().unwrap()[2].name, "spare");
 }

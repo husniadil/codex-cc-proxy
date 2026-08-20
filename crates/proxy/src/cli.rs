@@ -15,8 +15,10 @@ pub struct Cli {
 pub enum Command {
     /// Start the daemon.
     Run(RunArgs),
-    /// Authenticate.
-    Login,
+    /// Authenticate. Adds an account; it never replaces one.
+    Login(LoginArgs),
+    /// Stored accounts, and which one serves turns.
+    Accounts(AccountsArgs),
     /// Connection, tier mapping, and whether the catalog was reachable.
     Status,
     /// Available models.
@@ -50,6 +52,26 @@ pub enum Command {
     Statusline(StatuslineArgs),
     /// Capture exchanges as fixtures.
     Record(RecordArgs),
+}
+
+#[derive(Debug, clap::Args)]
+pub struct LoginArgs {
+    /// What to call the account this authorization produces.
+    ///
+    /// Without one it is named by the account id the grant carries. A label is
+    /// a local name for the account and never reaches the backend.
+    #[arg(long = "as", value_name = "NAME")]
+    pub label: Option<String>,
+}
+
+#[derive(Debug, clap::Args)]
+pub struct AccountsArgs {
+    /// Serve every following turn as this account.
+    ///
+    /// A switch rather than a listing, which is why it is a flag: an account
+    /// changed by a mistyped positional is a turn billed to the wrong one.
+    #[arg(long = "use", value_name = "NAME")]
+    pub select: Option<String>,
 }
 
 #[derive(Debug, clap::Args)]
@@ -163,6 +185,44 @@ mod tests {
             panic!("run should parse");
         };
         assert!(!args.detach);
+    }
+
+    /// A login names the account it produces, so an operator holding two of
+    /// them has something to call each.
+    #[test]
+    fn login_takes_a_label() {
+        let cli = Cli::try_parse_from(["codex-cc-proxy", "login", "--as", "work"]).unwrap();
+        let Command::Login(args) = cli.command else {
+            panic!("login should parse");
+        };
+        assert_eq!(args.label.as_deref(), Some("work"));
+
+        let cli = Cli::try_parse_from(["codex-cc-proxy", "login"]).unwrap();
+        let Command::Login(args) = cli.command else {
+            panic!("login should parse");
+        };
+        assert_eq!(args.label, None);
+    }
+
+    /// Listing is the default; switching has to be asked for. A bare
+    /// `accounts` that switched on a stray argument would bill a turn to the
+    /// wrong account.
+    #[test]
+    fn accounts_lists_by_default_and_switches_only_when_asked() {
+        let cli = Cli::try_parse_from(["codex-cc-proxy", "accounts"]).unwrap();
+        let Command::Accounts(args) = cli.command else {
+            panic!("accounts should parse");
+        };
+        assert_eq!(args.select, None);
+
+        let cli = Cli::try_parse_from(["codex-cc-proxy", "accounts", "--use", "work"]).unwrap();
+        let Command::Accounts(args) = cli.command else {
+            panic!("accounts should parse");
+        };
+        assert_eq!(args.select.as_deref(), Some("work"));
+
+        // A bare name is not a switch.
+        assert!(Cli::try_parse_from(["codex-cc-proxy", "accounts", "work"]).is_err());
     }
 
     /// `env --json` and `settings` are one document under two names, so a

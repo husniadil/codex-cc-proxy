@@ -894,6 +894,55 @@ Credentials sit behind a `CredentialStore` trait. The default implementation is 
 file created `0600`. Platform keychains satisfy the same trait. Credentials never
 appear in process arguments, logs, or the configuration file.
 
+### 8.1 More than one account
+
+One store holds several grants, and one of them is **selected**: the account
+every turn is made as, and the only one `CredentialStore` reports. A caller that
+authenticates a request sees one grant and needs to know nothing else. Which
+grants exist and which is selected is the `AccountStore` half.
+
+An account is named by an operator's label where one was given, otherwise by the
+account id the grant carries, otherwise by an assigned `account-N`. Nothing in a
+grant other than the account id is an account id, so a store with neither label
+nor id assigns a name rather than deriving one from a token — a name taken from
+a token would be a fabricated fact about the account, and a secret in a field
+meant to be printed.
+
+**A login adds; a refresh saves.** They are different verbs on purpose. An
+authorization produces a new grant, and writing it over whichever account
+happened to be selected would retire a working one with nothing said. A refresh
+writes the grant of the account it read, and appending there would leave two
+entries sharing one refresh-token family. Authorizing an account that is already
+stored replaces that account's grant rather than adding a second entry for it,
+for the same reason.
+
+**Accounts do not interfere with each other.** Each holds its own
+refresh-token family, so rotating one leaves every other exactly where it was.
+This is a property of separate grants, not a measured property of rotation: a
+superseded token was once observed still redeeming and later refused as
+`refresh_token_reused`, so nothing here depends on a superseded token staying
+usable. What must be kept out of the design is the other arrangement — two
+holders of *one* account — because there the last refresh retires the token
+every other holder is still carrying.
+
+Two things belong to the grant rather than to the daemon, and travel with a
+switch. A refusal is a statement about one refresh token, so selecting another
+account clears it; carrying it across would report the new account as finished
+without ever having spent it. A quota belongs to the account that earned it, so
+the snapshot is dropped and the next turn supplies one — reporting the previous
+account's headroom is wrong in the direction that reads as room to spend.
+
+Clearing forgets one account and leaves the rest usable, selecting another to
+serve turns; clearing the last one removes the file, so "not authenticated" is
+still read from its absence. Clearing what is already gone is not an error.
+
+A credential file written before the store held more than one account is a bare
+grant, and is read as the single account it describes, named by its account id.
+It migrates on the next write rather than on read: reading credentials is not a
+reason to rewrite them. A `selected` naming an account that is not stored falls
+back to the first one, because the file still holds usable grants and answering
+"not authenticated" there sends an operator to re-authorize for nothing.
+
 ---
 
 ## 9. Testing
