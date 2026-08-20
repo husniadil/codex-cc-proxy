@@ -2,6 +2,8 @@
 
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::indexing_slicing)]
 
+use codex_cc_proxy::auth::authorize::Authorization;
+use codex_cc_proxy::auth::authorize::Kind;
 use codex_cc_proxy::catalog::Catalog;
 use pretty_assertions::assert_eq;
 
@@ -364,6 +366,21 @@ async fn recording_catalog() -> (String, std::sync::Arc<std::sync::Mutex<Vec<Str
     (format!("http://{addr}/models"), seen)
 }
 
+/// A grant's authorization, for the fetch tests: the header set a
+/// subscription endpoint expects.
+fn subscription(token: &str) -> Authorization {
+    Authorization {
+        kind: Kind::Subscription,
+        headers: vec![
+            ("authorization".to_owned(), format!("Bearer {token}")),
+            (
+                "originator".to_owned(),
+                codex_cc_proxy::upstream::http::ORIGINATOR.to_owned(),
+            ),
+        ],
+    }
+}
+
 #[tokio::test]
 async fn the_configured_client_version_is_the_one_sent() {
     let (endpoint, seen) = recording_catalog().await;
@@ -371,8 +388,7 @@ async fn the_configured_client_version_is_the_one_sent() {
     let catalog = codex_cc_proxy::catalog::fetch(
         &reqwest::Client::new(),
         &endpoint,
-        "token",
-        None,
+        &subscription("token"),
         "9.9.9",
         SHIPPING,
     )
@@ -393,8 +409,7 @@ async fn a_fetched_catalog_carries_the_configured_share() {
     let catalog = codex_cc_proxy::catalog::fetch(
         &reqwest::Client::new(),
         &endpoint,
-        "token",
-        None,
+        &subscription("token"),
         "2.0.0",
         25.0,
     )

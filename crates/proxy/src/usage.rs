@@ -286,21 +286,19 @@ impl UsageStore {
 pub async fn fetch(
     client: &reqwest::Client,
     endpoint: &str,
-    token: &str,
-    account_id: Option<&str>,
+    authorization: &crate::auth::authorize::Authorization,
 ) -> Result<Snapshot, crate::error::ProxyError> {
-    let mut request = client
-        .get(endpoint)
-        .bearer_auth(token)
-        .header("originator", crate::upstream::http::ORIGINATOR)
-        .header(
-            axum::http::header::USER_AGENT,
-            crate::upstream::http::USER_AGENT,
-        );
+    // Quota belongs to a subscription. There is no such figure behind a key,
+    // and asking for one with a key would spend a request to be told so in
+    // words that name neither half.
+    let authorization = authorization
+        .clone()
+        .for_endpoint(crate::auth::authorize::Kind::Subscription)?;
 
-    if let Some(account) = account_id {
-        request = request.header("chatgpt-account-id", account);
-    }
+    let request = authorization.apply(client.get(endpoint).header(
+        axum::http::header::USER_AGENT,
+        crate::upstream::http::USER_AGENT,
+    ));
 
     let response = request.send().await.map_err(|error| {
         crate::error::ProxyError::upstream(

@@ -1818,3 +1818,83 @@ fn the_account_verbs_work_on_a_key() {
     assert_eq!(accounts[0].name, "acct_123");
     assert!(accounts[0].selected);
 }
+
+/// §8 — what each kind puts on the wire.
+///
+/// The header set is the whole difference between the two endpoints. A grant
+/// identifies a subscription client and the account it is spending; a key
+/// identifies nothing but itself, and either of the other two headers on a key
+/// request is a header the endpoint taking it never asked for.
+#[tokio::test]
+async fn each_kind_authorizes_with_the_headers_its_endpoint_expects() {
+    use codex_cc_proxy::auth::authorize::Authorizer;
+    use codex_cc_proxy::auth::authorize::Kind;
+
+    let dir = tempfile::tempdir().unwrap();
+    let store = Arc::new(FileStore::new(dir.path().join("credentials.json")));
+    let authorizer = codex_cc_proxy::auth::authorize::AccountAuthorizer::new(
+        Arc::clone(&store) as Arc<dyn AccountStore>,
+        Arc::new(TokenSource::new(
+            Arc::clone(&store) as Arc<dyn CredentialStore>,
+            String::new(),
+            "client-abc",
+            Arc::new(FixedClock(2_000)),
+        )),
+    );
+
+    // Nothing stored: the answer says what to do about it rather than sending
+    // an empty authorization.
+    let error = authorizer
+        .authorize()
+        .await
+        .expect_err("an empty store cannot authorize");
+    assert!(error.to_string().contains("login"), "{error}");
+
+    store
+        .add(
+            &Credentials {
+                expires_at: Some(9_000),
+                ..sample()
+            },
+            None,
+        )
+        .unwrap();
+
+    let grant = authorizer.authorize().await.unwrap();
+    assert_eq!(grant.kind, Kind::Subscription);
+    let header = |set: &codex_cc_proxy::auth::authorize::Authorization, name: &str| {
+        set.headers
+            .iter()
+            .find(|(key, _)| key.eq_ignore_ascii_case(name))
+            .map(|(_, value)| value.clone())
+    };
+    assert_eq!(
+        header(&grant, "authorization").as_deref(),
+        Some("Bearer access-secret")
+    );
+    assert_eq!(
+        header(&grant, "chatgpt-account-id").as_deref(),
+        Some("acct_123")
+    );
+    assert!(header(&grant, "originator").is_some());
+
+    store.add_key("billing", "key-secret-value").unwrap();
+
+    let key = authorizer.authorize().await.unwrap();
+    assert_eq!(key.kind, Kind::Key);
+    assert_eq!(
+        header(&key, "authorization").as_deref(),
+        Some("Bearer key-secret-value")
+    );
+    assert_eq!(
+        header(&key, "chatgpt-account-id"),
+        None,
+        "a key has no account to name"
+    );
+    assert_eq!(
+        header(&key, "originator"),
+        None,
+        "the originator identifies a subscription client"
+    );
+    assert_eq!(key.headers.len(), 1, "one header, and nothing else");
+}

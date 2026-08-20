@@ -4,6 +4,7 @@
 //! interface. The CLI has no privileged path of its own, so a second front-end
 //! needs no new daemon work.
 
+use crate::auth::authorize::Authorizer;
 use crate::auth::store::AccountStore;
 use crate::error::ProxyError;
 use serde_json::Value;
@@ -758,16 +759,27 @@ async fn select_account(state: &ControlState, params: Option<&Value>) -> Result<
 /// went away (§7.1), and withdrawing models the account has would be the worse
 /// wrong answer. The caller is told which happened.
 async fn refresh_catalog(state: &ControlState) -> bool {
-    let Some(tokens) = state.tokens.as_ref() else {
+    let Some(authorizer) = authorizer(state) else {
         return false;
     };
-    let Ok(token) = tokens.access_token().await else {
+    let Ok(authorization) = authorizer.authorize().await else {
         return false;
     };
-    state
-        .catalog
-        .refresh(&token, tokens.account_id().as_deref())
-        .await
+    state.catalog.refresh(&authorization).await
+}
+
+/// The credential of the account serving turns, resolved the same way every
+/// upstream path resolves it.
+///
+/// Built here rather than held, because it is two handles and no state: a
+/// stored one would be a third place the selection could be read from.
+fn authorizer(state: &ControlState) -> Option<crate::auth::authorize::AccountAuthorizer> {
+    state.tokens.as_ref().map(|tokens| {
+        crate::auth::authorize::AccountAuthorizer::new(
+            Arc::clone(&state.credentials),
+            Arc::clone(tokens),
+        )
+    })
 }
 
 /// `disconnect` — forget one account.
@@ -838,18 +850,16 @@ async fn disconnect(state: &ControlState, params: Option<&Value>) -> Result<Valu
 /// that path cannot cover — a front-end with a figure to show on a daemon that
 /// has served no turn yet.
 async fn refresh_usage(state: &ControlState) -> Result<Value, ProxyError> {
-    let Some(tokens) = state.tokens.as_ref() else {
+    let Some(authorizer) = authorizer(state) else {
         return Err(ProxyError::authentication(
             "there are no credentials to ask with; run `login` first",
         ));
     };
 
-    let token = tokens.access_token().await?;
     let snapshot = crate::usage::fetch(
         &reqwest::Client::new(),
         &state.usage_endpoint,
-        &token,
-        tokens.account_id().as_deref(),
+        &authorizer.authorize().await?,
     )
     .await?;
 

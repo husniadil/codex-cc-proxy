@@ -31,7 +31,11 @@ pub struct HttpTransport {
     /// the failure is a 401 halfway through a working conversation.
     ///
     /// `None` for a replay server, which wants no credentials at all.
-    credentials: Option<Arc<crate::auth::tokens::TokenSource>>,
+    credentials: Option<Arc<dyn crate::auth::authorize::Authorizer>>,
+    /// Which family of credential this endpoint takes. A transport built
+    /// without being told takes a subscription's, which is what every endpoint
+    /// in this project was until there was a second kind.
+    kind: crate::auth::authorize::Kind,
 }
 
 impl HttpTransport {
@@ -41,6 +45,7 @@ impl HttpTransport {
             endpoint: endpoint.into(),
             compression: false,
             credentials: None,
+            kind: crate::auth::authorize::Kind::Subscription,
         }
     }
 
@@ -49,7 +54,16 @@ impl HttpTransport {
         self
     }
 
-    pub fn with_credentials(mut self, credentials: Arc<crate::auth::tokens::TokenSource>) -> Self {
+    /// Which credential kind this endpoint expects.
+    pub fn for_endpoint(mut self, kind: crate::auth::authorize::Kind) -> Self {
+        self.kind = kind;
+        self
+    }
+
+    pub fn with_credentials(
+        mut self,
+        credentials: Arc<dyn crate::auth::authorize::Authorizer>,
+    ) -> Self {
         self.credentials = Some(credentials);
         self
     }
@@ -70,7 +84,6 @@ impl Transport for HttpTransport {
             .client
             .post(&self.endpoint)
             .header(axum::http::header::ACCEPT, "text/event-stream")
-            .header("originator", ORIGINATOR)
             .header(axum::http::header::USER_AGENT, USER_AGENT)
             .header(axum::http::header::CONTENT_TYPE, "application/json");
 
@@ -93,11 +106,23 @@ impl Transport for HttpTransport {
             builder.body(body)
         };
 
-        if let Some(credentials) = &self.credentials {
-            builder = builder.bearer_auth(credentials.access_token().await?);
-            if let Some(account) = credentials.account_id() {
-                builder = builder.header("chatgpt-account-id", account);
+        // The credential decides what identifies this request, including the
+        // originator: it belongs to the subscription dialect and means nothing
+        // to an endpoint taking a key. With no credential at all — the replay
+        // paths, and nothing else — the subscription dialect is what this
+        // transport has always spoken.
+        match &self.credentials {
+            Some(credentials) => {
+                for (name, value) in credentials
+                    .authorize()
+                    .await?
+                    .for_endpoint(self.kind)?
+                    .headers
+                {
+                    builder = builder.header(name, value);
+                }
             }
+            None => builder = builder.header("originator", ORIGINATOR),
         }
 
         let response = builder.send().await.map_err(|error| {

@@ -207,6 +207,40 @@ pub struct UpstreamConfig {
     /// opened on a daemon that has been idle since it started.
     #[serde(default = "default_usage")]
     pub usage: String,
+    /// Where a key is spent, which is not where a grant is.
+    ///
+    /// A different endpoint with different billing, and the two must not be
+    /// crossed: §8 makes that a refusal rather than something the wire
+    /// discovers.
+    #[serde(default)]
+    pub key: KeyEndpoints,
+}
+
+/// The endpoints an API key is spent against.
+///
+/// No socket. The WebSocket protocol here belongs to the subscription backend,
+/// and nothing has been observed about a key endpoint speaking it — so a key
+/// account uses HTTP, which is a normal operating mode rather than a
+/// degradation (§4.2).
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct KeyEndpoints {
+    #[serde(default = "default_key_endpoint")]
+    pub endpoint: String,
+    /// The model list. It is a different service, so it may answer in a shape
+    /// this proxy cannot read; that falls back to the compiled list and says
+    /// so, exactly as an unreachable catalog does (§7.0).
+    #[serde(default = "default_key_catalog")]
+    pub catalog: String,
+}
+
+impl Default for KeyEndpoints {
+    fn default() -> Self {
+        Self {
+            endpoint: default_key_endpoint(),
+            catalog: default_key_catalog(),
+        }
+    }
 }
 
 fn default_client_version() -> String {
@@ -215,6 +249,14 @@ fn default_client_version() -> String {
 
 fn default_effective_window_percent() -> f64 {
     95.0
+}
+
+fn default_key_endpoint() -> String {
+    "https://api.openai.com/v1/responses".to_owned()
+}
+
+fn default_key_catalog() -> String {
+    "https://api.openai.com/v1/models".to_owned()
 }
 
 fn default_endpoint() -> String {
@@ -241,6 +283,7 @@ impl Default for UpstreamConfig {
             endpoint: default_endpoint(),
             websocket: default_websocket(),
             catalog: default_catalog(),
+            key: KeyEndpoints::default(),
             usage: default_usage(),
         }
     }

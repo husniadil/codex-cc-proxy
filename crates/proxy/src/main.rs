@@ -757,16 +757,30 @@ async fn run_with(args: RunArgs, capture: Capture) -> Result<()> {
         Arc::new(codex_cc_proxy::auth::tokens::SystemClock),
     ));
 
+    // One authorizer for every path that authenticates: it reads the store per
+    // request, so a switch or a login reaches the next request with nothing
+    // rebuilt.
+    let authorizer: Arc<dyn codex_cc_proxy::auth::authorize::Authorizer> =
+        Arc::new(codex_cc_proxy::auth::authorize::AccountAuthorizer::new(
+            Arc::clone(&credentials),
+            Arc::clone(&tokens),
+        ));
+
     // §7.0 — fetched with credentials when there are any. An unreachable
     // catalog falls back rather than failing: fetch failure is not evidence
     // that a model went away (§7.1), and a daemon that will not start because
     // the network blinked is the worse failure.
-    let fetched = match tokens.access_token().await {
-        Ok(token) => codex_cc_proxy::catalog::fetch(
+    // The catalog of whichever account is serving turns, from the endpoint
+    // that account's kind belongs to.
+    let catalog_endpoint = match codex_cc_proxy::auth::authorize::selected_kind(&credentials) {
+        codex_cc_proxy::auth::authorize::Kind::Key => config.upstream.key.catalog.clone(),
+        codex_cc_proxy::auth::authorize::Kind::Subscription => config.upstream.catalog.clone(),
+    };
+    let fetched = match authorizer.authorize().await {
+        Ok(authorization) => codex_cc_proxy::catalog::fetch(
             &reqwest::Client::new(),
-            &config.upstream.catalog,
-            &token,
-            tokens.account_id().as_deref(),
+            &catalog_endpoint,
+            &authorization,
             &config.upstream.client_version,
             config.upstream.effective_window_percent,
         )
@@ -784,7 +798,7 @@ async fn run_with(args: RunArgs, capture: Capture) -> Result<()> {
     // what the socket reports and not what routes turns.
     let catalog = Arc::new(codex_cc_proxy::catalog::CatalogSource::new(
         fetched,
-        config.upstream.catalog.clone(),
+        catalog_endpoint,
         config.upstream.client_version.clone(),
         config.upstream.effective_window_percent,
     ));
@@ -857,19 +871,34 @@ async fn run_with(args: RunArgs, capture: Capture) -> Result<()> {
     // response id all belong to one conversation.
     let websocket_enabled = config.transport.websocket;
     let compression = config.transport.compression;
-    let conduit_tokens = Arc::clone(&tokens);
+    let conduit_authorizer = Arc::clone(&authorizer);
+    let conduit_credentials = Arc::clone(&credentials);
     let conduit_endpoint = config.upstream.endpoint.clone();
     let conduit_websocket = config.upstream.websocket.clone();
+    let conduit_key = config.upstream.key.endpoint.clone();
     let conduits: codex_cc_proxy::ingress::ConduitFactory = Arc::new(move |session_id| {
+        // Which endpoint this conversation belongs to is decided by the
+        // account serving turns when it starts. A switch drops every live
+        // session (§3), so a conversation never outlives the kind it was
+        // opened for.
+        let kind = codex_cc_proxy::auth::authorize::selected_kind(&conduit_credentials);
+        let (endpoint, socket) = match kind {
+            codex_cc_proxy::auth::authorize::Kind::Key => (&conduit_key, None),
+            codex_cc_proxy::auth::authorize::Kind::Subscription => {
+                (&conduit_endpoint, Some(&conduit_websocket))
+            }
+        };
+
         let http = Arc::new(
-            HttpTransport::new(&conduit_endpoint)
-                .with_credentials(Arc::clone(&conduit_tokens))
+            HttpTransport::new(endpoint)
+                .for_endpoint(kind)
+                .with_credentials(Arc::clone(&conduit_authorizer))
                 .with_compression(compression),
         );
-        let websocket = websocket_enabled.then(|| {
+        let websocket = websocket_enabled.then_some(socket).flatten().map(|socket| {
             Arc::new(
-                codex_cc_proxy::upstream::websocket::WebSocketTransport::new(&conduit_websocket)
-                    .with_credentials(Arc::clone(&conduit_tokens))
+                codex_cc_proxy::upstream::websocket::WebSocketTransport::new(socket)
+                    .with_credentials(Arc::clone(&conduit_authorizer))
                     .with_compression(compression),
             )
         });
@@ -893,7 +922,7 @@ async fn run_with(args: RunArgs, capture: Capture) -> Result<()> {
         catalog: Arc::clone(&catalog),
         // Only reached if the factory is absent, which it is not here.
         transport: Arc::new(
-            HttpTransport::new(&config.upstream.endpoint).with_credentials(Arc::clone(&tokens)),
+            HttpTransport::new(&config.upstream.endpoint).with_credentials(Arc::clone(&authorizer)),
         ),
         conduits: Some(conduits),
         // §5.4 — empty streams are recorded whether or not capture was asked

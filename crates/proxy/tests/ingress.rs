@@ -1654,7 +1654,9 @@ async fn upstream_requests_carry_the_access_token() {
         Arc::new(codex_cc_proxy::auth::tokens::SystemClock),
     ));
 
-    let transport = HttpTransport::new(upstream.url.clone()).with_credentials(Arc::clone(&tokens));
+    let transport = HttpTransport::new(upstream.url.clone()).with_credentials(
+        Arc::clone(&tokens) as Arc<dyn codex_cc_proxy::auth::authorize::Authorizer>
+    );
 
     let request = codex_cc_proxy_core::responses::ResponsesRequest {
         model: "gpt-5.6-terra".to_owned(),

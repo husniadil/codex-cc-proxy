@@ -68,7 +68,7 @@ pub struct WebSocketTransport {
     endpoint: String,
     /// Asked for a token per connection, for the same reason as the HTTP
     /// transport: a captured token goes stale when the session refreshes.
-    credentials: Option<std::sync::Arc<crate::auth::tokens::TokenSource>>,
+    credentials: Option<std::sync::Arc<dyn crate::auth::authorize::Authorizer>>,
     /// Whether to offer `permessage-deflate` on the upgrade.
     ///
     /// The client offers and the server selects (RFC 7692), so an unoffered
@@ -99,7 +99,7 @@ impl WebSocketTransport {
 
     pub fn with_credentials(
         mut self,
-        credentials: std::sync::Arc<crate::auth::tokens::TokenSource>,
+        credentials: std::sync::Arc<dyn crate::auth::authorize::Authorizer>,
     ) -> Self {
         self.credentials = Some(credentials);
         self
@@ -207,14 +207,21 @@ impl WebSocketTransport {
             builder = builder.header("session_id", session_id);
         }
 
+        // The socket belongs to the subscription backend, so a credential of
+        // any other kind is refused here rather than upgraded and rejected
+        // with something that names neither half.
         if let Some(credentials) = &self.credentials {
-            let token = credentials.access_token().await?;
-            builder = builder.header(
-                axum::http::header::AUTHORIZATION.as_str(),
-                format!("Bearer {token}"),
-            );
-            if let Some(account) = credentials.account_id() {
-                builder = builder.header("chatgpt-account-id", account);
+            let authorization = credentials
+                .authorize()
+                .await?
+                .for_endpoint(crate::auth::authorize::Kind::Subscription)?;
+            for (name, value) in authorization.headers {
+                // `originator` is already on the builder above: this dialect
+                // sends it on every path, credential or not.
+                if name.eq_ignore_ascii_case("originator") {
+                    continue;
+                }
+                builder = builder.header(&name, value);
             }
         }
 

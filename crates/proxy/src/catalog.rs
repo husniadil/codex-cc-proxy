@@ -383,12 +383,11 @@ impl Catalog {
 pub async fn fetch(
     client: &reqwest::Client,
     endpoint: &str,
-    token: &str,
-    account_id: Option<&str>,
+    authorization: &crate::auth::authorize::Authorization,
     client_version: &str,
     default_percent: f64,
 ) -> Option<Catalog> {
-    let mut request = client
+    let request = client
         .get(endpoint)
         // Required, and its absence is a bare 400 that names nothing. The
         // backend also filters the list by it: each entry declares a minimum
@@ -396,16 +395,11 @@ pub async fn fetch(
         // catalog rather than an error — which reads exactly like an account
         // with no models.
         .query(&[("client_version", client_version)])
-        .bearer_auth(token)
-        .header("originator", crate::upstream::http::ORIGINATOR)
         .header(
             axum::http::header::USER_AGENT,
             crate::upstream::http::USER_AGENT,
         );
-
-    if let Some(account) = account_id {
-        request = request.header("chatgpt-account-id", account);
-    }
+    let request = authorization.apply(request);
 
     let attempt = request
         .send()
@@ -423,6 +417,12 @@ pub async fn fetch(
     let catalog = body
         .as_deref()
         .and_then(|body| Catalog::parse(body, default_percent).ok());
+
+    let account_id = authorization
+        .headers
+        .iter()
+        .find(|(name, _)| name.eq_ignore_ascii_case("chatgpt-account-id"))
+        .map(|(_, value)| value.as_str());
 
     match (catalog, account_id) {
         // Attributed only when it really came back from the backend for a
@@ -488,7 +488,7 @@ impl CatalogSource {
     /// evidence that a model went away (§7.1), and replacing a real list with
     /// the fallback on a network blink would withdraw models the account has.
     /// The answer says which happened rather than leaving it to be discovered.
-    pub async fn refresh(&self, token: &str, account_id: Option<&str>) -> bool {
+    pub async fn refresh(&self, authorization: &crate::auth::authorize::Authorization) -> bool {
         if self.endpoint.is_empty() {
             return false;
         }
@@ -496,8 +496,7 @@ impl CatalogSource {
         let fetched = fetch(
             &reqwest::Client::new(),
             &self.endpoint,
-            token,
-            account_id,
+            authorization,
             &self.client_version,
             self.default_percent,
         )

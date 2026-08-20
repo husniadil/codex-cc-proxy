@@ -5,6 +5,7 @@
 
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::indexing_slicing)]
 
+use codex_cc_proxy::auth::authorize::Authorizer;
 use codex_cc_proxy::auth::store::AccountStore;
 use codex_cc_proxy::auth::store::CredentialStore;
 use codex_cc_proxy::auth::store::Credentials;
@@ -235,10 +236,14 @@ impl Harness {
             "0.0.0",
             95.0,
         ));
-        let token = tokens.access_token().await.expect("a stored grant");
-        catalog
-            .refresh(&token, tokens.account_id().as_deref())
-            .await;
+        let authorization = codex_cc_proxy::auth::authorize::AccountAuthorizer::new(
+            Arc::clone(&self.store) as Arc<dyn AccountStore>,
+            Arc::clone(&tokens),
+        )
+        .authorize()
+        .await
+        .expect("a stored grant");
+        catalog.refresh(&authorization).await;
 
         let path = self._dir.path().join("control-4.sock");
         let state = ControlState {
