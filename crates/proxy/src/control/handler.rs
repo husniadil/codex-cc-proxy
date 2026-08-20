@@ -152,58 +152,62 @@ static INSTANCE: std::sync::LazyLock<String> =
 fn status(state: &ControlState) -> Value {
     let stored = state.credentials.accounts().unwrap_or_default();
     let catalog = state.catalog.current();
-    let authenticated = state
-        .credentials
-        .load()
-        .ok()
-        .flatten()
-        .map(|credentials| {
-            let id_token = credentials.id_token.as_deref();
-
+    let serving = stored.iter().find(|account| account.selected);
+    let authenticated = match serving {
+        Some(account) => {
             // Two sources know the plan, and they can disagree. The backend
             // reports it on every turn; the grant reports what it was when the
             // operator last authenticated and is never updated unless a refresh
             // happens to return a new id token. The live one wins, and which
             // one answered is said out loud — a plan read to explain an
             // entitlement refusal is worth nothing if its age is unknown.
+            //
+            // A key has neither source. It reports no plan rather than a
+            // plausible one, the same as every other field a grant carries and
+            // it does not.
             let (plan, source) = match state.usage.latest().and_then(|latest| latest.plan) {
                 Some(plan) => (Some(plan), "backend"),
-                None => (crate::auth::jwt::plan(id_token), "grant"),
+                None => (account.plan.clone(), "grant"),
             };
 
             json!({
+                // Connected means there is a credential to spend, whichever
+                // kind it is. Reading the grant alone reported a daemon that
+                // could serve every turn as not connected, and advised a login
+                // that would not have helped.
                 "connected": true,
                 // A grant the backend has refused is terminal: every turn after
                 // it fails, and nothing else here would say so — `connected`
-                // stays true because the credential file is still readable. A
-                // front-end that could not tell would show a healthy provider
-                // while every dispatch failed.
+                // stays true because the credential is still there and still
+                // readable. A front-end that could not tell would show a
+                // healthy provider while every dispatch failed.
                 "dead": state.tokens.as_ref().is_some_and(|tokens| tokens.is_dead()),
                 // What this daemon calls the account, and what the backend
                 // calls it. The first is what selects it; the second is what
                 // appears on a request.
-                "account": stored
-                    .iter()
-                    .find(|account| account.selected)
-                    .map(|account| account.name.clone()),
-                "account_id": credentials.account_id,
-                // Every stored account, so the answer that says a connection
-                // exists also says what else could serve one. Present and
-                // empty rather than absent.
-                "accounts": &stored,
+                "account": account.name.clone(),
+                // What it authenticates with, because that decides which
+                // endpoint it is spent against and what it can be asked for.
+                "kind": account.kind,
+                "account_id": account.account_id.clone(),
                 // Reported, never acted on. Null where neither source said
                 // anything: a defaulted plan would either explain away a
                 // refusal that has another cause or deny one that is real.
                 "plan": plan,
                 "plan_source": source,
-                "email": crate::auth::jwt::email(id_token),
-                "expires_at": credentials.expires_at,
+                "email": account.email.clone(),
+                "expires_at": account.expires_at,
+                // Every stored account, so the answer that says a connection
+                // exists also says what else could serve one. Present and
+                // empty rather than absent.
+                "accounts": &stored,
             })
-        })
+        }
         // Present and empty rather than absent, on the answer a front-end most
         // wants it on: nothing is connected, and these are the accounts it
         // could connect as.
-        .unwrap_or_else(|| json!({ "connected": false, "accounts": &stored }));
+        None => json!({ "connected": false, "accounts": &stored }),
+    };
 
     json!({
         "port": state.port,

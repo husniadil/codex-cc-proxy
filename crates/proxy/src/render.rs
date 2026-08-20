@@ -211,15 +211,32 @@ pub fn status(result: &Value) -> String {
         .and_then(Value::as_bool)
         .unwrap_or(false);
     lines.push(if connected {
-        let account = auth
-            .and_then(|auth| field(auth, "account_id"))
-            .and_then(Value::as_str)
-            .unwrap_or("account unknown");
+        // The address if the grant carried one, then the id the backend knows
+        // it by, then what this daemon calls the account — which always
+        // exists, and is the string every account verb takes.
         let who = auth
             .and_then(|auth| field(auth, "email"))
             .and_then(Value::as_str)
-            .unwrap_or(account);
-        format!("auth       connected ({who})")
+            .or_else(|| {
+                auth.and_then(|auth| field(auth, "account_id"))
+                    .and_then(Value::as_str)
+            })
+            .or_else(|| {
+                auth.and_then(|auth| field(auth, "account"))
+                    .and_then(Value::as_str)
+            })
+            .unwrap_or("account unknown");
+        // Named where it is not the kind this proxy started with, because a
+        // key is spent against another endpoint and cannot be asked for a
+        // quota.
+        let kind = match auth
+            .and_then(|auth| field(auth, "kind"))
+            .and_then(Value::as_str)
+        {
+            Some("key") => ", key",
+            _ => "",
+        };
+        format!("auth       connected ({who}{kind})")
     } else {
         "auth       not connected — run `codex-cc-proxy login`".to_owned()
     });

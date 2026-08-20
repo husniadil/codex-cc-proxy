@@ -163,6 +163,10 @@ async fn login(args: cli::LoginArgs) -> Result<()> {
         codex_cc_proxy::auth::store::FileStore::new(credential_path()),
     );
 
+    if args.key {
+        return store_key(&store, args.label.as_deref());
+    }
+
     let credentials =
         codex_cc_proxy::auth::login::run(Arc::clone(&store), args.label.as_deref(), |url| {
             println!(
@@ -187,6 +191,38 @@ async fn login(args: cli::LoginArgs) -> Result<()> {
         Some(account) => println!("Signed in ({account})."),
         None => println!("Signed in."),
     }
+    Ok(())
+}
+
+/// Store a key, read from stdin.
+///
+/// **Never from an argument.** A command line is visible to every process on
+/// the machine and lands in the shell's history file; §8 keeps credentials out
+/// of argv, and this is the path that would break that rule if it took one.
+///
+/// The name is required: a key carries no account id to be named by, and the
+/// name is what selects it afterwards.
+fn store_key(
+    store: &Arc<dyn codex_cc_proxy::auth::store::AccountStore>,
+    label: Option<&str>,
+) -> Result<()> {
+    let Some(name) = label else {
+        anyhow::bail!(
+            "name the account with `--as NAME`: a key carries no id to be named by, \
+             and the name is what `accounts --use` takes"
+        );
+    };
+
+    let mut key = String::new();
+    std::io::Read::read_to_string(&mut std::io::stdin(), &mut key)
+        .map_err(|error| anyhow::anyhow!("could not read the key from stdin: {error}"))?;
+    let key = key.trim();
+    if key.is_empty() {
+        anyhow::bail!("no key on stdin; pipe it in, or paste it and end with ctrl-d");
+    }
+
+    store.add_key(name, key)?;
+    println!("Stored a key as {name}. It serves turns from now on.");
     Ok(())
 }
 

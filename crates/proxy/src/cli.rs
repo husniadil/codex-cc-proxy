@@ -56,6 +56,12 @@ pub enum Command {
 
 #[derive(Debug, clap::Args)]
 pub struct LoginArgs {
+    /// Store a key read from stdin instead of starting an authorization.
+    ///
+    /// The secret arrives on stdin and never as an argument: an argument is
+    /// visible to every process on the machine and lands in shell history.
+    #[arg(long)]
+    pub key: bool,
     /// What to call the account this authorization produces.
     ///
     /// Without one it is named by the account id the grant carries. A label is
@@ -203,6 +209,21 @@ mod tests {
             panic!("run should parse");
         };
         assert!(!args.detach);
+    }
+
+    /// A key is not an authorization, and the secret is never an argument.
+    #[test]
+    fn login_can_store_a_key_instead_of_starting_a_flow() {
+        let cli =
+            Cli::try_parse_from(["codex-cc-proxy", "login", "--key", "--as", "billing"]).unwrap();
+        let Command::Login(args) = cli.command else {
+            panic!("login should parse");
+        };
+        assert!(args.key);
+        assert_eq!(args.label.as_deref(), Some("billing"));
+
+        // There is nowhere to put a secret on the command line.
+        assert!(Cli::try_parse_from(["codex-cc-proxy", "login", "--key", "sk-secret"]).is_err());
     }
 
     /// A login names the account it produces, so an operator holding two of

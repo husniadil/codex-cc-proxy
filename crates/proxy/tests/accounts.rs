@@ -265,3 +265,77 @@ fn the_binary_renames_an_account_without_touching_its_grant() {
         .unwrap();
     assert!(!output.status.success(), "the old name should be gone");
 }
+
+/// §8 — a key is stored without a browser flow, and never through argv.
+///
+/// The secret arrives on stdin because non-negotiable #7 puts credentials out
+/// of process arguments: an argument is visible to every process on the
+/// machine and lands in shell history. The name is required, because a key
+/// carries no id to be named by and the name is what `--use` takes.
+#[test]
+fn the_binary_stores_a_key_from_stdin_and_serves_turns_as_it() {
+    use std::io::Write;
+
+    let daemon = Daemon::start(&grant("acct_legacy"));
+    let home = daemon.dir.path().join("home");
+
+    let mut login = std::process::Command::new(env!("CARGO_BIN_EXE_codex-cc-proxy"))
+        .args(["login", "--key", "--as", "billing"])
+        .env("CODEX_CC_PROXY_HOME", &home)
+        .env("TMPDIR", daemon.dir.path())
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("the binary should run");
+    login
+        .stdin
+        .as_mut()
+        .expect("stdin")
+        .write_all(b"sk-probe-9c21-not-in-argv\n")
+        .unwrap();
+    let stored = login.wait_with_output().unwrap();
+    assert!(
+        stored.status.success(),
+        "{}",
+        String::from_utf8_lossy(&stored.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&stored.stdout).contains("billing"),
+        "it should say what it stored: {}",
+        String::from_utf8_lossy(&stored.stdout)
+    );
+
+    // Both accounts are there, and the key is the one serving turns.
+    let listed = daemon.run(&["accounts"]);
+    assert!(listed.contains("acct_legacy"), "{listed}");
+    assert!(
+        listed
+            .lines()
+            .any(|line| line.starts_with('*') && line.contains("billing")),
+        "the key should be serving turns: {listed}"
+    );
+    assert!(
+        !listed.contains("sk-probe"),
+        "the key reached a listing: {listed}"
+    );
+    assert!(daemon.run(&["status"]).contains("billing"));
+
+    // Switching back and forth is switching accounts, nothing more.
+    daemon.run(&["accounts", "--use", "acct_legacy"]);
+    assert!(
+        daemon
+            .run(&["accounts"])
+            .lines()
+            .any(|line| { line.starts_with('*') && line.contains("acct_legacy") })
+    );
+    daemon.run(&["accounts", "--use", "billing"]);
+
+    // And the secret is not in the file's listing of names either.
+    let stored = std::fs::read_to_string(home.join("credentials.json")).unwrap();
+    assert!(
+        stored.contains("sk-probe-9c21-not-in-argv"),
+        "it has to be stored somewhere"
+    );
+    assert!(stored.contains("\"kind\": \"key\""), "{stored}");
+}

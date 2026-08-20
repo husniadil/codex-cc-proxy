@@ -2798,3 +2798,31 @@ async fn accounts_and_status_say_what_kind_each_account_is() {
     assert!(rendered.contains("key"), "{rendered}");
     assert!(rendered.contains("acct_one@example.test"), "{rendered}");
 }
+
+/// A daemon serving turns as a key is connected.
+///
+/// `status` read the grant, and a key is not one, so an account that could
+/// serve every turn reported not connected with `login` as the advice — the
+/// one thing that would not help.
+#[tokio::test]
+async fn status_reports_a_key_account_as_connected() {
+    let harness = Harness::start().await;
+    harness.store.add_key("billing", "key-secret").unwrap();
+
+    let status = harness.call("status").await.unwrap();
+
+    assert_eq!(status["auth"]["connected"], json!(true));
+    assert_eq!(status["auth"]["account"], json!("billing"));
+    assert_eq!(status["auth"]["kind"], json!("key"));
+    // None of these exist behind a key, and none is invented.
+    assert_eq!(status["auth"]["account_id"], Value::Null);
+    assert_eq!(status["auth"]["email"], Value::Null);
+    assert_eq!(status["auth"]["expires_at"], Value::Null);
+    assert_eq!(status["auth"]["plan"], Value::Null);
+    assert_eq!(status["auth"]["dead"], json!(false));
+
+    let rendered = render::status(&status);
+    assert!(rendered.contains("billing"), "{rendered}");
+    assert!(rendered.contains("key"), "{rendered}");
+    assert!(!rendered.contains("not connected"), "{rendered}");
+}
