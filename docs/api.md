@@ -443,7 +443,7 @@ A Unix domain socket, or a named pipe on Windows, carrying JSON-RPC:
 | Method | Returns | v0.1 |
 |---|---|---|
 | `status` | connection state, whether the grant has been **refused**, plan and which source reported it, the tier mapping and the effort ceiling, any mapped model the catalog withholds, whether the catalog was authoritative, the client policy in effect, and the build and `instance` serving the socket | yes |
-| `disconnect` | forgets one account — the selected one, or `{"account": name}` — and answers with the name it cleared; the rest stay usable | yes |
+| `disconnect` | forgets one account — the selected one, or `{"account": name}` — and answers with the name it cleared; the rest stay usable, and an idle account's removal leaves the serving grant's quota and refusal alone | yes |
 | `accounts` | every stored account and which one serves turns; no tokens | no — v0.3 |
 | `accounts.select` | `{"account": name}`, the account every following turn is made as | no — v0.3 |
 | `models` | catalog, and whether it is the fallback list | yes |
@@ -495,8 +495,11 @@ the ingress authenticates through, so the next turn is made as the account
 named rather than the one this socket merely reports. Two things go with it,
 because they belong to the grant and not to the daemon: a refusal is about one
 refresh token and is cleared, and the quota snapshot is dropped so the next turn
-supplies one for whoever is serving now. `disconnect` does the same for the same
-reason.
+supplies one for whoever is serving now. `disconnect` does the same when the
+account it forgets is the one that was serving, and only then: forgetting an
+idle account changes nothing about the grant being spent, and clearing its
+refusal there would leave `status` reporting a healthy grant while every
+dispatch failed.
 
 **`status` names the account.** `auth.account` is what this daemon calls the one
 serving turns and is what selects it; `auth.account_id` is what the backend

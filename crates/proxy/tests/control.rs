@@ -2222,3 +2222,56 @@ async fn the_rendered_account_list_marks_the_one_serving_turns() {
     let rendered = render::accounts(&harness.call("accounts").await.unwrap());
     assert!(rendered.contains("login"), "{rendered}");
 }
+
+/// Forgetting an account that was not serving turns leaves the serving one's
+/// quota and its refusal alone.
+///
+/// Both belong to the grant being spent. Dropping the snapshot costs the
+/// operator a figure they had; forgetting a refusal is worse — `status` would
+/// report a healthy grant while every dispatch kept failing, which is the one
+/// thing that field exists to prevent.
+#[tokio::test]
+async fn removing_an_idle_account_leaves_the_serving_grant_alone() {
+    let harness = Harness::start().await;
+    harness
+        .store
+        .add(&grant("acct_spare", "a-spare"), None)
+        .unwrap();
+    harness
+        .store
+        .add(&grant("acct_serving", "a-serving"), None)
+        .unwrap();
+    harness.usage.record(&codex_cc_proxy::usage::Snapshot {
+        plan: Some("plus".to_owned()),
+        ..Default::default()
+    });
+
+    harness
+        .call_with("disconnect", json!({ "account": "acct_spare" }))
+        .await
+        .unwrap();
+
+    assert_eq!(
+        harness.call("usage").await.unwrap()["known"],
+        json!(true),
+        "the serving account's quota was discarded with another account"
+    );
+    assert_eq!(
+        harness.store.load().unwrap().unwrap().access_token,
+        "a-serving"
+    );
+}
+
+/// §3 — `auth.accounts` is present and empty rather than absent, including on
+/// the answer that says nothing is connected. That is the state a front-end
+/// most wants the list on, and a caller written to the documented contract
+/// would read `undefined` where the document promised `[]`.
+#[tokio::test]
+async fn status_lists_accounts_even_when_nothing_is_connected() {
+    let harness = Harness::start().await;
+
+    let status = harness.call("status").await.unwrap();
+
+    assert_eq!(status["auth"]["connected"], json!(false));
+    assert_eq!(status["auth"]["accounts"], json!([]));
+}

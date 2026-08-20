@@ -901,8 +901,12 @@ every turn is made as, and the only one `CredentialStore` reports. A caller that
 authenticates a request sees one grant and needs to know nothing else. Which
 grants exist and which is selected is the `AccountStore` half.
 
-An account is named by an operator's label where one was given, otherwise by the
-account id the grant carries, otherwise by an assigned `account-N`. Nothing in a
+An account is **identified** by the account id its grant carries, and *named*
+by an operator's label where one was given, otherwise by that same id,
+otherwise by an assigned `account-N`. The two are different questions: a login
+carrying a label for an account already stored renames that account, and a
+login carrying none keeps the name it is already filed under. Neither adds a
+second entry for it. Nothing in a
 grant other than the account id is an account id, so a store with neither label
 nor id assigns a name rather than deriving one from a token — a name taken from
 a token would be a fabricated fact about the account, and a secret in a field
@@ -915,6 +919,18 @@ writes the grant of the account it read, and appending there would leave two
 entries sharing one refresh-token family. Authorizing an account that is already
 stored replaces that account's grant rather than adding a second entry for it,
 for the same reason.
+
+Both resolve the entry by account id rather than by the selection at the moment
+of writing. A refresh is a read, a network round trip, and a write; the
+selection can move in between, and a write aimed at whatever is selected *then*
+drops one account's rotated grant into another's entry — destroying a refresh
+token that only a re-login replaces, and leaving that account authenticating as
+somebody else. Only a grant carrying no account id falls back to the selection.
+
+The file is **replaced, never truncated in place**: the new content is written
+beside it and moved over it, under a name carrying the writing process's id so
+two writers cannot interleave into a file that is neither. One account's
+rotated token is not worth risking every account to a write that stops halfway.
 
 **Accounts do not interfere with each other.** Each holds its own
 refresh-token family, so rotating one leaves every other exactly where it was.

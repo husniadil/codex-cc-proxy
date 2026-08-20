@@ -151,6 +151,19 @@ impl StoredFile {
         self.accounts.iter().position(|entry| entry.name == name)
     }
 
+    /// Which entry belongs to this account, by the id the backend knows it by.
+    ///
+    /// Identity, as distinct from the name it is filed under. An account
+    /// authorized again under a different label is the same account, and
+    /// storing it twice would leave two entries holding one refresh-token
+    /// family — the arrangement §8.1 exists to keep out of the store.
+    fn index_by_account(&self, account_id: Option<&str>) -> Option<usize> {
+        let account_id = account_id?;
+        self.accounts
+            .iter()
+            .position(|entry| entry.grant.account_id.as_deref() == Some(account_id))
+    }
+
     fn names(&self) -> String {
         self.accounts
             .iter()
@@ -178,10 +191,16 @@ impl StoredFile {
     /// Put a grant under a name, replacing whatever was there.
     fn put(&mut self, name: String, credentials: &Credentials) {
         match self
-            .index_of(&name)
+            .index_by_account(credentials.account_id.as_deref())
+            .or_else(|| self.index_of(&name))
             .and_then(|index| self.accounts.get_mut(index))
         {
-            Some(entry) => entry.grant = credentials.clone(),
+            Some(entry) => {
+                // A label renames the account it was given for; it never
+                // creates a second entry for one already stored.
+                entry.name = name.clone();
+                entry.grant = credentials.clone();
+            }
             None => self.accounts.push(Entry {
                 name: name.clone(),
                 grant: credentials.clone(),
@@ -270,10 +289,23 @@ impl FileStore {
             ProxyError::authentication(format!("could not serialize credentials: {error}"))
         })?;
 
+        // Written beside the file and moved over it. The store holds every
+        // account now, so a write interrupted partway — no space, a crash —
+        // would take all of them for one account's rotated token. The
+        // replacement carries the process id because two daemons writing one
+        // temporary path would interleave into a file that is neither.
+        //
         // Created with restrictive permissions from the outset. Writing first
         // and tightening afterwards leaves a window in which the file is
         // world-readable, and that window is enough.
-        write_private(&self.path, &body)
+        let mut pending = self.path.clone().into_os_string();
+        pending.push(format!(".{}.pending", std::process::id()));
+        let pending = PathBuf::from(pending);
+        write_private(&pending, &body)?;
+        std::fs::rename(&pending, &self.path).map_err(|error| {
+            let _ = std::fs::remove_file(&pending);
+            ProxyError::authentication(format!("could not replace the credential file: {error}"))
+        })
     }
 
     fn remove_file(&self) -> Result<(), ProxyError> {
@@ -313,8 +345,15 @@ impl CredentialStore for FileStore {
     /// two entries sharing one refresh-token family.
     fn save(&self, credentials: &Credentials) -> Result<(), ProxyError> {
         let mut file = self.read()?;
+        // The account the grant belongs to, and only failing that the selected
+        // one. A refresh is a read, a network round trip, and a write; between
+        // the read and the write the selection can move, and resolving the
+        // target by selection would drop one account's rotated grant into
+        // another's entry — destroying a refresh token only a re-login
+        // replaces, and leaving that account authenticating as somebody else.
         match file
-            .selected_index()
+            .index_by_account(credentials.account_id.as_deref())
+            .or_else(|| file.selected_index())
             .and_then(|index| file.accounts.get_mut(index))
         {
             Some(entry) => entry.grant = credentials.clone(),
@@ -365,7 +404,15 @@ impl AccountStore for FileStore {
         let mut file = self.read()?;
         let name = match label {
             Some(label) => label.to_owned(),
-            None => file.name_for(credentials),
+            // Already stored, under whatever it is already called: a login
+            // carrying no label is not a request to rename anything.
+            None => match file
+                .index_by_account(credentials.account_id.as_deref())
+                .and_then(|index| file.accounts.get(index))
+            {
+                Some(entry) => entry.name.clone(),
+                None => file.name_for(credentials),
+            },
         };
         file.put(name.clone(), credentials);
         self.write(&file)?;

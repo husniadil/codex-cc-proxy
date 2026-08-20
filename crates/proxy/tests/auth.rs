@@ -1303,3 +1303,135 @@ async fn a_second_login_adds_an_account_rather_than_replacing_one() {
 
     assert_eq!(store.accounts().unwrap()[2].name, "spare");
 }
+
+/// An account is identified by its account id, not by the name it happens to
+/// be stored under.
+///
+/// Authorizing an account already stored under a different name must replace
+/// that account rather than add a second entry for it. Two entries for one
+/// account are two holders of one refresh-token family, which is the
+/// arrangement §8.1 exists to keep out of the store: the first rotation
+/// retires the other entry's token, and the operator is left with an account
+/// they can see and can never spend.
+#[test]
+fn re_authorizing_an_account_stored_under_another_name_replaces_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = FileStore::new(dir.path().join("credentials.json"));
+
+    store.add(&sample(), Some("work")).unwrap();
+    let name = store
+        .add(
+            &Credentials {
+                refresh_token: "re-authorized".to_owned(),
+                ..sample()
+            },
+            None,
+        )
+        .unwrap();
+
+    let accounts = store.accounts().unwrap();
+    assert_eq!(
+        accounts.len(),
+        1,
+        "one account, two entries sharing its refresh-token family: {accounts:?}"
+    );
+    assert_eq!(name, "work", "the name it is already stored under");
+    assert_eq!(
+        store.load().unwrap().unwrap().refresh_token,
+        "re-authorized"
+    );
+
+    // And a new label renames the account rather than duplicating it.
+    let name = store.add(&sample(), Some("day-job")).unwrap();
+    assert_eq!(name, "day-job");
+    let accounts = store.accounts().unwrap();
+    assert_eq!(accounts.len(), 1);
+    assert_eq!(accounts[0].name, "day-job");
+}
+
+/// A refresh writes the grant of the account it read, even if the selection
+/// moved while the request was in flight.
+///
+/// `save` resolving the target by selection is a read-modify-write across a
+/// network round trip: switch accounts in the middle and one account's rotated
+/// grant lands in another's entry, destroying a refresh token that only a
+/// re-login can replace and leaving that account authenticating as somebody
+/// else.
+#[test]
+fn a_grant_is_saved_to_the_account_it_belongs_to_not_the_selected_one() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = FileStore::new(dir.path().join("credentials.json"));
+    store.add(&sample(), None).unwrap();
+    store.add(&other(), None).unwrap();
+
+    // `acct_456` is selected; the grant being written belongs to `acct_123`.
+    store
+        .save(&Credentials {
+            refresh_token: "rotated".to_owned(),
+            ..sample()
+        })
+        .unwrap();
+
+    store.select("acct_123").unwrap();
+    assert_eq!(store.load().unwrap().unwrap().refresh_token, "rotated");
+
+    store.select("acct_456").unwrap();
+    let stored = store.load().unwrap().unwrap();
+    assert_eq!(
+        stored.refresh_token, "other-refresh",
+        "another account's rotation landed in this one's entry"
+    );
+    assert_eq!(stored.access_token, "other-access");
+}
+
+/// The store is replaced, never truncated in place.
+///
+/// The file holds every account now. A write interrupted between truncation
+/// and completion would leave the whole store unreadable — every account gone
+/// for one account's rotated token — so the new content is written beside it
+/// and moved over it.
+#[cfg(unix)]
+#[test]
+fn a_write_leaves_no_window_where_the_store_is_half_written() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("credentials.json");
+    let store = FileStore::new(&path);
+    store.add(&sample(), None).unwrap();
+    store.add(&other(), None).unwrap();
+
+    let before = std::fs::read_to_string(&path).unwrap();
+    let inode = |path: &std::path::Path| -> u64 {
+        use std::os::unix::fs::MetadataExt;
+        std::fs::metadata(path).unwrap().ino()
+    };
+    let first = inode(&path);
+
+    store
+        .save(&Credentials {
+            refresh_token: "rotated".to_owned(),
+            ..other()
+        })
+        .unwrap();
+
+    assert_ne!(
+        inode(&path),
+        first,
+        "the file was written in place rather than replaced"
+    );
+    assert_ne!(std::fs::read_to_string(&path).unwrap(), before);
+    // Nothing is left lying around beside it.
+    let strays: Vec<_> = std::fs::read_dir(dir.path())
+        .unwrap()
+        .filter_map(|entry| entry.ok().map(|entry| entry.file_name()))
+        .filter(|name| name != "credentials.json")
+        .collect();
+    assert!(strays.is_empty(), "left behind: {strays:?}");
+
+    // Still private, and still both accounts.
+    use std::os::unix::fs::PermissionsExt;
+    assert_eq!(
+        std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
+    assert_eq!(store.accounts().unwrap().len(), 2);
+}

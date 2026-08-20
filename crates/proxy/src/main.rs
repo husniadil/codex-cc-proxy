@@ -163,17 +163,27 @@ async fn login(args: cli::LoginArgs) -> Result<()> {
         codex_cc_proxy::auth::store::FileStore::new(credential_path()),
     );
 
-    let credentials = codex_cc_proxy::auth::login::run(store, args.label.as_deref(), |url| {
-        println!(
-            "Open this URL to authorize:\n\n{url}\n\n\
+    let credentials =
+        codex_cc_proxy::auth::login::run(Arc::clone(&store), args.label.as_deref(), |url| {
+            println!(
+                "Open this URL to authorize:\n\n{url}\n\n\
              It authorizes whichever ChatGPT account that browser is signed into. \
              Sign in as the account you want first, or use a private window to \
              pick a different one.\n"
-        );
-    })
-    .await?;
+            );
+        })
+        .await?;
 
-    match credentials.account_id {
+    // The name the store filed it under, which is the string `accounts --use`
+    // takes. The account id is not always that name — a label supersedes it,
+    // and a grant carrying no id is named by the store.
+    let named = store
+        .accounts()
+        .ok()
+        .and_then(|accounts| accounts.into_iter().find(|account| account.selected))
+        .map(|account| account.name)
+        .or(credentials.account_id);
+    match named {
         Some(account) => println!("Signed in ({account})."),
         None => println!("Signed in."),
     }

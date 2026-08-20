@@ -193,7 +193,10 @@ fn status(state: &ControlState) -> Value {
                 "expires_at": credentials.expires_at,
             })
         })
-        .unwrap_or_else(|| json!({ "connected": false }));
+        // Present and empty rather than absent, on the answer a front-end most
+        // wants it on: nothing is connected, and these are the accounts it
+        // could connect as.
+        .unwrap_or_else(|| json!({ "connected": false, "accounts": &stored }));
 
     json!({
         "port": state.port,
@@ -695,29 +698,36 @@ fn disconnect(state: &ControlState, params: Option<&Value>) -> Result<Value, Pro
         .and_then(|params| params.get("account"))
         .and_then(Value::as_str);
 
+    let serving = state
+        .credentials
+        .accounts()?
+        .into_iter()
+        .find(|account| account.selected)
+        .map(|account| account.name);
+
     let cleared = match named {
         Some(name) => {
             state.credentials.remove(name)?;
             Some(name.to_owned())
         }
         None => {
-            let serving = state
-                .credentials
-                .accounts()?
-                .into_iter()
-                .find(|account| account.selected)
-                .map(|account| account.name);
             // Clearing what is already gone is not an error: `disconnect` has
             // always been safe to run twice.
             state.credentials.clear()?;
-            serving
+            serving.clone()
         }
     };
 
-    // The quota and any refusal belonged to a grant that is no longer here.
-    state.usage.clear();
-    if let Some(tokens) = state.tokens.as_ref() {
-        tokens.forget_refusal();
+    // Only if the grant being spent is the one that went. Forgetting an idle
+    // account changes nothing about the account serving turns, and discarding
+    // its quota there costs a figure for nothing — while forgetting its
+    // refusal would leave `status` reporting a healthy grant while every
+    // dispatch failed.
+    if cleared.is_some() && cleared == serving {
+        state.usage.clear();
+        if let Some(tokens) = state.tokens.as_ref() {
+            tokens.forget_refusal();
+        }
     }
 
     Ok(json!({ "disconnected": cleared }))
