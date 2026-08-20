@@ -166,8 +166,14 @@ fn status(state: &ControlState) -> Value {
             // plausible one, the same as every other field a grant carries and
             // it does not.
             let (plan, source) = match state.usage.latest().and_then(|latest| latest.plan) {
-                Some(plan) => (Some(plan), "backend"),
-                None => (account.plan.clone(), "grant"),
+                Some(plan) => (Some(plan), Some("backend")),
+                // Null rather than `grant` where there is no grant: naming a
+                // source that does not exist for this account attributes a
+                // missing figure to something that was never asked.
+                None => match account.plan.clone() {
+                    Some(plan) => (Some(plan), Some("grant")),
+                    None => (None, None),
+                },
             };
 
             json!({

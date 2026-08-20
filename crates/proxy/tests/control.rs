@@ -233,6 +233,7 @@ impl Harness {
         let catalog = Arc::new(CatalogSource::new(
             Catalog::fallback(),
             endpoint.to_owned(),
+            String::new(),
             "0.0.0",
             95.0,
         ));
@@ -2825,4 +2826,50 @@ async fn status_reports_a_key_account_as_connected() {
     assert!(rendered.contains("billing"), "{rendered}");
     assert!(rendered.contains("key"), "{rendered}");
     assert!(!rendered.contains("not connected"), "{rendered}");
+}
+
+/// A missing plan names no source. `grant` is where the fallback reads it
+/// from, and an account holding a key has none — attributing a null to it says
+/// something was asked that never was.
+#[tokio::test]
+async fn a_key_account_reports_no_plan_and_no_source_for_one() {
+    let harness = Harness::start().await;
+    harness.store.add_key("billing", "key-secret").unwrap();
+
+    let status = harness.call("status").await.unwrap();
+    assert_eq!(status["auth"]["plan"], Value::Null);
+    assert_eq!(status["auth"]["plan_source"], Value::Null);
+
+    // A grant still says where its plan came from.
+    harness
+        .store
+        .add(&grant("acct_one", "a-one"), None)
+        .unwrap();
+    let status = harness.call("status").await.unwrap();
+    assert_eq!(status["auth"]["plan"], json!("plus"));
+    assert_eq!(status["auth"]["plan_source"], json!("grant"));
+}
+
+/// A grant this daemon knows no address or id for is not a key, and does not
+/// read as one.
+#[tokio::test]
+async fn a_thin_grant_is_not_rendered_as_a_key() {
+    let harness = Harness::start().await;
+    harness
+        .store
+        .add(
+            &Credentials {
+                access_token: "a".to_owned(),
+                refresh_token: "r".to_owned(),
+                id_token: None,
+                account_id: None,
+                expires_at: None,
+            },
+            Some("mystery"),
+        )
+        .unwrap();
+
+    let rendered = render::accounts(&harness.call("accounts").await.unwrap());
+    assert!(rendered.contains("mystery"), "{rendered}");
+    assert!(!rendered.contains("key"), "{rendered}");
 }

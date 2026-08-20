@@ -368,7 +368,7 @@ async fn recording_catalog() -> (String, std::sync::Arc<std::sync::Mutex<Vec<Str
 
 /// A grant's authorization, for the fetch tests: the header set a
 /// subscription endpoint expects.
-fn subscription(token: &str) -> Authorization {
+fn subscription_auth(token: &str) -> Authorization {
     Authorization {
         kind: Kind::Subscription,
         headers: vec![
@@ -388,7 +388,7 @@ async fn the_configured_client_version_is_the_one_sent() {
     let catalog = codex_cc_proxy::catalog::fetch(
         &reqwest::Client::new(),
         &endpoint,
-        &subscription("token"),
+        &subscription_auth("token"),
         "9.9.9",
         SHIPPING,
     )
@@ -409,7 +409,7 @@ async fn a_fetched_catalog_carries_the_configured_share() {
     let catalog = codex_cc_proxy::catalog::fetch(
         &reqwest::Client::new(),
         &endpoint,
-        &subscription("token"),
+        &subscription_auth("token"),
         "2.0.0",
         25.0,
     )
@@ -535,4 +535,57 @@ fn an_unavailable_catalog_substitutes_nothing() {
             .is_empty()
     );
     assert_eq!(tiers[0].model, "gpt-5.6-absent");
+}
+
+// ---------------------------------------------------------------------------
+// §8.2 — a catalog is fetched from the endpoint its credential belongs to.
+// ---------------------------------------------------------------------------
+
+/// A key's model list comes from the key endpoint, and a grant's from the
+/// subscription one.
+///
+/// The endpoint used to be chosen once, when the daemon started, from whichever
+/// account was selected then. Switching kinds afterwards refetched from the
+/// endpoint the *previous* kind belonged to — sending a key to a host it was
+/// never issued for, with the secret in the header. That is the crossing §8.2
+/// says cannot happen.
+#[tokio::test]
+async fn a_catalog_is_fetched_from_the_endpoint_its_credential_belongs_to() {
+    let subscription = recording_catalog().await;
+    let key = recording_catalog().await;
+
+    let source = codex_cc_proxy::catalog::CatalogSource::new(
+        Catalog::fallback(),
+        subscription.0.clone(),
+        key.0.clone(),
+        "2.0.0",
+        SHIPPING,
+    );
+
+    assert!(source.refresh(&subscription_auth("grant-token")).await);
+    assert_eq!(subscription.1.lock().unwrap().len(), 1);
+    assert_eq!(
+        key.1.lock().unwrap().len(),
+        0,
+        "a grant asked the key endpoint"
+    );
+
+    assert!(
+        source
+            .refresh(&Authorization {
+                kind: Kind::Key,
+                headers: vec![("authorization".to_owned(), "Bearer key-secret".to_owned())],
+            })
+            .await
+    );
+    assert_eq!(
+        key.1.lock().unwrap().len(),
+        1,
+        "the key's list should come from the key endpoint"
+    );
+    assert_eq!(
+        subscription.1.lock().unwrap().len(),
+        1,
+        "the key was sent to the subscription endpoint"
+    );
 }

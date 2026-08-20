@@ -1898,3 +1898,72 @@ async fn each_kind_authorizes_with_the_headers_its_endpoint_expects() {
     );
     assert_eq!(key.headers.len(), 1, "one header, and nothing else");
 }
+
+/// Storing a key under a name a grant already holds is refused.
+///
+/// `add` refuses the same collision, and for the same reason: the grant would
+/// be gone with nothing said, and only a re-login brings it back. A key is
+/// handed over rather than granted, which makes it easier to type by accident,
+/// not safer.
+#[test]
+fn a_key_cannot_be_stored_over_a_grant() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = FileStore::new(dir.path().join("credentials.json"));
+    store.add(&sample(), Some("work")).unwrap();
+
+    let error = store
+        .add_key("work", "key-secret-value")
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("work"), "{error}");
+
+    let accounts = store.accounts().unwrap();
+    assert_eq!(accounts.len(), 1);
+    assert_eq!(accounts[0].kind, "grant");
+    assert_eq!(store.load().unwrap().unwrap().access_token, "access-secret");
+
+    // Replacing a key with another key is not a collision: that is how a
+    // rotated secret is stored.
+    store.add_key("billing", "first").unwrap();
+    store.add_key("billing", "second").unwrap();
+    assert_eq!(store.accounts().unwrap().len(), 2);
+}
+
+/// A rotation with nowhere to go is refused rather than turned into a new
+/// account.
+///
+/// A grant carrying no account id is matched by selection alone, and the
+/// selection can move to a key while a refresh is in flight. Appending the
+/// rotated grant there would silently move the operator off the account they
+/// had just selected.
+#[test]
+fn a_rotation_that_belongs_to_no_stored_account_is_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = FileStore::new(dir.path().join("credentials.json"));
+    store.add_key("billing", "key-secret-value").unwrap();
+
+    let error = store
+        .save(&Credentials {
+            account_id: None,
+            ..sample()
+        })
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("account"), "{error}");
+
+    let accounts = store.accounts().unwrap();
+    assert_eq!(
+        accounts.len(),
+        1,
+        "a rotation created an account: {accounts:?}"
+    );
+    assert_eq!(accounts[0].name, "billing");
+    assert!(accounts[0].selected, "the selection moved");
+
+    // An empty store still takes one: a caller holding nothing but
+    // `CredentialStore` has to be able to store what it just obtained.
+    let dir = tempfile::tempdir().unwrap();
+    let store = FileStore::new(dir.path().join("credentials.json"));
+    store.save(&sample()).unwrap();
+    assert_eq!(store.accounts().unwrap().len(), 1);
+}

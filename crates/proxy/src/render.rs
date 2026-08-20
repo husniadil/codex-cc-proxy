@@ -149,11 +149,14 @@ pub fn accounts(result: &Value) -> String {
             // A key has neither an address nor an id — it is one secret — so
             // the column that tells two accounts apart falls through to what
             // the account is.
+            // A key is one secret: no address, no id, and nothing else to say
+            // about it. A grant missing both has an id somewhere and this
+            // daemon simply does not have it, which is a different sentence.
+            let key = field(account, "kind").and_then(Value::as_str) == Some("key");
             let who = field(account, "email")
                 .and_then(Value::as_str)
                 .or_else(|| field(account, "account_id").and_then(Value::as_str))
-                .or_else(|| field(account, "kind").and_then(Value::as_str))
-                .unwrap_or("id unknown");
+                .unwrap_or(if key { "key" } else { "id unknown" });
             format!("{marker} {name:<24} {who}")
         })
         .collect::<Vec<_>>()

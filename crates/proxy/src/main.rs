@@ -164,7 +164,7 @@ async fn login(args: cli::LoginArgs) -> Result<()> {
     );
 
     if args.key {
-        return store_key(&store, args.label.as_deref());
+        return store_key(&store, args.label.as_deref()).await;
     }
 
     let credentials =
@@ -187,9 +187,12 @@ async fn login(args: cli::LoginArgs) -> Result<()> {
         .and_then(|accounts| accounts.into_iter().find(|account| account.selected))
         .map(|account| account.name)
         .or(credentials.account_id);
-    match named {
+    match &named {
         Some(account) => println!("Signed in ({account})."),
         None => println!("Signed in."),
+    }
+    if let Some(account) = named {
+        hand_over_to(&account).await;
     }
     Ok(())
 }
@@ -202,7 +205,7 @@ async fn login(args: cli::LoginArgs) -> Result<()> {
 ///
 /// The name is required: a key carries no account id to be named by, and the
 /// name is what selects it afterwards.
-fn store_key(
+async fn store_key(
     store: &Arc<dyn codex_cc_proxy::auth::store::AccountStore>,
     label: Option<&str>,
 ) -> Result<()> {
@@ -223,7 +226,31 @@ fn store_key(
 
     store.add_key(name, key)?;
     println!("Stored a key as {name}. It serves turns from now on.");
+    hand_over_to(name).await;
     Ok(())
+}
+
+/// Tell a running daemon that this account is the one serving turns now.
+///
+/// The CLI writes the credential file directly, and the daemon reads it on
+/// every request — so the account moves either way. What does not move without
+/// this is everything a switch carries with it (`api.md` §3): the
+/// conversations already bound to the previous account, its quota, and its
+/// model list. A live conversation keeps the endpoint it dialed, and after a
+/// change of kind that endpoint refuses every turn it is given.
+///
+/// Best effort by design. No daemon running is the ordinary case for a login,
+/// and it is not a failure of one.
+async fn hand_over_to(name: &str) {
+    let told = control::call(
+        &control::default_path(),
+        "accounts.select",
+        Some(serde_json::json!({ "account": name })),
+    )
+    .await;
+    if told.is_ok() {
+        println!("The running daemon now serves turns as {name}.");
+    }
 }
 
 /// Stored accounts, and which one serves turns.
@@ -806,38 +833,28 @@ async fn run_with(args: RunArgs, capture: Capture) -> Result<()> {
     // catalog falls back rather than failing: fetch failure is not evidence
     // that a model went away (§7.1), and a daemon that will not start because
     // the network blinked is the worse failure.
-    // The catalog of whichever account is serving turns, from the endpoint
-    // that account's kind belongs to.
-    let catalog_endpoint = match codex_cc_proxy::auth::authorize::selected_kind(&credentials) {
-        codex_cc_proxy::auth::authorize::Kind::Key => config.upstream.key.catalog.clone(),
-        codex_cc_proxy::auth::authorize::Kind::Subscription => config.upstream.catalog.clone(),
-    };
-    let fetched = match authorizer.authorize().await {
-        Ok(authorization) => codex_cc_proxy::catalog::fetch(
-            &reqwest::Client::new(),
-            &catalog_endpoint,
-            &authorization,
-            &config.upstream.client_version,
-            config.upstream.effective_window_percent,
-        )
-        .await
-        .unwrap_or_else(codex_cc_proxy::catalog::Catalog::fallback),
-        Err(error) => {
-            tracing::info!(%error, "not authenticated; the model list is the fallback");
-            codex_cc_proxy::catalog::Catalog::fallback()
-        }
-    };
-
-    // In a slot, not as a value: a catalog describes the plan of the account
-    // it was fetched for, so switching accounts on a running daemon has to be
-    // able to replace it. Shared with the ingress, or a replacement would move
-    // what the socket reports and not what routes turns.
+    //
+    // In a slot holding both endpoints, not a value: a catalog describes the
+    // plan of the account it was fetched for, so switching accounts on a
+    // running daemon has to be able to replace it — from the endpoint that
+    // account's kind belongs to, which is why the pair travels together.
+    // Shared with the ingress, or a replacement would move what the socket
+    // reports and not what routes turns.
     let catalog = Arc::new(codex_cc_proxy::catalog::CatalogSource::new(
-        fetched,
-        catalog_endpoint,
+        codex_cc_proxy::catalog::Catalog::fallback(),
+        config.upstream.catalog.clone(),
+        config.upstream.key.catalog.clone(),
         config.upstream.client_version.clone(),
         config.upstream.effective_window_percent,
     ));
+    match authorizer.authorize().await {
+        Ok(authorization) => {
+            catalog.refresh(&authorization).await;
+        }
+        Err(error) => {
+            tracing::info!(%error, "not authenticated; the model list is the fallback");
+        }
+    }
 
     // A shipped default naming a model this account cannot see is replaced
     // rather than refused: `gpt-5.6-sol` is plan-gated, so the default mapping

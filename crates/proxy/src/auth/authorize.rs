@@ -43,12 +43,6 @@ pub struct Authorization {
 }
 
 impl Authorization {
-    /// This credential, if it belongs where it is about to be spent.
-    ///
-    /// A refusal rather than a fallback: a key sent to a subscription endpoint
-    /// comes back as a message about an invalid token, which sends whoever
-    /// reads it looking for the wrong problem. Both halves are named, because
-    /// either one could be the half that is wrong.
     /// Put these headers on a request.
     pub fn apply(&self, mut request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
         for (name, value) in &self.headers {
@@ -57,6 +51,12 @@ impl Authorization {
         request
     }
 
+    /// This credential, if it belongs where it is about to be spent.
+    ///
+    /// A refusal rather than a fallback: a key sent to a subscription endpoint
+    /// comes back as a message about an invalid token, which sends whoever
+    /// reads it looking for the wrong problem. Both halves are named, because
+    /// either one could be the half that is wrong.
     pub fn for_endpoint(self, expected: Kind) -> Result<Self, ProxyError> {
         if self.kind == expected {
             return Ok(self);

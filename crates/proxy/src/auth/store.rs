@@ -571,20 +571,32 @@ impl CredentialStore for FileStore {
             // rotated grant into another's entry — destroying a refresh token
             // only a re-login replaces, and leaving that account
             // authenticating as somebody else.
-            match file
+            let target = file
                 .index_by_account(credentials.account_id.as_deref())
-                .or_else(|| file.selected_index())
-                .and_then(|index| file.accounts.get_mut(index))
-            {
+                .or_else(|| file.selected_index());
+            let empty = file.accounts.is_empty();
+            match target.and_then(|index| file.accounts.get_mut(index)) {
                 // A grant is only ever written over a grant. An account
                 // holding a key has no refresh behind it, so a rotation
                 // landing there could only be one that lost its way.
                 Some(entry) if entry.grant().is_some() => {
                     entry.credential = Credential::Grant(credentials.clone());
                 }
-                _ => {
+                // Nothing stored at all: a caller holding only this trait has
+                // to be able to keep what it just obtained.
+                None if empty => {
                     let name = file.name_for(credentials);
                     file.put(name, credentials);
+                }
+                // A rotation whose account is not here. Appending it would
+                // create an account nobody asked for and make it the one
+                // serving turns — moving the operator off whatever they had
+                // selected, silently, from a background refresh.
+                _ => {
+                    return Err(ProxyError::authentication(
+                        "the account this grant belongs to is no longer stored; \
+                         it was not written anywhere",
+                    ));
                 }
             }
             Ok(())
@@ -642,6 +654,20 @@ impl AccountStore for FileStore {
 
     fn add_key(&self, name: &str, key: &str) -> Result<(), ProxyError> {
         self.update(|file| {
+            // The same collision `add` refuses. A key stored over a grant
+            // would retire it with nothing said, and only a re-login brings a
+            // grant back.
+            if let Some(entry) = file
+                .index_of(name)
+                .and_then(|index| file.accounts.get(index))
+                && entry.grant().is_some()
+            {
+                return Err(ProxyError::invalid_request(format!(
+                    "`{name}` already names an account holding a grant; \
+                     forget it first, or store the key under another name"
+                )));
+            }
+
             match file
                 .index_of(name)
                 .and_then(|index| file.accounts.get_mut(index))

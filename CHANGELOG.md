@@ -127,6 +127,11 @@ in [`docs/api.md`](docs/api.md) §6.
   subscription backend, and a key account has no quota to report, because that
   figure is a subscription entitlement.
 
+  A login through the CLI tells a running daemon to hand over, so what a switch
+  carries with it — the conversations bound to the previous account, its quota,
+  its model list — moves too rather than leaving a live conversation dialing an
+  endpoint that now refuses it.
+
   Proven end to end against the replay server, which is what this suite can
   hold. Nothing about a real key endpoint has been confirmed — `docs/roadmap.md`
   §L carries what only a live one can settle.

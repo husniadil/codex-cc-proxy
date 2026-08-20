@@ -339,3 +339,40 @@ fn the_binary_stores_a_key_from_stdin_and_serves_turns_as_it() {
     );
     assert!(stored.contains("\"kind\": \"key\""), "{stored}");
 }
+
+/// A login through the CLI hands over to a running daemon.
+///
+/// The daemon reads the credential file on every request, so the account moves
+/// either way. What does not move on its own is what a switch carries with it:
+/// the conversations bound to the previous account keep the endpoint they
+/// dialed, and after a change of kind that endpoint refuses every turn.
+#[test]
+fn a_cli_login_tells_a_running_daemon_to_hand_over() {
+    use std::io::Write;
+
+    let daemon = Daemon::start(&grant("acct_legacy"));
+    let home = daemon.dir.path().join("home");
+
+    let mut login = std::process::Command::new(env!("CARGO_BIN_EXE_codex-cc-proxy"))
+        .args(["login", "--key", "--as", "billing"])
+        .env("CODEX_CC_PROXY_HOME", &home)
+        .env("TMPDIR", daemon.dir.path())
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .expect("the binary should run");
+    login
+        .stdin
+        .as_mut()
+        .expect("stdin")
+        .write_all(b"sk-handover-probe\n")
+        .unwrap();
+    let stored = login.wait_with_output().unwrap();
+    let said = String::from_utf8_lossy(&stored.stdout);
+
+    assert!(
+        said.contains("running daemon"),
+        "it should say it told the daemon: {said}"
+    );
+    assert!(daemon.run(&["status"]).contains("billing"));
+}

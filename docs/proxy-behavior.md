@@ -1024,7 +1024,10 @@ request. A transport holding no credential at all still sends it, which is what
 the replay paths have always seen.
 
 **A credential is refused against the other kind's endpoint**, before anything
-is sent, in a message naming both halves. The endpoint would otherwise answer
+is sent, in a message naming both halves. The model list is paired
+structurally rather than checked: the daemon holds one endpoint per kind and
+picks by the credential it is about to spend, so there is no argument that
+could cross them. The endpoint would otherwise answer
 with something about an invalid token, which sends whoever reads it looking for
 the wrong problem.
 
@@ -1035,9 +1038,22 @@ speaking it, so there is no socket to fall back from. And a key account has
 **no quota to report**: the figure is a subscription entitlement, so asking for
 one with a key is the same refusal rather than a request spent to be told so.
 
+A login through the CLI **hands over to a running daemon**, because the daemon
+reads the file on every request but nothing else about a switch happens on its
+own: the conversations bound to the previous account keep the endpoint they
+dialed, and after a change of kind that endpoint refuses every turn they carry.
+No daemon running is the ordinary case for a login and not a failure of one. A
+credential file edited by hand still gets none of that.
+
 A key is stored from **stdin**, never from an argument, and under a name the
 operator gives — a command line is visible to every process on the machine and
 lands in shell history, and a key carries no id to be named by.
+
+Neither kind can be stored over the other. A key written where a grant is
+would retire that grant with nothing said, and a rotation whose account is no
+longer stored is refused rather than appended — appending it would create an
+account nobody asked for and make it the one serving turns, from a background
+refresh.
 
 An account with no kind recorded is a grant, the same read-the-old-shape rule
 §8.1 applies to the file as a whole.

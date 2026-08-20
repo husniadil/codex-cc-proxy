@@ -442,9 +442,14 @@ pub async fn fetch(
 /// control socket reports.
 pub struct CatalogSource {
     current: std::sync::RwLock<Arc<Catalog>>,
-    /// What a refetch needs. Empty where there is nothing to refetch from —
-    /// a fixed catalog, which is what tests and the probe path hold.
-    endpoint: String,
+    /// One endpoint per credential kind. Held as a pair rather than resolved
+    /// once, because the account serving turns can change kind while the
+    /// daemon runs — and a list fetched from the other kind's host would send
+    /// the credential somewhere it was never issued for. Empty where there is
+    /// nothing to refetch from: a fixed catalog, which is what tests and the
+    /// probe path hold.
+    subscription: String,
+    key: String,
     client_version: String,
     default_percent: f64,
 }
@@ -452,13 +457,15 @@ pub struct CatalogSource {
 impl CatalogSource {
     pub fn new(
         catalog: Catalog,
-        endpoint: impl Into<String>,
+        subscription: impl Into<String>,
+        key: impl Into<String>,
         client_version: impl Into<String>,
         default_percent: f64,
     ) -> Self {
         Self {
             current: std::sync::RwLock::new(Arc::new(catalog)),
-            endpoint: endpoint.into(),
+            subscription: subscription.into(),
+            key: key.into(),
             client_version: client_version.into(),
             default_percent,
         }
@@ -466,7 +473,15 @@ impl CatalogSource {
 
     /// A catalog that never changes, for callers with nothing to refetch from.
     pub fn fixed(catalog: Catalog) -> Self {
-        Self::new(catalog, String::new(), String::new(), 0.0)
+        Self::new(catalog, String::new(), String::new(), String::new(), 0.0)
+    }
+
+    /// Where a credential of this kind asks for its list.
+    fn endpoint(&self, kind: crate::auth::authorize::Kind) -> &str {
+        match kind {
+            crate::auth::authorize::Kind::Subscription => &self.subscription,
+            crate::auth::authorize::Kind::Key => &self.key,
+        }
     }
 
     /// The catalog in force. Cloned rather than borrowed: a reader holding a
@@ -489,13 +504,18 @@ impl CatalogSource {
     /// the fallback on a network blink would withdraw models the account has.
     /// The answer says which happened rather than leaving it to be discovered.
     pub async fn refresh(&self, authorization: &crate::auth::authorize::Authorization) -> bool {
-        if self.endpoint.is_empty() {
+        // The endpoint this credential belongs to, chosen from the credential
+        // rather than from whichever kind was selected when the daemon
+        // started. The pairing is structural here: there is no argument that
+        // could cross it.
+        let endpoint = self.endpoint(authorization.kind);
+        if endpoint.is_empty() {
             return false;
         }
 
         let fetched = fetch(
             &reqwest::Client::new(),
-            &self.endpoint,
+            endpoint,
             authorization,
             &self.client_version,
             self.default_percent,
