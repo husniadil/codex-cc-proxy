@@ -495,11 +495,31 @@ fn unavailable(account: &crate::auth::store::Account) -> &'static str {
 /// tier, so an unmapped haiku breaks it in a way that looks unrelated to tier
 /// mapping.
 pub fn environment(state: &ControlState) -> Vec<(String, String)> {
-    let catalog = state.catalog.current();
+    environment_for(
+        state.port,
+        state.config.client.disable_connectors,
+        state.policy.get().tiers(),
+        &state.catalog.current(),
+        &state.credentials.accounts().unwrap_or_default(),
+    )
+}
+
+/// The same rendering, over the pieces it actually reads.
+///
+/// Split out so the launch contract can be probed (`docs/api.md` §2.2) without
+/// a daemon: the probe has to assert on what a launch renders, and a renderer
+/// reachable only through a running `ControlState` cannot be asked.
+pub fn environment_for(
+    port: u16,
+    disable_connectors: bool,
+    tiers: &[crate::config::ResolvedTier],
+    catalog: &crate::catalog::Catalog,
+    accounts: &[crate::auth::store::Account],
+) -> Vec<(String, String)> {
     let mut variables = vec![
         (
             "ANTHROPIC_BASE_URL".to_owned(),
-            format!("http://127.0.0.1:{}", state.port),
+            format!("http://127.0.0.1:{port}"),
         ),
         // Must be set for the client's sake. Its value is ignored.
         ("ANTHROPIC_AUTH_TOKEN".to_owned(), "unused".to_owned()),
@@ -513,11 +533,11 @@ pub fn environment(state: &ControlState) -> Vec<(String, String)> {
     // by exports alone runs with the connectors it asked to disable. Whether
     // the current client still honours it is a §L question (`docs/roadmap.md`),
     // like the notice.
-    if state.config.client.disable_connectors {
+    if disable_connectors {
         variables.push(("ENABLE_CLAUDEAI_MCP_SERVERS".to_owned(), "false".to_owned()));
     }
 
-    for tier in state.policy.get().tiers().iter() {
+    for tier in tiers {
         variables.push((
             format!("ANTHROPIC_DEFAULT_{}_MODEL", tier.tier.to_uppercase()),
             tier.model.clone(),
@@ -527,17 +547,11 @@ pub fn environment(state: &ControlState) -> Vec<(String, String)> {
     // Which side of §9.1 each tier is on, asked once. Everything below turns on
     // it: the two window variables and the long-context flag are global to the
     // client, so a mapping that is not entirely on one provider has to pick.
-    let accounts = state.credentials.accounts().unwrap_or_default();
-    let relaying = |tier: &crate::config::ResolvedTier| {
-        crate::upstream::relay::relays(&accounts, tier.account.as_deref())
+    let relaying = |tier: &&crate::config::ResolvedTier| {
+        crate::upstream::relay::relays(accounts, tier.account.as_deref())
     };
-    let translating = state
-        .policy
-        .get()
-        .tiers()
-        .iter()
-        .any(|tier| !relaying(tier));
-    let relayed = state.policy.get().tiers().iter().any(&relaying);
+    let translating = tiers.iter().any(|tier| !relaying(&tier));
+    let relayed = tiers.iter().any(|tier| relaying(&tier));
 
     // The client disables deferred tool loading the moment its base URL is
     // not a first-party host — it cannot know what stands behind the proxy.
@@ -568,10 +582,7 @@ pub fn environment(state: &ControlState) -> Vec<(String, String)> {
     // also govern a relayed one, where nothing else checks it: the translating
     // path has this proxy's own window guard behind it and the relay path has
     // none.
-    if let Some(window) = state
-        .policy
-        .get()
-        .tiers()
+    if let Some(window) = tiers
         .iter()
         .filter(|_| !relayed)
         .filter_map(|tier| catalog.get(&tier.model))

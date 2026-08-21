@@ -62,6 +62,12 @@ pub enum Capability {
     /// body round-tripped through this proxy's own types, which drops every
     /// field they do not model somewhere no test looks.
     Relay,
+    /// The launch surface's load-bearing variables (`docs/api.md` §2.2). The
+    /// only capability here proven by rendering rather than by an exchange:
+    /// there is no turn to record, because what breaks is what the client is
+    /// launched with. Deliberately absent from `ALL` for that reason — a
+    /// corpus fixture for it would be a recording of nothing.
+    EnvContract,
 }
 
 impl Capability {

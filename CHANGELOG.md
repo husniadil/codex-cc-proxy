@@ -6,6 +6,19 @@ in [`docs/api.md`](docs/api.md) §6.
 
 ## [Unreleased]
 
+### Added
+
+- **A ninth `doctor` probe, `env-contract`, holds the launch surface to its
+  contract.** `ENABLE_TOOL_SEARCH` and `CLAUDE_CODE_DISABLE_1M_CONTEXT` are both
+  load-bearing and both fail silently — the first hands the deferred tool set
+  back into the context, the second lets the client invent a million-token
+  window for an id it cannot recognize — and nothing asserted that `env` and
+  `exec` still emitted them. The probe renders the environment for a translating
+  mapping and an all-relay one and asserts on what was rendered, so a launch that
+  emits nothing cannot pass it. It replays nothing, contacts no backend on either
+  mode, and its row is marked as proxy-answered under `--live` alongside
+  `count-tokens`.
+
 ### Changed
 
 - **A key re-store that would change an account's provider is refused.** A key

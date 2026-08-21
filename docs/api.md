@@ -209,11 +209,25 @@ A failed row prints the probe's rationale beneath it — what breaks silently
 without that probe. Passing rows stay one line, because a rationale on every
 row is a page of prose over a matrix nobody would then read.
 
-Under `--live` the `count-tokens` row is marked as answered by the proxy. The
-live header says the backend answered and was billed, and that is true of every
-other row and false of this one: pre-flight sizing never leaves the proxy by
-design. The row is marked rather than dropped, because a list whose job is to
-be complete cannot quietly omit the surface it cannot vouch for.
+Under `--live` the `count-tokens` and `env-contract` rows are marked as answered
+by the proxy. The live header says the backend answered and was billed, and that
+is true of every other row and false of these two: pre-flight sizing never leaves
+the proxy by design, and the launch surface is rendered rather than sent. The
+rows are marked rather than dropped, because a list whose job is to be complete
+cannot quietly omit a surface it cannot vouch for.
+
+The launch surface has a probe of its own, `env-contract`, and it replays
+nothing: it renders the environment of §2.2 for two representative mappings and
+holds it to its contract. `ENABLE_TOOL_SEARCH` must be there on every launch, and
+`CLAUDE_CODE_DISABLE_1M_CONTEXT` must be there where a tier translates and absent
+where every tier is relayed (`proxy-behavior.md` §7.2). Both variables were
+settled against a live client and both fail silently: without the first the
+client disables deferred tool loading on a base URL it does not recognize as
+first-party, and without the second it appends `[1m]` to an unrecognized model id
+and assumes a window four times the model's. Either regression presents as a
+broken-looking client over a fully green matrix, which is why the assertion is on
+the rendered environment rather than on the configuration behind it. It costs
+nothing on either mode and is not skipped under `--live`.
 
 One line under the matrix names what the run exercised and what it did not: the
 account whose credential was spent, and — always — that the WebSocket transport

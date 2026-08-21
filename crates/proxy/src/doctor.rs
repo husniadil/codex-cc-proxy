@@ -232,6 +232,14 @@ async fn run_against(
             continue;
         }
 
+        // Nothing to replay: the launch surface is rendered rather than
+        // recorded, so this probe is answered before a corpus is opened. It
+        // costs the same on both modes, which is why it is not skipped live.
+        if probe.surface == crate::probe::Surface::Environment {
+            outcomes.push(run_environment(&probe));
+            continue;
+        }
+
         let raw = match fixtures.read(probe.fixture) {
             Ok(raw) => raw,
             Err(reason) => {
@@ -408,8 +416,8 @@ async fn run_one(probe: &probe::Probe, fixture: &Fixture, backend: &Backend) -> 
     let path = match probe.surface {
         crate::probe::Surface::Messages => "/v1/messages",
         crate::probe::Surface::CountTokens => "/v1/messages/count_tokens",
-        // Answered above, before any of this was built.
-        crate::probe::Surface::Relay => "/v1/messages",
+        // Both answered above, before any of this was built.
+        crate::probe::Surface::Relay | crate::probe::Surface::Environment => "/v1/messages",
     };
 
     let response = reqwest::Client::new()
@@ -442,7 +450,7 @@ async fn run_one(probe: &probe::Probe, fixture: &Fixture, backend: &Backend) -> 
                 vec![value]
             })
             .unwrap_or_default(),
-        crate::probe::Surface::Relay => Vec::new(),
+        crate::probe::Surface::Relay | crate::probe::Surface::Environment => Vec::new(),
     };
     let sent = transport
         .seen
@@ -573,6 +581,64 @@ impl crate::auth::authorize::Authorizer for ProbeAuthorizer {
             account: Some(PROBE_ACCOUNT.to_owned()),
             headers: vec![("x-api-key".to_owned(), "probe-placeholder".to_owned())],
         })
+    }
+}
+
+/// Render the launch environment twice and hold it to `docs/api.md` §2.2.
+///
+/// A representative mapping either way: four tiers on this proxy's own defaults
+/// with a translating account serving them, and the same four served by an
+/// account on the second provider, where every turn is relayed. Half the
+/// contract is an absence, and an absence can only be shown against a mapping
+/// where the variable would otherwise be there.
+///
+/// Nothing is contacted. This asserts what a launch hands the client, which is
+/// the thing that breaks — a probe of the configuration behind it would stay
+/// green over a launch that rendered nothing.
+fn run_environment(probe: &probe::Probe) -> Outcome {
+    let tiers: Vec<crate::config::ResolvedTier> = ["opus", "sonnet", "haiku", "fable"]
+        .into_iter()
+        .zip([
+            "gpt-5.6-terra",
+            "gpt-5.6-luna",
+            "gpt-5.6-luna",
+            "gpt-5.6-terra",
+        ])
+        .map(|(tier, model)| crate::config::ResolvedTier {
+            tier,
+            model: model.to_owned(),
+            account: None,
+            defaulted: true,
+        })
+        .collect();
+
+    let catalog = crate::catalog::Catalog::fallback();
+    let account = |provider: crate::auth::store::Provider| {
+        vec![crate::auth::store::Account {
+            name: "the launch probe".to_owned(),
+            kind: "key",
+            provider: provider.as_str(),
+            account_id: None,
+            email: None,
+            plan: None,
+            expires_at: None,
+            selected: true,
+        }]
+    };
+
+    let render = |accounts: &[crate::auth::store::Account]| {
+        crate::control::handler::environment_for(0, false, &tiers, &catalog, accounts)
+    };
+
+    let translating = render(&account(crate::auth::store::Provider::Codex));
+    let all_relay = render(&account(crate::auth::store::Provider::Anthropic));
+
+    Outcome {
+        name: probe.name.to_owned(),
+        capability: probe.capability,
+        surface: probe.surface,
+        rationale: probe.rationale,
+        status: probe::check_environment(&translating, &all_relay),
     }
 }
 

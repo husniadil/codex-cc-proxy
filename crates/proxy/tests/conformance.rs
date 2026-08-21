@@ -103,6 +103,11 @@ async fn a_probe_that_cannot_run_reports_honestly() {
 
     assert!(!outcomes.is_empty());
     for outcome in &outcomes {
+        // The launch contract replays nothing, so an empty corpus takes
+        // nothing away from it. Every probe that reads an exchange skips.
+        if outcome.surface == probe::Surface::Environment {
+            continue;
+        }
         match &outcome.status {
             Status::Skipped(reason) => assert!(
                 reason.contains("no fixture"),
@@ -114,7 +119,7 @@ async fn a_probe_that_cannot_run_reports_honestly() {
 
     // And a skip is never counted as a pass.
     let rendered = probe::matrix(&outcomes, &replayed("an empty corpus"));
-    assert!(rendered.contains("0 passed"), "{rendered}");
+    assert!(rendered.contains("1 passed"), "{rendered}");
 }
 
 /// The corpus travels with the binary. An installed `proxenos` has no
@@ -634,4 +639,95 @@ async fn a_live_run_skips_the_relay_probe() {
         ),
         other => panic!("a live relay probe should be skipped, got {other:?}"),
     }
+}
+
+/// The launch surface still emits the two variables the client cannot work
+/// without.
+///
+/// Both were settled live and both fail silently: without `ENABLE_TOOL_SEARCH`
+/// the client disables deferred tool loading on a custom base URL and hands
+/// back a context the deferral was there to save, and without
+/// `CLAUDE_CODE_DISABLE_1M_CONTEXT` it appends `[1m]` to an id it does not
+/// recognize and assumes four times the window the model has. A regression in
+/// either presents as a broken-looking client over a fully green matrix.
+#[tokio::test]
+async fn the_env_contract_probe_passes_against_the_launch_surface() {
+    let outcome = run_via_doctor("env-contract").await;
+    assert_eq!(outcome.status, Status::Passed, "{outcome:?}");
+}
+
+/// It fails when the deferral override stops being emitted.
+///
+/// This is the regression the probe exists for, applied to the rendered
+/// environment rather than to the flag behind it: what the client reads is the
+/// environment, and a probe asserting the switch would pass over a launch that
+/// never emitted it.
+#[test]
+fn the_env_contract_probe_fails_when_the_deferral_override_is_dropped() {
+    let translating = vec![("CLAUDE_CODE_DISABLE_1M_CONTEXT".to_owned(), "1".to_owned())];
+    let relayed: Vec<(String, String)> = Vec::new();
+
+    match probe::check_environment(&translating, &relayed) {
+        Status::Failed(reason) => assert!(reason.contains("ENABLE_TOOL_SEARCH"), "{reason}"),
+        other => panic!("a dropped override must fail the probe, got {other:?}"),
+    }
+}
+
+/// The window flag is asserted in both directions.
+///
+/// It is emitted only where at least one tier translates (§7.2). Missing on a
+/// translating mapping is a fabricated million-token window; present on an
+/// all-relay one is an entitlement stripped from ids the client recognizes
+/// itself.
+#[test]
+fn the_env_contract_probe_asserts_the_window_flag_both_ways() {
+    let search = || ("ENABLE_TOOL_SEARCH".to_owned(), "true".to_owned());
+    let flag = || ("CLAUDE_CODE_DISABLE_1M_CONTEXT".to_owned(), "1".to_owned());
+
+    // Missing where a tier translates.
+    match probe::check_environment(&[search()], &[search()]) {
+        Status::Failed(reason) => assert!(
+            reason.contains("CLAUDE_CODE_DISABLE_1M_CONTEXT"),
+            "{reason}"
+        ),
+        other => panic!("a missing window flag must fail, got {other:?}"),
+    }
+
+    // Present where every tier is relayed.
+    match probe::check_environment(&[search(), flag()], &[search(), flag()]) {
+        Status::Failed(reason) => assert!(
+            reason.contains("CLAUDE_CODE_DISABLE_1M_CONTEXT"),
+            "{reason}"
+        ),
+        other => panic!("a window flag on an all-relay mapping must fail, got {other:?}"),
+    }
+
+    // And the contract itself passes.
+    assert_eq!(
+        probe::check_environment(&[search(), flag()], &[search()]),
+        Status::Passed
+    );
+}
+
+/// Under `--live` the row says the backend was not billed for it, the same way
+/// `count-tokens` does. The header's claim is true of every other row and false
+/// of this one.
+#[tokio::test]
+async fn a_live_env_contract_row_says_it_never_reached_the_backend() {
+    let outcomes = proxenos::doctor::run(&Corpus::Dir(corpus()), Some("env-contract"))
+        .await
+        .expect("the probe should be known");
+
+    let rendered = probe::matrix(
+        &outcomes,
+        &probe::Run {
+            evidence: probe::Evidence::Live {
+                account: Some("work".to_owned()),
+            },
+        },
+    );
+    assert!(
+        rendered.contains(probe::NEVER_REACHES_THE_BACKEND),
+        "{rendered}"
+    );
 }

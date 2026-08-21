@@ -47,6 +47,22 @@ pub enum Surface {
     /// A turn forwarded rather than translated (§9). Nothing on this path is
     /// parsed, so what it establishes is that the bytes were not touched.
     Relay,
+    /// The environment a launch renders (`docs/api.md` §2.2). Like
+    /// `CountTokens` it is answered entirely by the proxy and reaches no
+    /// backend on any mode.
+    Environment,
+}
+
+impl Surface {
+    /// Whether a live run's turn on this surface is answered by a backend.
+    ///
+    /// Two surfaces are served entirely by the proxy, and the live header's
+    /// claim that the backend answered and was billed is false of both. A row
+    /// silently exempt from the header above it is the plausible output §10.3
+    /// exists to prevent.
+    pub fn reaches_the_backend(self) -> bool {
+        !matches!(self, Self::CountTokens | Self::Environment)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -54,7 +70,9 @@ pub struct Probe {
     pub name: &'static str,
     pub capability: Capability,
     pub surface: Surface,
-    /// The fixture this replays.
+    /// The fixture this replays. Empty for a probe that replays nothing —
+    /// `Surface::Environment` asks the proxy to render, and there is no
+    /// exchange to read.
     pub fixture: &'static str,
     /// What it means for this to have worked, wherever it ran.
     pub checks: Vec<Check>,
@@ -262,7 +280,74 @@ pub fn all() -> Vec<Probe> {
                 },
             ],
         },
+        Probe {
+            name: "env-contract",
+            surface: Surface::Environment,
+            capability: Capability::EnvContract,
+            fixture: "",
+            replay_only: Vec::new(),
+            rationale: "Without ENABLE_TOOL_SEARCH the client disables deferred \
+                        tool loading on a custom base URL, and without \
+                        CLAUDE_CODE_DISABLE_1M_CONTEXT it invents a million-token \
+                        window for an id it cannot recognize. Both present as a \
+                        broken-looking client over a green matrix.",
+            // Asserted by `check_environment` against two rendered
+            // environments rather than by the check list, which reads one
+            // exchange. The contract is a difference between two mappings, and
+            // a check that could only see one of them would state half of it.
+            checks: Vec::new(),
+        },
     ]
+}
+
+/// The two variables that must survive every change to the launch surface.
+pub const DEFERRAL_OVERRIDE: &str = "ENABLE_TOOL_SEARCH";
+pub const WINDOW_FLAG: &str = "CLAUDE_CODE_DISABLE_1M_CONTEXT";
+
+/// `docs/api.md` §2.2 — the launch contract, asserted on what was rendered.
+///
+/// Two environments, because half the contract is an absence: the window flag
+/// belongs on a mapping where a tier translates and must not be emitted where
+/// every tier is relayed (§7.2). Asserting the first alone would pass a build
+/// that emitted it unconditionally, which strips an entitlement the account may
+/// hold from ids the client recognizes itself.
+///
+/// On the rendered variables rather than on the configuration behind them. What
+/// the client reads is the environment; a probe of the switch would stay green
+/// over a launch that emitted nothing.
+pub fn check_environment(
+    translating: &[(String, String)],
+    all_relay: &[(String, String)],
+) -> Status {
+    let has = |rendered: &[(String, String)], name: &str| {
+        rendered.iter().any(|(variable, _)| variable == name)
+    };
+
+    for (mapping, rendered) in [("translating", translating), ("all-relay", all_relay)] {
+        if !has(rendered, DEFERRAL_OVERRIDE) {
+            return Status::Failed(format!(
+                "a {mapping} launch renders no {DEFERRAL_OVERRIDE}, so the client \
+                 disables deferred tool loading on this base URL"
+            ));
+        }
+    }
+
+    if !has(translating, WINDOW_FLAG) {
+        return Status::Failed(format!(
+            "a translating launch renders no {WINDOW_FLAG}, so the client appends \
+             `[1m]` to an id it cannot recognize and assumes a window four times \
+             the model's"
+        ));
+    }
+
+    if has(all_relay, WINDOW_FLAG) {
+        return Status::Failed(format!(
+            "an all-relay launch renders {WINDOW_FLAG}, which strips \
+             `context-1m-2025-08-07` from ids the client recognizes itself (§7.2)"
+        ));
+    }
+
+    Status::Passed
 }
 
 /// How a probe ended.
@@ -507,7 +592,7 @@ pub fn matrix(outcomes: &[Outcome], run: &Run) -> String {
             Status::Skipped(reason) => ("skip", format!("  {reason}")),
         };
         // §10.3 — the one surface the live header does not describe.
-        let marked = if run.evidence.is_live() && outcome.surface == Surface::CountTokens {
+        let marked = if run.evidence.is_live() && !outcome.surface.reaches_the_backend() {
             format!("{detail}  {NEVER_REACHES_THE_BACKEND}")
         } else {
             detail
