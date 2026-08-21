@@ -1269,11 +1269,14 @@ A provider that speaks the surface this proxy already exposes needs no
 translation at all. A turn belonging to one is **relayed**: forwarded as it
 arrived, and streamed back as it returns.
 
-Everything in this section is **derived, not confirmed**: the path is proven
-against recorded fixtures, and no turn has yet been sent to the live endpoint of
-the second provider. What that endpoint accepts — the header delta, and
-therefore whether a relayed turn round-trips at all — is a `roadmap.md` §L
-question, not a settled fact.
+This section is **confirmed live**: relayed turns round-trip against the real
+endpoint of the second provider — plain and streaming, generation and refusal
+— with a subscription bearer the relay substituted. The endpoint wants the
+client's own identity shape (its beta list, `x-app`, its system prompt), which
+the client always sends and this path forwards verbatim, so no header is added
+or invented; a bare request stripped of that shape is refused upstream, which
+is that provider's decision to make, not this proxy's to pre-empt. The rows in
+`roadmap.md` §L record what settling this falsified along the way.
 
 **The body is relayed verbatim.** Not observed as a property — stated as a
 rule, because the obvious implementation breaks it quietly. Parsing the request
