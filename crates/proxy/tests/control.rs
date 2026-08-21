@@ -98,7 +98,12 @@ impl Harness {
         let path = dir.path().join("control.sock");
         let store = Arc::new(FileStore::new(dir.path().join("credentials.json")));
         let switches = Arc::new(proxenos::recorder::Switches::default());
-        let usage = Arc::new(proxenos::usage::UsageStore::default());
+        // Bound to the credential store the way the daemon binds it, so a
+        // figure recorded here is filed under whoever is selected — which is
+        // what every per-account assertion below is about.
+        let usage = Arc::new(proxenos::usage::UsageStore::for_accounts(
+            Arc::clone(&store) as Arc<dyn AccountStore>,
+        ));
         let policy = Arc::new(proxenos::policy::Policy::new(
             proxenos::policy::Snapshot::new(
                 tiers(),
@@ -4087,4 +4092,169 @@ async fn a_switch_is_not_refused_over_a_pinned_tiers_model() {
         Some("acct_two"),
         "the pinned mapping should be the one in force"
     );
+}
+
+/// A snapshot with a percentage nothing else in these tests reports.
+fn quota(used_percent: f64) -> proxenos::usage::Snapshot {
+    proxenos::usage::Snapshot {
+        plan: Some("plus".to_owned()),
+        limit_reached: false,
+        windows: vec![proxenos::usage::Window {
+            used_percent,
+            window_minutes: Some(300),
+            resets_at: Some(1_789_487_264),
+        }],
+    }
+}
+
+/// **Build 2.** The per-account figures join the answer rather than replacing
+/// it: the serving account stays exactly where it has always been, and each
+/// account is named with its own figure and how fresh that figure is.
+#[tokio::test]
+async fn usage_names_each_account_beside_the_serving_figure() {
+    let harness = Harness::start().await;
+    harness
+        .store
+        .add(&grant("acct_spare", "a-spare"), Some("spare"))
+        .unwrap();
+    harness
+        .store
+        .add(&grant("acct_main", "a-main"), Some("main"))
+        .unwrap();
+
+    // A turn served as the pinned account, and one as the serving account.
+    harness
+        .usage
+        .record_for(Some("spare"), &quota(77.0), proxenos::usage::Source::Turn);
+    harness
+        .usage
+        .record_for(None, &quota(11.0), proxenos::usage::Source::Turn);
+
+    let usage = harness.call("usage").await.unwrap();
+
+    // Unchanged where a reader already looks.
+    assert_eq!(usage["known"], json!(true));
+    assert_eq!(usage["plan"], json!("plus"));
+    assert_eq!(usage["windows"][0]["used_percent"], json!(11.0));
+    assert!(usage["models"].is_array());
+
+    let accounts = usage["accounts"].as_array().expect("named figures");
+    let by_name = |name: &str| {
+        accounts
+            .iter()
+            .find(|entry| entry["account"] == json!(name))
+            .unwrap_or_else(|| panic!("`{name}` should be reported: {usage}"))
+            .clone()
+    };
+
+    let main = by_name("main");
+    assert_eq!(main["known"], json!(true));
+    assert_eq!(main["serving"], json!(true));
+    assert_eq!(main["windows"][0]["used_percent"], json!(11.0));
+    assert_eq!(main["source"], json!("turn"));
+    assert!(
+        main["measured_at"].as_u64().unwrap_or_default() > 0,
+        "a figure states the moment it was taken: {main}"
+    );
+
+    let spare = by_name("spare");
+    assert_eq!(spare["serving"], json!(false));
+    assert_eq!(
+        spare["windows"][0]["used_percent"],
+        json!(77.0),
+        "the pinned account's own figure is reported as its own: {spare}"
+    );
+}
+
+/// **Build 3.** An account with no figure says it has none, and says why.
+/// Never a zero, and never another account's.
+#[tokio::test]
+async fn an_account_with_no_figure_reports_unavailable() {
+    let harness = Harness::start().await;
+    harness
+        .store
+        .add(&grant("acct_main", "a-main"), Some("main"))
+        .unwrap();
+    // A key holds no subscription entitlement, and the second provider's
+    // quota endpoint is an open question — neither reports a plausible figure.
+    harness
+        .store
+        .add_key("billing", "key-secret", Provider::Codex)
+        .unwrap();
+    harness
+        .store
+        .add_key("relay", "relay-secret", Provider::Anthropic)
+        .unwrap();
+    harness.store.select("main").unwrap();
+    harness
+        .usage
+        .record_for(None, &quota(11.0), proxenos::usage::Source::Turn);
+
+    let usage = harness.call("usage").await.unwrap();
+    let accounts = usage["accounts"].as_array().expect("named figures");
+    let by_name = |name: &str| {
+        accounts
+            .iter()
+            .find(|entry| entry["account"] == json!(name))
+            .unwrap_or_else(|| panic!("`{name}` should be reported: {usage}"))
+            .clone()
+    };
+
+    for name in ["billing", "relay"] {
+        let entry = by_name(name);
+        assert_eq!(entry["known"], json!(false), "{entry}");
+        assert!(
+            entry.get("windows").is_none(),
+            "a window nobody reported must not be rendered at all: {entry}"
+        );
+        assert!(
+            entry["detail"].as_str().is_some_and(|why| !why.is_empty()),
+            "an unavailable figure says why: {entry}"
+        );
+    }
+    assert_eq!(by_name("main")["known"], json!(true));
+}
+
+/// A figure asked for over the socket says it was asked for. Both are
+/// legitimate and differently stale, so neither is reported as the other.
+#[tokio::test]
+async fn a_figure_asked_for_says_it_was_asked_for() {
+    let harness = Harness::start().await;
+    harness
+        .store
+        .add(&grant("acct_main", "a-main"), Some("main"))
+        .unwrap();
+    harness
+        .usage
+        .record_for(None, &quota(11.0), proxenos::usage::Source::Fetch);
+
+    let usage = harness.call("usage").await.unwrap();
+    assert_eq!(usage["accounts"][0]["source"], json!("fetch"));
+}
+
+/// The CLI shows every account's figure, and never prints one account's
+/// headroom under another's name.
+#[tokio::test]
+async fn the_rendered_usage_names_every_account() {
+    let harness = Harness::start().await;
+    harness
+        .store
+        .add(&grant("acct_spare", "a-spare"), Some("spare"))
+        .unwrap();
+    harness
+        .store
+        .add(&grant("acct_main", "a-main"), Some("main"))
+        .unwrap();
+    harness
+        .usage
+        .record_for(Some("spare"), &quota(77.0), proxenos::usage::Source::Turn);
+
+    let rendered = render::usage(&harness.call("usage").await.unwrap());
+
+    // The serving account has made no turn, and says so rather than borrowing
+    // the pinned account's figure.
+    assert!(rendered.contains("none has been made"), "{rendered}");
+    assert!(rendered.contains("spare"), "{rendered}");
+    assert!(rendered.contains("77% used"), "{rendered}");
+    assert!(rendered.contains("rode a turn"), "{rendered}");
 }

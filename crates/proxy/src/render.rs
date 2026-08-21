@@ -440,14 +440,22 @@ pub fn models(result: &Value) -> String {
 /// caller wanting this every few seconds is building. `--json` is there for the
 /// second case; this is the first.
 pub fn usage(result: &Value) -> String {
+    let mut lines = Vec::new();
+
     if field(result, "known").and_then(Value::as_bool) != Some(true) {
-        return field(result, "detail")
-            .and_then(Value::as_str)
-            .unwrap_or("no quota has been reported")
-            .to_owned();
+        lines.push(
+            field(result, "detail")
+                .and_then(Value::as_str)
+                .unwrap_or("no quota has been reported")
+                .to_owned(),
+        );
+        // Not a return. Another account may hold a figure, and a daemon that
+        // printed nothing but "none yet" would hide the pinned tier's quota
+        // from the one place a person looks for it.
+        lines.extend(per_account(result));
+        return lines.join("\n");
     }
 
-    let mut lines = Vec::new();
     if let Some(plan) = field(result, "plan").and_then(Value::as_str) {
         lines.push(format!("plan       {plan}"));
     }
@@ -474,7 +482,74 @@ pub fn usage(result: &Value) -> String {
         lines.push(format!("{span:<10} {used:.0}% used"));
     }
 
+    lines.extend(per_account(result));
     lines.join("\n")
+}
+
+/// One line per account, where there is more than one.
+///
+/// A single account's figure is the block above, and repeating it under its own
+/// name says nothing. Two accounts can serve one session, and then whose figure
+/// is whose is the whole question.
+fn per_account(result: &Value) -> Vec<String> {
+    let accounts = field(result, "accounts")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    if accounts.len() < 2 {
+        return Vec::new();
+    }
+
+    let mut lines = vec![String::new(), "accounts".to_owned()];
+    lines.extend(accounts.iter().map(|account| {
+        let name = field(account, "account")
+            .and_then(Value::as_str)
+            .unwrap_or("unnamed");
+        let marker = if field(account, "serving").and_then(Value::as_bool) == Some(true) {
+            "*"
+        } else {
+            " "
+        };
+
+        if field(account, "known").and_then(Value::as_bool) != Some(true) {
+            let detail = field(account, "detail")
+                .and_then(Value::as_str)
+                .unwrap_or("no figure");
+            return format!("{marker} {name:<24} no figure — {detail}");
+        }
+
+        let windows = field(account, "windows")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        let figures = if windows.is_empty() {
+            "none reported".to_owned()
+        } else {
+            windows
+                .iter()
+                .map(|window| {
+                    let used = field(window, "used_percent")
+                        .and_then(Value::as_f64)
+                        .unwrap_or_default();
+                    let span = field(window, "window_minutes")
+                        .and_then(Value::as_u64)
+                        .map(describe_window)
+                        .unwrap_or_else(|| "unknown window".to_owned());
+                    format!("{span} {used:.0}% used")
+                })
+                .collect::<Vec<_>>()
+                .join(" · ")
+        };
+
+        // How the figure was come by. A figure that rode a turn is as old as
+        // that turn; one that was asked for is as old as the asking.
+        let source = match field(account, "source").and_then(Value::as_str) {
+            Some("fetch") => "asked for",
+            _ => "rode a turn",
+        };
+        format!("{marker} {name:<24} {figures}   {source}")
+    }));
+    lines
 }
 
 /// A window length in the units a person would say it in.

@@ -364,8 +364,69 @@ fn usage(state: &ControlState) -> Value {
     served.dedup();
     if let Some(object) = answer.as_object_mut() {
         object.insert("models".to_owned(), json!(served));
+        object.insert("accounts".to_owned(), json!(per_account(state)));
     }
     answer
+}
+
+/// `proxy-behavior.md` §8.3 — every account this daemon holds, and what is
+/// known about its quota.
+///
+/// The stored accounts rather than the figures, so an account with nothing to
+/// report appears saying so. A meter listing only accounts that have a figure
+/// cannot tell "no quota left to show" from "no account there", and the first
+/// reading of an empty list is that everything is fine.
+fn per_account(state: &ControlState) -> Vec<Value> {
+    state
+        .credentials
+        .accounts()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|account| {
+            let mut entry = match state.usage.latest_for(&account.name) {
+                Some(measured) => {
+                    let mut figure = measured.snapshot.to_json();
+                    if let Some(object) = figure.as_object_mut() {
+                        // How it was come by and when. A figure that rode a
+                        // turn and one that was asked for are both true and
+                        // differently stale, and nothing here ages either.
+                        object.insert("source".to_owned(), json!(measured.source.as_str()));
+                        object.insert("measured_at".to_owned(), json!(measured.at));
+                    }
+                    figure
+                }
+                // Absent, with the reason — which differs, and each reason
+                // sends whoever reads it somewhere different.
+                None => json!({
+                    "known": false,
+                    "detail": unavailable(&account),
+                }),
+            };
+
+            if let Some(object) = entry.as_object_mut() {
+                object.insert("account".to_owned(), json!(account.name));
+                object.insert("provider".to_owned(), json!(account.provider));
+                object.insert("serving".to_owned(), json!(account.selected));
+            }
+            entry
+        })
+        .collect()
+}
+
+/// Why an account has no figure.
+fn unavailable(account: &crate::auth::store::Account) -> &'static str {
+    if account.provider != crate::auth::store::Provider::Codex.as_str() {
+        // `roadmap.md` §L — whether this provider answers a quota question at
+        // all is unmeasured, and a figure of zero would be an answer nobody
+        // gave.
+        return "this provider does not report a quota to this proxy yet";
+    }
+    if account.kind == "key" {
+        // §8.2 — the figure is a subscription entitlement, and a key is not
+        // one.
+        return "a key holds no subscription quota";
+    }
+    "the backend reports quota when a turn is made; none has been made as this account yet"
 }
 
 /// `docs/api.md` §2.1 — the environment Claude Code needs.
@@ -1356,8 +1417,10 @@ async fn refresh_usage(state: &ControlState) -> Result<Value, ProxyError> {
     .await?;
 
     // Recorded where the stream path records its own, so everything that reads
-    // a quota reads one value. A figure asked for and a figure volunteered are
-    // the same figure from the same account.
-    state.usage.record(&snapshot);
+    // a quota reads one value — under the serving account, which is the one it
+    // was asked for as, and saying it was asked for rather than volunteered.
+    state
+        .usage
+        .record_for(None, &snapshot, crate::usage::Source::Fetch);
     Ok(snapshot.to_json())
 }

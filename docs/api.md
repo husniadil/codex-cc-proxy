@@ -167,11 +167,22 @@ binary is in: `doctor` has to establish something on a first run, and a run that
 skipped all eight probes for want of a checkout would establish nothing at the
 moment it is most likely to be run.
 
-`usage` reports the account's quota as of the last turn. It costs nothing to
-ask: the backend opens every stream with a snapshot, before it says anything
-about the response, so the figure rides along with a turn already being made and
-is never polled. Before any turn has been made it says so rather than answering
-with zeroes. `--json` emits the snapshot as it stands, for a status line.
+`usage` reports the serving account's quota as of its last turn. It costs
+nothing to ask: the backend opens every stream with a snapshot, before it says
+anything about the response, so the figure rides along with a turn already being
+made and is never polled. Before any turn has been made it says so rather than
+answering with zeroes. `--json` emits the snapshot as it stands, for a status
+line.
+
+**A figure per account, not per daemon.** A pinned tier's turns spend the
+account it names (`proxy-behavior.md` §7.1), so a daemon can hold two live
+figures at once. Each is held under the account that earned it and reported
+beside the serving one, with how it was come by — riding a turn, or asked for
+over the socket — and the moment it was taken. An account with no figure says
+so, and says why: no turn made as it yet, a key holding no subscription
+entitlement, or a provider that does not report a quota to this proxy at all.
+Where there is one account, the block above is the whole answer and nothing is
+repeated under its own name.
 
 The same snapshot is also put on the response as `anthropic-ratelimit-unified-*`
 headers, which are the names this client's own code parses a quota from.
@@ -496,7 +507,7 @@ A Unix domain socket, or a named pipe on Windows, carrying JSON-RPC:
 | `accounts.rename` | `{"account": from, "name": to}`, the name this daemon calls an account by, and whether an account section moved with it; the grant and the account id are untouched | no — v0.3 |
 | `models` | catalog, whether it is the fallback list, and whether it was fetched for an account other than the one serving turns | yes |
 | `tiers.get` | tier mapping | yes |
-| `usage` | quota snapshot as of the last turn, or that no turn has been made, plus `models` — the ids this daemon serves | yes |
+| `usage` | the serving account's quota as of its last turn, or that no turn has been made, plus `models` — the ids this daemon serves — and `accounts`, one entry per stored account with its own figure, its freshness, and `unavailable` where it has none | yes |
 | `usage.refresh` | asks the backend for a figure now, for a front-end with nothing to show on a daemon that has served no turn | yes |
 | `env` | the §2.2 block: `variables`, and `settings` always present | yes |
 | `shutdown` | `{"stopping": true, "version": ...}`, then the process goes once the answer is written | yes |
@@ -610,11 +621,12 @@ this account's.
 
 **A selection moves what routes turns.** `accounts.select` writes to the store
 the ingress authenticates through, so the next turn is made as the account
-named rather than the one this socket merely reports. The quota snapshot goes
-with it, because it belongs to the account that earned it, and the next turn
-supplies one for whoever is serving now; `accounts.forget` drops it too when the
-account it forgets is the one that was serving, and only then, since forgetting
-an idle account changes nothing about the grant being spent.
+named rather than the one this socket merely reports. Quota does not move with
+it and does not need to: every figure is held under the account that earned it
+(`proxy-behavior.md` §8.3), so what `usage` reports at the top follows the
+selection by itself, and each account's own figure stays valid. `accounts.forget`
+drops the figure of the account it forgets, serving or idle, because that
+entitlement belongs to an account this daemon can no longer spend.
 
 Live conversations are dropped with it. A conduit fixes its account on the
 connection when it dials and reuses that connection for the conversation's life
@@ -670,7 +682,9 @@ volunteers a snapshot at the head of every stream; that one is free, rides a tur
 already being made, and is what `usage` reports. This exists for the case that
 path cannot cover — a front-end with a figure to show on a daemon that has served
 no turn yet — and its answer is recorded where the stream path records its own,
-so everything reading a quota reads one value.
+under the serving account, so everything reading a quota reads one value. It is
+recorded as asked for rather than as volunteered: both are true figures and they
+go stale differently, so `usage` states which one each account's figure is.
 
 **`status` reports the version of the build serving the socket.** It is not
 necessarily the build that asked: one file is both, and replacing it does not
