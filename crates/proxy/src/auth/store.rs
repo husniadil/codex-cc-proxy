@@ -845,15 +845,29 @@ impl AccountStore for FileStore {
                 )));
             }
 
+            // A key over a key of another provider is not a rotation. It
+            // discards a working credential and re-points the account at a
+            // different backend, which is the same unrecoverable loss the
+            // grant collision above refuses. Same-provider rotation is
+            // untouched.
+            if let Some(entry) = file
+                .index_of(name)
+                .and_then(|index| file.accounts.get(index))
+                && entry.provider != provider
+            {
+                return Err(ProxyError::invalid_request(format!(
+                    "`{name}` already names a {} key; \
+                     forget it first with `accounts --forget {name}`, \
+                     or store the key under another name",
+                    entry.provider.as_str()
+                )));
+            }
+
             match file
                 .index_of(name)
                 .and_then(|index| file.accounts.get_mut(index))
             {
-                // A re-store carries the provider too. A key rotated into an
-                // entry that kept the old provider would route by one thing
-                // and authenticate with another.
                 Some(entry) => {
-                    entry.provider = provider;
                     entry.credential = Credential::Key(ApiKey::new(key));
                 }
                 None => file.accounts.push(Entry {

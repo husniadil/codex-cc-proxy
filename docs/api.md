@@ -116,7 +116,13 @@ instead of starting an authorization: no browser, and the secret never appears
 in a command line. `--as NAME` is required with it, because a key carries no id
 to be named by. `--provider` states which provider's endpoints the key is spent
 against — `codex` by default, `anthropic` for a key that serves turns through
-the relay (`proxy-behavior.md` §9). It is only meaningful with `--key`: an
+the relay (`proxy-behavior.md` §9). Storing a key under a name that already
+holds a key of the *same* provider rotates it in place, silently, which is what
+a replaced secret needs. A name that holds a key of a *different* provider is
+refused instead, naming the account, the provider it currently holds, and the
+`accounts --forget NAME` that clears the way: the store would otherwise discard
+a working credential and re-point the account at another backend with nothing
+said. A name holding a grant is refused as it already was. It is only meaningful with `--key`: an
 authorization runs against one provider's server, so a grant has nothing to
 choose, and naming a provider without `--key` is refused rather than ignored. `--as NAME` is what to call it locally, for
 an operator holding more than one; without it the account id the grant carries

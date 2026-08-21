@@ -2459,3 +2459,58 @@ fn a_first_login_by_key_selects_the_new_account() {
     let accounts = store.accounts().unwrap();
     assert!(accounts[0].selected, "{accounts:?}");
 }
+
+/// A key re-store that would change the entry's provider is refused.
+///
+/// A key over a key of the same provider is a rotation. A key over a key of a
+/// *different* provider silently discards a working credential and re-points
+/// the account at another backend, which is the same loss `add_key` already
+/// refuses for a grant. The refusal has to name the account, the provider it
+/// currently holds, and the way through, because neither is recoverable from
+/// what the operator typed.
+#[test]
+fn a_key_re_store_that_changes_provider_is_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = FileStore::new(dir.path().join("credentials.json"));
+    store
+        .add_key("api", "key-secret-value", Provider::Codex)
+        .unwrap();
+
+    let error = store
+        .add_key("api", "sk-ant-oat01-value", Provider::Anthropic)
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("api"), "{error}");
+    assert!(error.contains(Provider::Codex.as_str()), "{error}");
+    assert!(error.contains("--forget"), "{error}");
+
+    // The stored key is untouched, and so is its provider.
+    let accounts = store.accounts().unwrap();
+    assert_eq!(accounts.len(), 1);
+    assert_eq!(accounts[0].provider, Provider::Codex.as_str());
+    assert_eq!(stored_key(&store, "api"), "key-secret-value");
+}
+
+/// Same-provider rotation stays what it was: silent, in place.
+#[test]
+fn a_same_provider_key_re_store_still_rotates() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = FileStore::new(dir.path().join("credentials.json"));
+    store.add_key("api", "first", Provider::Codex).unwrap();
+    store.add_key("api", "second", Provider::Codex).unwrap();
+
+    let accounts = store.accounts().unwrap();
+    assert_eq!(accounts.len(), 1);
+    assert_eq!(accounts[0].provider, Provider::Codex.as_str());
+    assert_eq!(stored_key(&store, "api"), "second");
+}
+
+/// The stored secret for a key account, for the two tests that assert a
+/// re-store did or did not replace one.
+fn stored_key(store: &FileStore, name: &str) -> String {
+    let credential = store.credential_for(name).unwrap();
+    let Credential::Key(key) = credential else {
+        unreachable!("`{name}` is not a key: {credential:?}")
+    };
+    key.value().to_owned()
+}

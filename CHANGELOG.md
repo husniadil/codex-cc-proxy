@@ -8,6 +8,14 @@ in [`docs/api.md`](docs/api.md) §6.
 
 ### Changed
 
+- **A key re-store that would change an account's provider is refused.** A key
+  stored over a key was a silent replace, including across providers, so
+  `login --setup-token --as api` turned a first-provider key account into a
+  second-provider one and the old key was gone with nothing said. The refusal
+  names the account, the provider it holds, and the `accounts --forget NAME`
+  that clears the way. Same-provider rotation is unchanged, and so is the
+  existing refusal to store a key over a grant.
+
 - **The control socket lives inside `PROXENOS_HOME` when one is set.** *Path
   change.* It was `$TMPDIR/proxenos.sock` regardless of the home, so a CLI or a
   daemon isolated into a temporary home still reached the operator's real
