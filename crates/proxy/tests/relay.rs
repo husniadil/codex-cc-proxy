@@ -509,6 +509,50 @@ async fn an_unpinned_tier_follows_the_selection_back_to_the_translating_path() {
     assert!(seen.lock().unwrap().bodies.is_empty());
 }
 
+/// A turn that would translate while the account authenticating it holds the
+/// second provider's credential is refused before anything is sent.
+///
+/// Falling through instead spends that credential against the translating
+/// backend — a key leaking to a provider it was never stored for, refused
+/// there with a message about the key rather than about the mapping. Observed
+/// live: a client sending an id the mapping did not name, while a key for the
+/// second provider was serving turns.
+#[tokio::test]
+async fn a_turn_that_would_translate_as_the_relay_account_is_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = store_with_a_relay_account(&dir);
+    store.select("relay").unwrap();
+
+    let (base, seen) = daemon(
+        Arc::clone(&store),
+        vec![tier("sonnet", "claude-sonnet-5", None)],
+        false,
+    )
+    .await;
+
+    // An id the mapping does not name, so it cannot route to the relay.
+    let response = turn(
+        &base,
+        "{\"max_tokens\":64,\"model\":\"claude-sonnet-4-5\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"stream\":true}",
+    )
+    .await;
+
+    assert_eq!(response.status(), 400);
+    let body: Value = response.json().await.unwrap();
+    assert_eq!(body["type"], "error");
+    assert_eq!(body["error"]["type"], "invalid_request_error");
+    let message = body["error"]["message"].as_str().unwrap();
+    assert!(
+        message.contains("claude-sonnet-4-5"),
+        "names the model: {message}"
+    );
+    assert!(message.contains("`relay`"), "names the account: {message}");
+
+    // Refused before anything left: the relay stub saw nothing, and the
+    // translating transport points nowhere so reaching it would not be a 400.
+    assert!(seen.lock().unwrap().bodies.is_empty());
+}
+
 /// §9.1 — a catalog is one provider's menu, so a relay-bound tier is not
 /// measured against it.
 ///

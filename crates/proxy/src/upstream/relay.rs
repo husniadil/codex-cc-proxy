@@ -135,7 +135,11 @@ impl Relay {
     /// reaches the next turn. The rule itself is `relayed_by`, which the
     /// launch surface asks the same question of without a `Relay` to ask it
     /// through.
-    fn serves(&self, account: Option<&str>) -> Result<Option<String>, ProxyError> {
+    ///
+    /// The translating path asks this too, inverted: a turn about to translate
+    /// while this answers `Some` would spend the second provider's credential
+    /// against the first provider's backend, and is refused instead (§9.1).
+    pub fn relaying_account(&self, account: Option<&str>) -> Result<Option<String>, ProxyError> {
         Ok(relayed_by(&self.store.accounts()?, account).map(|stored| stored.name.clone()))
     }
 
@@ -165,7 +169,7 @@ impl Relay {
 
         let mut relaying = Vec::new();
         for account in &claimants {
-            if let Some(name) = self.serves(*account)? {
+            if let Some(name) = self.relaying_account(*account)? {
                 relaying.push(name);
             }
         }

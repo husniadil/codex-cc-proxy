@@ -254,6 +254,30 @@ async fn messages(
     // translated for one tier's model and authenticated as another's account.
     let account = routed.and_then(|mapping| mapping.account.clone());
 
+    // §9.1 — a turn past this point translates, and translating spends the
+    // authenticating account's credential against the first provider's
+    // backend. An account holding the second provider's credential is refused
+    // here instead: falling through leaks that credential to an endpoint it
+    // was never stored for, which refuses it with a message about the key
+    // rather than about the mapping.
+    if let Some(relay) = &state.relay {
+        match relay.relaying_account(account.as_deref()) {
+            Ok(Some(name)) => {
+                return ProxyError::invalid_request(format!(
+                    "`{}` does not route to any relayed model, and the account that \
+                     would authenticate it (`{name}`) holds the second provider's \
+                     credential — refused rather than spent against the translating \
+                     backend. Map `{}` for `{name}`, or pin its tier to an account \
+                     on the translating provider.",
+                    request.model, request.model
+                ))
+                .into_response();
+            }
+            Ok(None) => {}
+            Err(error) => return error.into_response(),
+        }
+    }
+
     // Translated once with no session knowledge, purely to derive the item
     // sequence this conversation is identified by (§3.1).
     let probe = translate_request(&request, &TranslateOptions::default());
