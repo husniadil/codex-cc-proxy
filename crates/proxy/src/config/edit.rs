@@ -163,3 +163,54 @@ fn with_trailing_newline(mut text: String) -> String {
     }
     text
 }
+
+/// Move every table belonging to one account to another name.
+///
+/// `None` where the file has none, so a rename that has nothing to move does
+/// not write the file at all — and does not create one out of the shipped
+/// example for an account that never had a section.
+///
+/// Only the header lines change. The body of each table, and every comment in
+/// and around it, survives byte for byte: what an operator wrote about why a
+/// tier is what it is stays true after the account it belongs to is renamed.
+pub fn rename_account(document: &str, from: &str, to: &str) -> Option<String> {
+    let mut lines: Vec<String> = document.lines().map(str::to_owned).collect();
+    let mut moved = false;
+
+    for line in &mut lines {
+        let Some(rest) = account_header(line, from) else {
+            continue;
+        };
+        *line = format!("[accounts.{}{rest}", key(to));
+        moved = true;
+    }
+
+    moved.then(|| with_trailing_newline(lines.join("\n")))
+}
+
+/// The remainder of a header line that opens a table belonging to this
+/// account — `]` for the account's own table, `.tiers]` for one below it.
+///
+/// Both spellings of the name are recognized, because TOML allows a bare key
+/// and a quoted one for the same table and an operator may have written either.
+fn account_header(line: &str, account: &str) -> Option<String> {
+    let trimmed = line.trim();
+    let rest = trimmed.strip_prefix("[accounts.")?;
+    let rest = rest
+        .strip_prefix(&format!("\"{account}\""))
+        .or_else(|| rest.strip_prefix(account))?;
+    (rest == "]" || rest.starts_with('.')).then(|| rest.to_owned())
+}
+
+/// A name as it has to be written in a table header: bare where TOML allows a
+/// bare key, quoted otherwise.
+fn key(name: &str) -> String {
+    if !name.is_empty()
+        && name.chars().all(|character| {
+            character.is_ascii_alphanumeric() || character == '_' || character == '-'
+        })
+    {
+        return name.to_owned();
+    }
+    format!("\"{}\"", name.replace('\\', "\\\\").replace('"', "\\\""))
+}

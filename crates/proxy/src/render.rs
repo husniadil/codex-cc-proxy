@@ -169,7 +169,16 @@ pub fn renamed_account(result: &Value) -> String {
     let from = field(result, "renamed")
         .and_then(Value::as_str)
         .unwrap_or("nothing");
+    // Whether the configuration file moved with it. Said only when it did:
+    // most accounts have no section, and an operator who has one wrote it by
+    // hand and will want to know it was rewritten.
+    let moved = field(result, "moved_configuration")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
     match field(result, "name").and_then(Value::as_str) {
+        Some(to) if moved => {
+            format!("{from} is now {to}; its section in config.toml moved with it")
+        }
         Some(to) => format!("{from} is now {to}"),
         None => format!("renamed {from}"),
     }

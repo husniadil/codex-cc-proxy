@@ -3038,3 +3038,81 @@ async fn a_switch_the_target_account_cannot_serve_is_refused() {
         "a refused switch must leave the store where it was"
     );
 }
+
+/// Renaming an account takes its configuration with it.
+///
+/// The section is keyed by the name, so a rename that left it behind would
+/// detach a mapping from the account it was written for — and a section naming
+/// nobody is not an error, so nothing would say so. Only the header moves: what
+/// the operator wrote about why a tier is what it is stays where it was.
+#[tokio::test]
+async fn renaming_an_account_moves_its_configuration_section() {
+    let harness = Harness::start().await;
+    harness
+        .store
+        .add(&grant("acct_one", "a-one"), Some("spare"))
+        .unwrap();
+    std::fs::write(
+        &harness.config_file,
+        "[accounts.spare]\n\
+         effort = \"low\"\n\n\
+         # opus is terra here because this account is on the plan that has it\n\
+         [accounts.spare.tiers]\n\
+         opus = \"gpt-5.6-terra\"\n",
+    )
+    .unwrap();
+
+    let answer = harness
+        .call_with(
+            "accounts.rename",
+            json!({ "account": "spare", "name": "work" }),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(answer["moved_configuration"], json!(true));
+    let written = std::fs::read_to_string(&harness.config_file).unwrap();
+    assert!(
+        written.contains("[accounts.work]") && written.contains("[accounts.work.tiers]"),
+        "both tables should have moved: {written}"
+    );
+    assert!(
+        !written.contains("[accounts.spare"),
+        "nothing should still be filed under the old name: {written}"
+    );
+    assert!(
+        written.contains("# opus is terra here because this account is on the plan that has it"),
+        "the comment explaining the mapping should survive: {written}"
+    );
+    assert!(
+        written.contains("effort = \"low\""),
+        "the body of each table should survive: {written}"
+    );
+}
+
+/// An account with no section is renamed without the file being touched.
+///
+/// Most accounts have none. Writing one out of the shipped example for a
+/// rename would put a file on disk the operator never asked for.
+#[tokio::test]
+async fn renaming_an_account_with_no_section_writes_nothing() {
+    let harness = Harness::start().await;
+    harness
+        .store
+        .add(&grant("acct_one", "a-one"), Some("spare"))
+        .unwrap();
+
+    let answer = harness
+        .call_with(
+            "accounts.rename",
+            json!({ "account": "spare", "name": "work" }),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(answer["moved_configuration"], json!(false));
+    assert!(
+        !harness.config_file.exists(),
+        "a rename with nothing to move should not create a configuration file"
+    );
+}

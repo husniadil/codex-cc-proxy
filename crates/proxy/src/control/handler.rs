@@ -731,8 +731,47 @@ fn rename_account(state: &ControlState, params: Option<&Value>) -> Result<Value,
         ));
     };
 
+    // The configuration first, then the store. An account section is keyed by
+    // the name (§4), so a rename that moved the store and failed here would
+    // leave the account with no mapping and the mapping with no account —
+    // silently, since a section naming nobody is not an error. The other
+    // order leaves an orphan section, which costs nothing and is visible.
+    let moved = move_account_section(state, from, to)?;
+
     state.credentials.rename(from, to)?;
-    Ok(json!({ "renamed": from, "name": to }))
+    Ok(json!({
+        "renamed": from,
+        "name": to,
+        // Whether anything in the configuration file moved with it. False is
+        // the ordinary answer: most accounts have no section at all.
+        "moved_configuration": moved,
+    }))
+}
+
+/// Move an account's own tables in the configuration file, if it has any.
+///
+/// Nothing is written where there is nothing to move, so an account that never
+/// had a section does not cause a file to be created from the shipped example.
+/// A daemon with no configuration file to write is only a failure if there was
+/// something to write.
+fn move_account_section(state: &ControlState, from: &str, to: &str) -> Result<bool, ProxyError> {
+    let Some(path) = state.config_path.as_ref() else {
+        return Ok(false);
+    };
+    let Ok(document) = std::fs::read_to_string(path) else {
+        return Ok(false);
+    };
+    let Some(moved) = crate::config::edit::rename_account(&document, from, to) else {
+        return Ok(false);
+    };
+
+    std::fs::write(path, moved).map(|()| true).map_err(|error| {
+        ProxyError::invalid_request(format!(
+            "could not write {}: {error}. The account was not renamed, because its \
+                 tier mapping is filed under the old name and would have been left behind.",
+            path.display()
+        ))
+    })
 }
 
 /// `accounts.select` — choose the account every following turn is made as.

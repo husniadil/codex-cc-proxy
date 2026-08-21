@@ -462,7 +462,7 @@ A Unix domain socket, or a named pipe on Windows, carrying JSON-RPC:
 | `accounts.forget` | forgets one account — the selected one, or `{"account": name}` — and answers with the name it cleared and the one serving turns afterwards; the rest stay usable, and an idle account's removal leaves the serving grant's quota alone | no — was `disconnect` |
 | `accounts` | every stored account, what kind of credential each holds, and which one serves turns; no tokens | no — v0.3 |
 | `accounts.select` | `{"account": name}`, the account every following turn is made as, whether the catalog was refetched for it, and the tier mapping now in force; refuses, and moves nothing, where that account's mapping names a model its catalog does not have | no — v0.3 |
-| `accounts.rename` | `{"account": from, "name": to}`, the name this daemon calls an account by; the grant and the account id are untouched | no — v0.3 |
+| `accounts.rename` | `{"account": from, "name": to}`, the name this daemon calls an account by, and whether an account section moved with it; the grant and the account id are untouched | no — v0.3 |
 | `models` | catalog, whether it is the fallback list, and whether it was fetched for an account other than the one serving turns | yes |
 | `tiers.get` | tier mapping | yes |
 | `usage` | quota snapshot as of the last turn, or that no turn has been made, plus `models` — the ids this daemon serves | yes |
@@ -516,6 +516,15 @@ argument as the whole mapping would let a caller that knows about one tier
 silently unset the three it did not mention. Every set is validated against the
 catalog exactly as startup validates it — that check is why this daemon owns the
 mapping rather than a front-end, since it is the side holding the catalog.
+
+**A rename takes the account's configuration with it.** An account section is
+keyed by the name (§4), so a rename that left it behind would detach a mapping
+from the account it was written for — and a section naming nobody is not an
+error, so nothing would say so. Only the table headers change; every key and
+comment under them survives byte for byte. The file is written before the store,
+because the other order can leave an account with no mapping, and this one can
+only leave an orphan section. An account with no section is renamed without the
+file being touched at all.
 
 **A selection re-resolves the mapping, and can be refused.** The account's own
 tiers and ceiling (§4) are resolved and validated against the catalog fetched
