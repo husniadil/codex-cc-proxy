@@ -163,14 +163,20 @@ pub fn accounts(result: &Value) -> String {
                 .and_then(Value::as_str)
                 .or_else(|| field(account, "account_id").and_then(Value::as_str))
                 .unwrap_or(if key { "key" } else { "id unknown" });
-            // Named only where it is not the provider this project started
-            // with — like the kind, a column stamped on every line says
-            // nothing. Absent entirely from a daemon that predates providers.
+            // On every row. With two providers in the store an unnamed one is
+            // a guess, and the row that leaves it out is the one an operator
+            // has to guess about. Omitted only where the payload genuinely
+            // does not carry it — a daemon that predates providers — because
+            // filling that in would be inventing the answer.
             let provider = match field(account, "provider").and_then(Value::as_str) {
-                Some(provider) if provider != "codex" => format!("  {provider}"),
-                _ => String::new(),
+                Some(provider) => format!("  {provider}"),
+                None => String::new(),
             };
-            format!("{marker} {name:<24} {who}{provider}")
+            // Trimmed so a payload without a provider does not leave the
+            // padding hanging off the end of the line.
+            format!("{marker} {name:<24} {who:<24}{provider}")
+                .trim_end()
+                .to_owned()
         })
         .collect::<Vec<_>>()
         .join("\n")

@@ -86,6 +86,10 @@ proxenos login      authenticate (--as NAME labels it, --key reads one from stdi
                     --provider names which provider that key is for,
                     --setup-token stores a subscription token, guided)
 proxenos accounts   stored accounts (--use switches, --rename, --forget drops)
+                    one row per account: a `*` on the one serving turns, the
+                    name, the address or `key`, and the provider — named on
+                    every row, since with two providers stored an unnamed one
+                    is a guess
 proxenos status     connection, tier mapping, model catalog
 proxenos models     available models
 proxenos env        environment for Claude Code, as shell exports

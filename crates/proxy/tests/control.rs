@@ -4776,3 +4776,46 @@ fn probe_state(dir: &std::path::Path) -> ControlState {
         config_path: Some(dir.join("config.toml")),
     }
 }
+
+/// Two providers in one store make an unnamed provider a guess. Every row
+/// names its own, whatever the credential kind, and still shows the address or
+/// the kind that tells two rows apart.
+#[tokio::test]
+async fn every_rendered_account_row_names_its_provider() {
+    let harness = Harness::start().await;
+    harness
+        .store
+        .add(&grant("acct_one", "a-one"), None)
+        .unwrap();
+    harness
+        .store
+        .add_key("billing", "key-secret", Provider::Codex)
+        .unwrap();
+    harness
+        .store
+        .add_key("personal", "oat-secret", Provider::Anthropic)
+        .unwrap();
+
+    let rendered = render::accounts(&harness.call("accounts").await.unwrap());
+
+    let row = |name: &str| {
+        rendered
+            .lines()
+            .find(|line| line.contains(name))
+            .unwrap_or_else(|| panic!("no row for {name}: {rendered}"))
+            .to_owned()
+    };
+
+    // The provider, on every row — the oauth grant included.
+    let oauth = row("acct_one");
+    assert!(oauth.contains("codex"), "{rendered}");
+    assert!(oauth.contains("acct_one@example.test"), "{rendered}");
+
+    let key_codex = row("billing");
+    assert!(key_codex.contains("codex"), "{rendered}");
+    assert!(key_codex.contains("key"), "{rendered}");
+
+    let key_anthropic = row("personal");
+    assert!(key_anthropic.contains("anthropic"), "{rendered}");
+    assert!(key_anthropic.contains("key"), "{rendered}");
+}

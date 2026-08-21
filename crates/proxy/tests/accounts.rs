@@ -218,9 +218,9 @@ fn the_binary_lists_and_switches_accounts() {
 /// An account states its provider, and everything that reports the account
 /// says so — the roadmap's first rule for a second provider. The default is
 /// the provider this project started with, so every credential file written
-/// before the field existed reads unchanged, and the word appears only where
-/// it is not that default: a listing that stamped the same provider on every
-/// line would say nothing.
+/// before the field existed reads unchanged, and the listing names it on every
+/// row: with two providers stored, a row that leaves it out is a row the
+/// operator has to guess about.
 #[test]
 fn an_account_states_its_provider_and_the_reports_name_it() {
     let daemon = Daemon::start(&json!({
@@ -247,8 +247,8 @@ fn an_account_states_its_provider_and_the_reports_name_it() {
         "the account of the other provider must say so: {listed}"
     );
     assert!(
-        !line_of("work").contains("codex") && !line_of("work").contains("anthropic"),
-        "the default provider is not stamped on every line: {listed}"
+        line_of("work").contains("codex"),
+        "the default provider is named too, not left implicit: {listed}"
     );
 
     // The switch rewrites the credential file, so this also holds the field

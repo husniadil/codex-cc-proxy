@@ -6,6 +6,16 @@ in [`docs/api.md`](docs/api.md) §6.
 
 ## [Unreleased]
 
+### Changed
+
+- **Every `accounts` row names its provider.** The listing named one only where
+  it was not `codex`, so a store holding both providers printed three rows whose
+  provider had to be inferred from the one row that had it. It is a column every
+  row fills now, whatever the credential kind, alongside the address or `key`
+  that already told two rows apart. A payload that carries no provider at all —
+  a daemon older than providers — still prints none, because filling that in
+  would be inventing it.
+
 ### Added
 
 - **The launch settings disable the client's commit attribution.** A session
