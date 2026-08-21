@@ -229,6 +229,17 @@ pub trait AccountStore: CredentialStore {
     /// is handed over rather than granted, and there is no flow behind it.
     fn add_key(&self, name: &str, key: &str) -> Result<(), ProxyError>;
 
+    /// Write one named account's grant, whether or not it is selected.
+    ///
+    /// `save` writes the grant of the account serving turns, resolving the
+    /// entry by account id and falling back to the selection where the grant
+    /// carries none. A pinned account's rotation reaching that fallback lands
+    /// in the serving account's entry — one account authenticating as another,
+    /// and a refresh token only a re-login replaces destroyed in the same
+    /// write. This is the same write with the account it was read for standing
+    /// where the selection stood.
+    fn save_for(&self, name: &str, credentials: &Credentials) -> Result<(), ProxyError>;
+
     /// Change what this store calls an account, leaving its grant alone.
     ///
     /// A login carrying no label names the account by the id the backend knows
@@ -768,10 +779,34 @@ impl AccountStore for FileStore {
 
     fn credential_for(&self, name: &str) -> Result<Credential, ProxyError> {
         let file = self.read()?;
-        match file.index_of(name).and_then(|index| file.accounts.get(index)) {
+        match file
+            .index_of(name)
+            .and_then(|index| file.accounts.get(index))
+        {
             Some(entry) => Ok(entry.credential.clone()),
             None => Err(file.unknown(name)),
         }
+    }
+
+    fn save_for(&self, name: &str, credentials: &Credentials) -> Result<(), ProxyError> {
+        self.update(|file| {
+            // By account id first, exactly as `save` does — a rotation belongs
+            // to the account whose id it carries, whatever it is filed under.
+            // The name is the fallback, and it is the whole point: a grant
+            // with no id is anonymous, and the account it was *read for* is
+            // the only thing that says where it goes back.
+            let target = file
+                .index_by_account(credentials.account_id.as_deref())
+                .or_else(|| file.index_of(name));
+            match target.and_then(|index| file.accounts.get_mut(index)) {
+                // A grant is only ever written over a grant, as in `save`.
+                Some(entry) if entry.grant().is_some() => {
+                    entry.credential = Credential::Grant(credentials.clone());
+                    Ok(())
+                }
+                _ => Err(file.unknown(name)),
+            }
+        })
     }
 
     fn add_key(&self, name: &str, key: &str) -> Result<(), ProxyError> {
@@ -963,4 +998,51 @@ fn open_private(path: &Path) -> Result<std::fs::File, ProxyError> {
         .truncate(false)
         .open(path)
         .map_err(|error| ProxyError::authentication(format!("could not open {path:?}: {error}")))
+}
+
+/// One named account, behind the trait that authenticates a request.
+///
+/// `CredentialStore` is about *the* grant — whichever account is serving turns
+/// — and everything that refreshes one is written against it. A pinned tier
+/// needs that same machinery pointed at a different entry, and this is the
+/// adapter: read and write one account by name, so the refresh path is the
+/// same code rather than a second copy of it that can drift.
+pub struct AccountSlot {
+    store: std::sync::Arc<dyn AccountStore>,
+    account: String,
+}
+
+impl AccountSlot {
+    pub fn new(store: std::sync::Arc<dyn AccountStore>, account: impl Into<String>) -> Self {
+        Self {
+            store,
+            account: account.into(),
+        }
+    }
+}
+
+impl CredentialStore for AccountSlot {
+    /// The named account's grant, or nothing where it holds a key.
+    ///
+    /// A name with nothing behind it is the store's refusal, not `None`: the
+    /// caller asked about an account by name and "not authenticated" would
+    /// send whoever reads it to log in again for an account that is already
+    /// there under another name.
+    fn load(&self) -> Result<Option<Credentials>, ProxyError> {
+        Ok(self.store.credential_for(&self.account)?.grant().cloned())
+    }
+
+    fn save(&self, credentials: &Credentials) -> Result<(), ProxyError> {
+        self.store.save_for(&self.account, credentials)
+    }
+
+    /// Refused. A slot exists to authenticate one account's requests, and
+    /// forgetting an account is `AccountStore::remove` — reached through here
+    /// it would clear whichever account a refresh happened to be pointed at.
+    fn clear(&self) -> Result<(), ProxyError> {
+        Err(ProxyError::invalid_request(format!(
+            "`{}` is bound for authorizing turns and cannot forget an account",
+            self.account
+        )))
+    }
 }

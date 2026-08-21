@@ -108,6 +108,29 @@ impl TokenSource {
         }
     }
 
+    /// The same refresh configuration, reading and writing a different slot.
+    ///
+    /// Refresh state is per grant: the single-flight lock, the count, and the
+    /// token the backend refused all describe one refresh-token family.
+    /// Pointing the shared source at another account would let one account's
+    /// refusal answer for another's, so a second account gets a second source
+    /// rather than a second store behind the first.
+    ///
+    /// Everything else is carried over. The HTTP client is cloned rather than
+    /// rebuilt, so the two share a connection pool.
+    pub fn rebind(&self, store: Arc<dyn CredentialStore>) -> Self {
+        Self {
+            store,
+            client: self.client.clone(),
+            endpoint: self.endpoint.clone(),
+            client_id: self.client_id.clone(),
+            clock: Arc::clone(&self.clock),
+            refresh_lock: tokio::sync::Mutex::new(()),
+            refused: Mutex::new(None),
+            refreshes: AtomicU32::new(0),
+        }
+    }
+
     /// How many refresh requests reached the network.
     pub fn refresh_count(&self) -> u32 {
         self.refreshes.load(Ordering::SeqCst)

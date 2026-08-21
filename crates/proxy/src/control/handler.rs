@@ -1205,7 +1205,7 @@ async fn refresh_catalog(state: &ControlState) -> bool {
     let Some(authorizer) = authorizer(state) else {
         return false;
     };
-    let Ok(authorization) = authorizer.authorize().await else {
+    let Ok(authorization) = authorizer.authorize(None).await else {
         return false;
     };
     state.catalog.refresh(&authorization).await
@@ -1302,7 +1302,7 @@ async fn refresh_usage(state: &ControlState) -> Result<Value, ProxyError> {
     let snapshot = crate::usage::fetch(
         &reqwest::Client::new(),
         &state.usage_endpoint,
-        &authorizer.authorize().await?,
+        &authorizer.authorize(None).await?,
     )
     .await?;
 

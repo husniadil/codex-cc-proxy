@@ -1961,7 +1961,7 @@ async fn each_kind_authorizes_with_the_headers_its_endpoint_expects() {
     // Nothing stored: the answer says what to do about it rather than sending
     // an empty authorization.
     let error = authorizer
-        .authorize()
+        .authorize(None)
         .await
         .expect_err("an empty store cannot authorize");
     assert!(error.to_string().contains("login"), "{error}");
@@ -1976,7 +1976,7 @@ async fn each_kind_authorizes_with_the_headers_its_endpoint_expects() {
         )
         .unwrap();
 
-    let grant = authorizer.authorize().await.unwrap();
+    let grant = authorizer.authorize(None).await.unwrap();
     assert_eq!(grant.kind, Kind::Subscription);
     let header = |set: &proxenos::auth::authorize::Authorization, name: &str| {
         set.headers
@@ -1996,7 +1996,7 @@ async fn each_kind_authorizes_with_the_headers_its_endpoint_expects() {
 
     store.add_key("billing", "key-secret-value").unwrap();
 
-    let key = authorizer.authorize().await.unwrap();
+    let key = authorizer.authorize(None).await.unwrap();
     assert_eq!(key.kind, Kind::Key);
     assert_eq!(
         header(&key, "authorization").as_deref(),
@@ -2136,4 +2136,224 @@ fn a_pin_naming_an_unstored_account_is_refused_by_name() {
     let rendered = format!("{error}");
     assert!(rendered.contains("spare"), "{rendered}");
     assert!(rendered.contains("acct_123"), "{rendered}");
+}
+
+// ---------------------------------------------------------------------------
+// §7.1, §8.1 — authorizing as an account other than the one serving turns.
+// ---------------------------------------------------------------------------
+
+fn pinned_authorizer(
+    store: &Arc<FileStore>,
+    endpoint: &str,
+    now: u64,
+) -> proxenos::auth::authorize::AccountAuthorizer {
+    proxenos::auth::authorize::AccountAuthorizer::new(
+        Arc::clone(store) as Arc<dyn AccountStore>,
+        Arc::new(TokenSource::new(
+            Arc::clone(store) as Arc<dyn CredentialStore>,
+            endpoint.to_owned(),
+            "client-abc",
+            Arc::new(FixedClock(now)),
+        )),
+    )
+}
+
+/// §7.1 — a pinned tier authorizes as the account it names.
+///
+/// The serving account is right there and its token would produce a working
+/// turn, which is exactly why this cannot be left to fall back: the turn would
+/// succeed against the wrong subscription's quota and nothing would say so.
+#[tokio::test]
+async fn a_pinned_account_authorizes_with_its_own_token() {
+    use proxenos::auth::authorize::Authorizer;
+
+    let dir = tempfile::tempdir().unwrap();
+    let store = Arc::new(FileStore::new(dir.path().join("credentials.json")));
+    store
+        .add(
+            &Credentials {
+                expires_at: Some(9_000),
+                ..sample()
+            },
+            None,
+        )
+        .unwrap();
+    store
+        .add(
+            &Credentials {
+                expires_at: Some(9_000),
+                ..other()
+            },
+            None,
+        )
+        .unwrap();
+    store.select("acct_123").unwrap();
+
+    let authorizer = pinned_authorizer(&store, "", 2_000);
+    let header = |set: &proxenos::auth::authorize::Authorization, name: &str| {
+        set.headers
+            .iter()
+            .find(|(key, _)| key.eq_ignore_ascii_case(name))
+            .map(|(_, value)| value.clone())
+    };
+
+    let serving = authorizer.authorize(None).await.unwrap();
+    assert_eq!(
+        header(&serving, "authorization").as_deref(),
+        Some("Bearer access-secret")
+    );
+
+    let pinned = authorizer.authorize(Some("acct_456")).await.unwrap();
+    assert_eq!(
+        header(&pinned, "authorization").as_deref(),
+        Some("Bearer other-access")
+    );
+    assert_eq!(
+        header(&pinned, "chatgpt-account-id").as_deref(),
+        Some("acct_456"),
+        "the pinned account names itself upstream, not the one serving turns"
+    );
+}
+
+/// A pin naming nothing stored refuses the turn, and never serves it as
+/// somebody else.
+#[tokio::test]
+async fn a_pin_the_store_cannot_answer_for_refuses_the_turn() {
+    use proxenos::auth::authorize::Authorizer;
+
+    let dir = tempfile::tempdir().unwrap();
+    let store = Arc::new(FileStore::new(dir.path().join("credentials.json")));
+    store
+        .add(
+            &Credentials {
+                expires_at: Some(9_000),
+                ..sample()
+            },
+            None,
+        )
+        .unwrap();
+
+    let authorizer = pinned_authorizer(&store, "", 2_000);
+    let error = authorizer
+        .authorize(Some("spare"))
+        .await
+        .expect_err("a pin naming nothing stored cannot authorize");
+    assert!(error.to_string().contains("spare"), "{error}");
+}
+
+/// §8.1 — refreshing a pinned grant lands in that account's entry.
+///
+/// The grant here carries **no account id**, which is the case `save` resolves
+/// by falling back to the selection. Reached through the shared token source,
+/// that rotation would be written over the serving account: one account
+/// authenticating as another, and a refresh token only a re-login replaces
+/// destroyed in the same write.
+#[tokio::test]
+async fn refreshing_a_pinned_account_writes_to_that_account() {
+    use proxenos::auth::authorize::Authorizer;
+
+    let dir = tempfile::tempdir().unwrap();
+    let server = AuthServer::start(200, &fresh_token_response(9_000), 0).await;
+    let store = Arc::new(FileStore::new(dir.path().join("credentials.json")));
+
+    // The serving account, fresh: nothing here should move.
+    store
+        .add(
+            &Credentials {
+                expires_at: Some(9_000),
+                ..sample()
+            },
+            None,
+        )
+        .unwrap();
+    // The pinned one, expired and anonymous.
+    store
+        .add(
+            &Credentials {
+                access_token: "spare-access".to_owned(),
+                refresh_token: "spare-refresh".to_owned(),
+                id_token: None,
+                account_id: None,
+                expires_at: Some(1_000),
+            },
+            Some("spare"),
+        )
+        .unwrap();
+    store.select("acct_123").unwrap();
+
+    let authorizer = pinned_authorizer(&store, &server.url, 2_000);
+    authorizer.authorize(Some("spare")).await.unwrap();
+
+    let rotated = store.credential_for("spare").unwrap();
+    assert_eq!(
+        rotated.grant().map(|grant| grant.refresh_token.as_str()),
+        Some("new-refresh"),
+        "the pinned account's own entry took the rotation"
+    );
+
+    let serving = store.credential_for("acct_123").unwrap();
+    assert_eq!(
+        serving.grant().map(|grant| grant.refresh_token.as_str()),
+        Some("refresh-secret"),
+        "the serving account's grant was not overwritten"
+    );
+
+    let bodies = server.bodies();
+    assert_eq!(bodies.len(), 1);
+    assert!(bodies[0].contains("spare-refresh"), "{}", bodies[0]);
+}
+
+/// Two accounts serving one client keep separate refresh state.
+///
+/// A refused grant is a fact about one refresh token, and a single shared
+/// source would let one account's refusal answer for the other's — either
+/// refusing a working account or retrying a token the backend has already
+/// retired.
+#[tokio::test]
+async fn two_accounts_serving_at_once_keep_separate_refresh_state() {
+    use proxenos::auth::authorize::Authorizer;
+
+    let dir = tempfile::tempdir().unwrap();
+    // Every refresh is refused as a dead grant.
+    let server = AuthServer::start(400, r#"{"error":"invalid_grant"}"#, 0).await;
+    let store = Arc::new(FileStore::new(dir.path().join("credentials.json")));
+
+    // The serving account is fresh and never needs a refresh.
+    store
+        .add(
+            &Credentials {
+                expires_at: Some(9_000),
+                ..sample()
+            },
+            None,
+        )
+        .unwrap();
+    store
+        .add(
+            &Credentials {
+                expires_at: Some(1_000),
+                ..other()
+            },
+            Some("spare"),
+        )
+        .unwrap();
+    store.select("acct_123").unwrap();
+
+    let authorizer = pinned_authorizer(&store, &server.url, 2_000);
+
+    let refused = authorizer
+        .authorize(Some("spare"))
+        .await
+        .expect_err("the pinned grant was refused");
+    assert!(refused.to_string().contains("login"), "{refused}");
+
+    // The serving account is unaffected by the other's refusal.
+    authorizer
+        .authorize(None)
+        .await
+        .expect("the serving account still authorizes");
+
+    // And the refused grant is not retried.
+    authorizer.authorize(Some("spare")).await.unwrap_err();
+    assert_eq!(server.bodies().len(), 1, "a refused grant is not retried");
 }

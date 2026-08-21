@@ -278,7 +278,7 @@ impl Harness {
             Arc::clone(&self.store) as Arc<dyn AccountStore>,
             Arc::clone(&tokens),
         )
-        .authorize()
+        .authorize(None)
         .await
         .expect("a stored grant");
         catalog.refresh(&authorization).await;

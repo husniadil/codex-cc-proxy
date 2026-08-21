@@ -212,7 +212,7 @@ impl WebSocketTransport {
         // with something that names neither half.
         if let Some(credentials) = &self.credentials {
             let authorization = credentials
-                .authorize()
+                .authorize(None)
                 .await?
                 .for_endpoint(crate::auth::authorize::Kind::Subscription)?;
             for (name, value) in authorization.headers {

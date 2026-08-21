@@ -122,7 +122,7 @@ impl Transport for HttpTransport {
         match &self.credentials {
             Some(credentials) => {
                 for (name, value) in credentials
-                    .authorize()
+                    .authorize(None)
                     .await?
                     .for_endpoint(self.kind)?
                     .headers

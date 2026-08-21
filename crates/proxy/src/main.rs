@@ -74,7 +74,7 @@ async fn live_transport() -> Result<Arc<dyn proxenos::upstream::Transport>> {
     // the backend answered and was billed — when nothing had been sent at all.
     // A capability reported as broken because the credential is missing sends
     // whoever reads it somewhere else entirely.
-    let authorization = authorizer.authorize().await?;
+    let authorization = authorizer.authorize(None).await?;
 
     // The operator's endpoint, not a compiled-in one: a probe run that contacts
     // somewhere other than the daemon would answer about the wrong backend. Of
@@ -893,7 +893,7 @@ async fn run_with(args: RunArgs, capture: Capture) -> Result<()> {
         config.upstream.client_version.clone(),
         config.upstream.effective_window_percent,
     ));
-    match authorizer.authorize().await {
+    match authorizer.authorize(None).await {
         Ok(authorization) => {
             catalog.refresh(&authorization).await;
         }
