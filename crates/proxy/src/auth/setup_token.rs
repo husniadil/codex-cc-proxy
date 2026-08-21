@@ -168,7 +168,7 @@ impl Guide for Terminal {
     }
 
     fn stored(&mut self, name: &str) -> io::Result<()> {
-        println!("Stored an anthropic key as {name}. It serves turns from now on.");
+        println!("Stored an anthropic key as {name}.");
         Ok(())
     }
 }

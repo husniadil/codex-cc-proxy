@@ -192,12 +192,17 @@ pub trait AccountStore: CredentialStore {
     /// Every stored account, in the order they were added.
     fn accounts(&self) -> Result<Vec<Account>, ProxyError>;
 
-    /// Store a grant as an account and select it, returning the name it got.
+    /// Store a grant as an account, returning the name it got.
     ///
-    /// This is what a login does. `save` writes the grant of the account
-    /// already selected — a refresh — and the two are deliberately different
-    /// verbs: a login that overwrote whichever account happened to be selected
-    /// would silently retire a working grant.
+    /// This is what a login does. It selects the account **only where nothing
+    /// is already serving turns** — a first login has nothing to displace,
+    /// and every login after it stores a credential without moving the
+    /// selection. `accounts --use` is the verb that moves it.
+    ///
+    /// `save` writes the grant of the account already selected — a refresh —
+    /// and the two are deliberately different verbs: a login that overwrote
+    /// whichever account happened to be selected would silently retire a
+    /// working grant.
     fn add(&self, credentials: &Credentials, label: Option<&str>) -> Result<String, ProxyError>;
 
     /// Choose the account that serves turns from now on.
@@ -223,7 +228,8 @@ pub trait AccountStore: CredentialStore {
     /// subscription nobody pointed at them.
     fn credential_for(&self, name: &str) -> Result<Credential, ProxyError>;
 
-    /// Store a key under a name and select it.
+    /// Store a key under a name, selecting it only where nothing is already
+    /// serving turns — the same rule `add` states.
     ///
     /// Separate from `add`, which takes what an authorization produced. A key
     /// is handed over rather than granted, and there is no flow behind it.
@@ -388,7 +394,15 @@ impl StoredFile {
                 credential: Credential::Grant(credentials.clone()),
             }),
         }
-        self.selected = Some(name);
+        // Storing a credential and choosing what serves turns are two
+        // decisions, and a login is only the first. An operator who adds a
+        // second account has not asked for every turn to move onto it — and a
+        // login that moved them said nothing about having done so. The first
+        // login is the exception: there is nothing to displace, and an
+        // account nobody selected serves nothing at all.
+        if self.selected_index().is_none() {
+            self.selected = Some(name);
+        }
     }
 }
 
@@ -848,7 +862,11 @@ impl AccountStore for FileStore {
                     credential: Credential::Key(ApiKey::new(key)),
                 }),
             }
-            file.selected = Some(name.to_owned());
+            // The same rule `put` states: a key is stored, and it serves turns
+            // only where nothing already does.
+            if file.selected_index().is_none() {
+                file.selected = Some(name.to_owned());
+            }
             Ok(())
         })
     }

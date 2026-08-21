@@ -8,6 +8,26 @@ in [`docs/api.md`](docs/api.md) §6.
 
 ### Changed
 
+- **A login no longer takes over what serves turns.** *Behaviour change to a
+  v0.6.0 surface.* `login` stores a credential and selects it only where
+  nothing is already serving; every login after the first leaves the selection
+  alone, names the account still serving, and prints the `accounts --use NAME`
+  that would switch. Storing a credential and choosing what serves turns are
+  two decisions, and making them one moved every turn onto a newly added
+  account with nothing said about it. The rule holds on all three paths — an
+  authorization, `--key`, and `--setup-token` — and in the daemon's `login` as
+  well as the CLI's; `accounts --use` is unchanged and is the verb that
+  switches. An operator who relied on a second login switching for them needs
+  that verb now.
+
+- **`status` says when the tier mapping is inert.** A serving account on the
+  second provider relays every id it authenticates verbatim (§9.1), so the four
+  tier rows decided nothing while reading as though they decided everything.
+  Unpinned rows are now marked inert and a `routing` line names the provider
+  the ids relay to; a pinned tier names its own account and stays live, so a
+  split mapping stays accurate row by row. A rendering change only — no field
+  of the `status` payload moved.
+
 - **The control socket's `tiers.get` is now `tiers`.** Every other read on the
   socket is a bare noun, and each coexists with namespaced writers under the
   same noun; a lone `.get` bought no capability. Renamed with no alias while

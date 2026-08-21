@@ -956,9 +956,9 @@ fn a_migrated_account_keeps_its_place_through_the_next_save() {
     );
 }
 
-/// Logging in twice leaves two usable grants rather than one. The second
-/// login serves turns from then on, and the first is still there to go back
-/// to.
+/// Logging in twice leaves two usable grants rather than one. The account
+/// already serving turns keeps serving them, and the new one is there to
+/// switch to.
 #[test]
 fn logging_in_twice_leaves_two_usable_grants() {
     let dir = tempfile::tempdir().unwrap();
@@ -969,18 +969,18 @@ fn logging_in_twice_leaves_two_usable_grants() {
 
     let accounts = store.accounts().unwrap();
     assert_eq!(accounts.len(), 2);
+    assert!(accounts[0].selected, "the first login still serves turns");
     assert!(
-        !accounts[0].selected,
-        "the first login no longer serves turns"
+        !accounts[1].selected,
+        "a login stores a credential; it does not choose what serves"
     );
-    assert!(accounts[1].selected, "the newest login serves turns");
-    assert_eq!(store.load().unwrap().unwrap().access_token, "other-access");
+    assert_eq!(store.load().unwrap().unwrap().access_token, "access-secret");
 
-    store.select("acct_123").unwrap();
+    store.select("acct_456").unwrap();
     assert_eq!(
         store.load().unwrap().unwrap().access_token,
-        "access-secret",
-        "the first account is still usable"
+        "other-access",
+        "the second account is usable once it is chosen"
     );
 }
 
@@ -1070,6 +1070,7 @@ fn clearing_one_account_leaves_the_rest_usable() {
     let store = FileStore::new(dir.path().join("credentials.json"));
     store.add(&sample(), None).unwrap();
     store.add(&other(), None).unwrap();
+    store.select("acct_456").unwrap();
 
     // `clear` is the selected account, which is the one the second login left
     // serving turns.
@@ -1276,8 +1277,11 @@ async fn a_second_login_adds_an_account_rather_than_replacing_one() {
     assert_eq!(accounts.len(), 2, "the second login replaced the first");
     assert_eq!(accounts[0].name, "acct_first");
     assert_eq!(accounts[1].name, "acct_second");
-    assert!(accounts[1].selected, "the newest login serves turns");
-    assert_eq!(store.load().unwrap().unwrap().refresh_token, "r-second");
+    assert!(
+        accounts[0].selected,
+        "the account already serving turns keeps serving them"
+    );
+    assert_eq!(store.load().unwrap().unwrap().refresh_token, "r-first");
 
     // The label an operator gives names the account instead.
     let response = serde_json::json!({
@@ -1488,6 +1492,7 @@ async fn a_new_grant_ends_a_refusal_without_restarting() {
             None,
         )
         .unwrap();
+    store.select("acct_456").unwrap();
 
     assert!(
         !source.is_dead(),
@@ -1859,6 +1864,7 @@ fn a_key_and_a_grant_are_two_accounts() {
     store
         .add_key("billing", "key-secret-value", Provider::Codex)
         .unwrap();
+    store.select("billing").unwrap();
 
     let accounts = store.accounts().unwrap();
     assert_eq!(accounts.len(), 2);
@@ -1930,6 +1936,7 @@ fn the_account_verbs_work_on_a_key() {
     store
         .add_key("billing", "key-secret-value", Provider::Codex)
         .unwrap();
+    store.select("billing").unwrap();
 
     store.rename("billing", "spend").unwrap();
     assert_eq!(store.accounts().unwrap()[1].name, "spend");
@@ -2004,6 +2011,7 @@ async fn each_kind_authorizes_with_the_headers_its_endpoint_expects() {
     store
         .add_key("billing", "key-secret-value", Provider::Codex)
         .unwrap();
+    store.select("billing").unwrap();
 
     let key = authorizer.authorize(None).await.unwrap();
     assert_eq!(key.kind, Kind::Key);
@@ -2397,4 +2405,57 @@ fn a_key_states_the_provider_it_is_spent_against() {
     let reopened = FileStore::new(dir.path().join("credentials.json"));
     let accounts = reopened.accounts().unwrap();
     assert_eq!(accounts[1].provider, "anthropic");
+}
+
+/// A login while another account is already serving stores the credential and
+/// leaves the selection where it was.
+///
+/// Storing a credential and choosing what serves turns are two decisions, and
+/// a login is only the first. Making it both means an operator who adds a
+/// second account has silently moved every turn onto it.
+#[test]
+fn a_login_while_another_account_serves_leaves_the_selection_alone() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = FileStore::new(dir.path().join("credentials.json"));
+
+    store.add(&sample(), None).unwrap();
+    store.add(&other(), None).unwrap();
+    store
+        .add_key("keyed", "sk-ant-oat01-value", Provider::Anthropic)
+        .unwrap();
+
+    let accounts = store.accounts().unwrap();
+    let serving: Vec<&str> = accounts
+        .iter()
+        .filter(|account| account.selected)
+        .map(|account| account.name.as_str())
+        .collect();
+    assert_eq!(serving, vec!["acct_123"], "{accounts:?}");
+    assert_eq!(accounts.len(), 3, "every login still stored: {accounts:?}");
+}
+
+/// The first login has nothing to displace, so it selects.
+#[test]
+fn a_first_login_selects_the_new_account() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = FileStore::new(dir.path().join("credentials.json"));
+
+    store.add(&sample(), None).unwrap();
+
+    let accounts = store.accounts().unwrap();
+    assert!(accounts[0].selected, "{accounts:?}");
+}
+
+/// And a first login by key selects too — one rule, not a per-flag one.
+#[test]
+fn a_first_login_by_key_selects_the_new_account() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = FileStore::new(dir.path().join("credentials.json"));
+
+    store
+        .add_key("keyed", "sk-ant-oat01-value", Provider::Anthropic)
+        .unwrap();
+
+    let accounts = store.accounts().unwrap();
+    assert!(accounts[0].selected, "{accounts:?}");
 }

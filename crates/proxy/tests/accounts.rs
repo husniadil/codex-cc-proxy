@@ -372,30 +372,31 @@ fn the_binary_stores_a_key_from_stdin_and_serves_turns_as_it() {
         String::from_utf8_lossy(&stored.stdout)
     );
 
-    // Both accounts are there, and the key is the one serving turns.
+    // Both accounts are there, and the account that was already serving turns
+    // is still the one serving them: a login stores a credential, and
+    // `accounts --use` is the verb that moves the selection.
     let listed = daemon.run(&["accounts"]);
     assert!(listed.contains("acct_legacy"), "{listed}");
     assert!(
         listed
             .lines()
-            .any(|line| line.starts_with('*') && line.contains("billing")),
-        "the key should be serving turns: {listed}"
+            .any(|line| line.starts_with('*') && line.contains("acct_legacy")),
+        "the login must not have taken over: {listed}"
     );
     assert!(
         !listed.contains("sk-probe"),
         "the key reached a listing: {listed}"
     );
-    assert!(daemon.run(&["status"]).contains("billing"));
 
-    // Switching back and forth is switching accounts, nothing more.
-    daemon.run(&["accounts", "--use", "acct_legacy"]);
+    // Switching is switching accounts, nothing more.
+    daemon.run(&["accounts", "--use", "billing"]);
     assert!(
         daemon
             .run(&["accounts"])
             .lines()
-            .any(|line| { line.starts_with('*') && line.contains("acct_legacy") })
+            .any(|line| { line.starts_with('*') && line.contains("billing") })
     );
-    daemon.run(&["accounts", "--use", "billing"]);
+    assert!(daemon.run(&["status"]).contains("billing"));
 
     // And the secret is not in the file's listing of names either.
     let stored = std::fs::read_to_string(home.join("credentials.json")).unwrap();
@@ -406,14 +407,17 @@ fn the_binary_stores_a_key_from_stdin_and_serves_turns_as_it() {
     assert!(stored.contains("\"kind\": \"key\""), "{stored}");
 }
 
-/// A login through the CLI hands over to a running daemon.
+/// A login while another account serves leaves the running daemon alone, and
+/// the switch that follows is what hands over.
 ///
 /// The daemon reads the credential file on every request, so the account moves
 /// either way. What does not move on its own is what a switch carries with it:
 /// the conversations bound to the previous account keep the endpoint they
-/// dialed, and after a change of kind that endpoint refuses every turn.
+/// dialed, and after a change of kind that endpoint refuses every turn. So the
+/// hand-over rides on the verb that actually chooses — not on storing a
+/// credential, which is the other decision.
 #[test]
-fn a_cli_login_tells_a_running_daemon_to_hand_over() {
+fn a_cli_login_leaves_the_running_daemon_alone_and_the_switch_hands_over() {
     use std::io::Write;
 
     let daemon = Daemon::start(&grant("acct_legacy"));
@@ -437,9 +441,19 @@ fn a_cli_login_tells_a_running_daemon_to_hand_over() {
     let said = String::from_utf8_lossy(&stored.stdout);
 
     assert!(
-        said.contains("running daemon"),
-        "it should say it told the daemon: {said}"
+        !said.contains("running daemon"),
+        "a login that chose nothing must not claim a hand-over: {said}"
     );
+    assert!(
+        said.contains("accounts --use billing"),
+        "it should say how to switch: {said}"
+    );
+    assert!(
+        daemon.run(&["status"]).contains("acct_legacy"),
+        "the daemon must still serve the account it was serving"
+    );
+
+    daemon.run(&["accounts", "--use", "billing"]);
     assert!(daemon.run(&["status"]).contains("billing"));
 }
 

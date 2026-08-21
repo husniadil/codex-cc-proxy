@@ -101,8 +101,17 @@ proxenos record     capture exchanges as fixtures
 Every verb except `run`, `login`, and `doctor` operates through the control
 socket (§3) against a running daemon.
 
-`login` **adds** an account and selects it; it never replaces the one already
-stored (`proxy-behavior.md` §8.1). `--key` stores a key read from **stdin**
+`login` **adds** an account; it never replaces the one already stored
+(`proxy-behavior.md` §8.1). It selects the account it stored **only where
+nothing is already serving turns** — a first login has nothing to displace, and
+every login after it stores a credential and leaves the selection alone,
+printing the account still serving and the `accounts --use NAME` that would
+switch. Storing a credential and choosing what serves turns are two decisions,
+and a login that made both moved every turn onto a newly added account without
+saying so. The rule is the same on all three paths — an authorization, `--key`,
+and `--setup-token` — and in the daemon's `login` (§3) as well as the CLI's:
+which flag stored the credential is not a reason for it to mean something
+different. `--key` stores a key read from **stdin**
 instead of starting an authorization: no browser, and the secret never appears
 in a command line. `--as NAME` is required with it, because a key carries no id
 to be named by. `--provider` states which provider's endpoints the key is spent
@@ -150,6 +159,18 @@ into, and that is a choice this command has no basis for making: the grant it
 produces is the one every later request spends. The printed URL says so, and
 names a private window as the way to pick a different account. It also means an
 environment with no browser at all is not a special case.
+
+**The rendered `status` says what the next turn does, not only what is
+configured.** Where the account serving turns is on the second provider, every
+model id it authenticates relays verbatim and the tier mapping decides nothing
+(`proxy-behavior.md` §9.1). The four tier rows printed unqualified read as
+"your turns go to these models", which is the one thing they do not mean in
+that state, so each unpinned row is marked inert and a `routing` line names the
+provider the ids relay to. A pinned tier (§7.1) names its own account and stays
+live either way, marked or not by the provider the selection happens to be on —
+a split mapping renders accurately row by row. This is a rendering rule: the
+`status` payload already carries `auth.provider` and the pins, and no field
+changed.
 
 A live run **resolves its credential before it probes anything**, and answers
 with that refusal alone when it cannot. A matrix reporting seven capabilities
@@ -739,7 +760,8 @@ it, and `status` reports the catalog as curated instead of unvalidated.
 fetch it again as whoever serves now, and their answers carry
 `catalog_refreshed` — a fetch that failed keeps the previous list in force, and
 everything downstream of it still describes that account. A CLI `login` calls
-`accounts.select` when it lands, so that path refetches too. Where nothing
+`accounts.select` when it lands **and only when it selected** — a login that
+left the selection where it was moved nothing for the catalog to follow. Where nothing
 refetched — a `login` started here and completed in the background, or a CLI
 one made while no daemon was running — `status.catalog_stale` and `models.stale`
 say the list is not this account's and `status.catalog_account` names whose it

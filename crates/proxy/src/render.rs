@@ -313,12 +313,29 @@ pub fn status(result: &Value) -> String {
         ));
     }
 
+    // Whether the account serving turns is on the second provider. Every id
+    // it authenticates relays verbatim (`proxy-behavior.md` §9.1), so an
+    // unpinned tier row decides nothing at all — and four rows printed with no
+    // qualifier read as "your turns go to these models", which is the one
+    // thing they do not mean in this state.
+    let relaying = connected
+        && matches!(
+            auth.and_then(|auth| field(auth, "provider"))
+                .and_then(Value::as_str),
+            Some(provider) if provider != "codex"
+        );
+
     if let Some(tiers) = field(result, "tiers").and_then(Value::as_object) {
         for (tier, value) in tiers {
             // A pinned tier arrives as `{ account, model }` — the same two
             // shapes the configuration takes — and is printed with its pin,
             // because which account a tier spends is the whole point of one.
             let rendered = match (value.as_str(), value.as_object()) {
+                // An unpinned tier follows the account serving turns, so a
+                // relaying one takes that tier with it and the mapped model is
+                // never asked for. A pin names its own account and stays live
+                // either way — that is what pinning one is for.
+                (Some(model), _) if relaying => format!("{model} (inert while relaying)"),
                 (Some(model), _) => model.to_owned(),
                 (None, Some(pinned)) => format!(
                     "{} (as {})",
@@ -329,6 +346,19 @@ pub fn status(result: &Value) -> String {
             };
             lines.push(format!("{tier:<10} {rendered}"));
         }
+    }
+
+    // And what the mapping's inert rows are inert in favour of, named rather
+    // than left to be inferred from a provider in the auth line.
+    if relaying {
+        let provider = auth
+            .and_then(|auth| field(auth, "provider"))
+            .and_then(Value::as_str)
+            .unwrap_or("the second provider");
+        lines.push(format!(
+            "routing    model ids relay verbatim to {provider} — \
+             the account serving turns is on it, so an unpinned tier decides nothing"
+        ));
     }
 
     // Whether the mapping was checked against the backend's own catalog. A

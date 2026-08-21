@@ -208,7 +208,7 @@ async fn login(args: cli::LoginArgs) -> Result<()> {
             &mut proxenos::auth::setup_token::Terminal,
             args.label.as_deref(),
         )?;
-        hand_over_to(&name).await;
+        report_serving(&store, &name).await;
         return Ok(());
     }
 
@@ -242,19 +242,25 @@ async fn login(args: cli::LoginArgs) -> Result<()> {
 
     // The name the store filed it under, which is the string `accounts --use`
     // takes. The account id is not always that name — a label supersedes it,
-    // and a grant carrying no id is named by the store.
-    let named = store
-        .accounts()
-        .ok()
-        .and_then(|accounts| accounts.into_iter().find(|account| account.selected))
-        .map(|account| account.name)
-        .or(credentials.account_id);
+    // and a grant carrying no id is named by the store. Resolved by the id the
+    // grant carries rather than by the selection, because a login no longer
+    // moves the selection and the account serving turns is frequently not the
+    // one just stored.
+    let named = args.label.clone().or_else(|| {
+        let wanted = credentials.account_id.as_deref()?;
+        store
+            .accounts()
+            .ok()?
+            .into_iter()
+            .find(|account| account.account_id.as_deref() == Some(wanted))
+            .map(|account| account.name)
+    });
     match &named {
         Some(account) => println!("Signed in ({account})."),
         None => println!("Signed in."),
     }
     if let Some(account) = named {
-        hand_over_to(&account).await;
+        report_serving(&store, &account).await;
     }
     Ok(())
 }
@@ -288,12 +294,35 @@ async fn store_key(
     }
 
     store.add_key(name, key, provider)?;
-    println!(
-        "Stored a {} key as {name}. It serves turns from now on.",
-        provider.as_str()
-    );
-    hand_over_to(name).await;
+    println!("Stored a {} key as {name}.", provider.as_str());
+    report_serving(store, name).await;
     Ok(())
+}
+
+/// Say what the account just stored does to the next turn, and tell a running
+/// daemon only where the answer is "serves it".
+///
+/// A login stores a credential; choosing what serves turns is the other
+/// decision, and `accounts --use` is the verb for it. So this reports which of
+/// the two happened rather than asserting the switch every login used to make.
+async fn report_serving(store: &Arc<dyn proxenos::auth::store::AccountStore>, stored: &str) {
+    let serving = store
+        .accounts()
+        .ok()
+        .and_then(|accounts| accounts.into_iter().find(|account| account.selected))
+        .map(|account| account.name);
+    match serving.as_deref() {
+        Some(serving) if serving == stored => {
+            println!("It serves turns from now on.");
+            hand_over_to(stored).await;
+        }
+        Some(serving) => println!(
+            "{serving} still serves turns.\n  switch with: proxenos accounts --use {stored}"
+        ),
+        // Nothing selected at all is not a state a login leaves behind, and
+        // saying nothing beats guessing which account a turn would reach.
+        None => {}
+    }
 }
 
 /// Tell a running daemon that this account is the one serving turns now.

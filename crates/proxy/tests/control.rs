@@ -2467,6 +2467,7 @@ async fn accounts_lists_what_is_stored_and_which_one_serves_turns() {
         .store
         .add(&grant("acct_two", "a-two"), None)
         .unwrap();
+    harness.store.select("acct_two").unwrap();
 
     let listed = harness.call("accounts").await.unwrap();
     let accounts = listed["accounts"].as_array().expect("a list of accounts");
@@ -2503,6 +2504,7 @@ async fn selecting_an_account_moves_the_grant_that_serves_turns() {
         .store
         .add(&grant("acct_two", "a-two"), None)
         .unwrap();
+    harness.store.select("acct_two").unwrap();
     assert_eq!(harness.store.load().unwrap().unwrap().access_token, "a-two");
 
     let answer = harness
@@ -2540,6 +2542,7 @@ async fn selecting_an_account_does_not_report_the_previous_accounts_quota() {
         .store
         .add(&grant("acct_two", "a-two"), None)
         .unwrap();
+    harness.store.select("acct_two").unwrap();
     harness.usage.record(&proxenos::usage::Snapshot {
         plan: Some("plus".to_owned()),
         ..Default::default()
@@ -2597,6 +2600,7 @@ async fn status_names_the_serving_account_and_the_others() {
         .store
         .add(&grant("acct_two", "a-two"), None)
         .unwrap();
+    harness.store.select("acct_two").unwrap();
 
     let status = harness.call("status").await.unwrap();
 
@@ -2623,6 +2627,8 @@ async fn forgetting_names_the_account_it_cleared_and_leaves_the_rest() {
         .add(&grant("acct_two", "a-two"), None)
         .unwrap();
 
+    harness.store.select("acct_two").unwrap();
+
     // With nothing named, the account serving turns is the one that goes.
     let answer = harness.call("accounts.forget").await.unwrap();
     assert_eq!(answer["forgotten"], json!("acct_two"));
@@ -2639,6 +2645,7 @@ async fn forgetting_names_the_account_it_cleared_and_leaves_the_rest() {
         .store
         .add(&grant("acct_two", "a-two"), None)
         .unwrap();
+    harness.store.select("acct_two").unwrap();
     let answer = harness
         .call_with("accounts.forget", json!({ "account": "acct_one" }))
         .await
@@ -2675,6 +2682,7 @@ async fn switching_accounts_clears_a_refusal_that_belonged_to_the_old_grant() {
             None,
         )
         .unwrap();
+    harness.store.select("acct_two").unwrap();
 
     // A token source whose refresh endpoint refuses, so the grant is marked
     // dead exactly as a real refusal would mark it. No network: the endpoint
@@ -2755,6 +2763,7 @@ async fn the_rendered_account_list_marks_the_one_serving_turns() {
         .store
         .add(&grant("acct_two", "a-two"), None)
         .unwrap();
+    harness.store.select("acct_two").unwrap();
 
     let rendered = render::accounts(&harness.call("accounts").await.unwrap());
 
@@ -2795,6 +2804,7 @@ async fn removing_an_idle_account_leaves_the_serving_grant_alone() {
         .store
         .add(&grant("acct_serving", "a-serving"), None)
         .unwrap();
+    harness.store.select("acct_serving").unwrap();
     harness.usage.record(&proxenos::usage::Snapshot {
         plan: Some("plus".to_owned()),
         ..Default::default()
@@ -2888,6 +2898,7 @@ async fn the_catalog_says_when_it_was_fetched_for_another_account() {
         .store
         .add(&grant("acct_two", "a-two"), None)
         .unwrap();
+    harness.store.select("acct_two").unwrap();
 
     // Fetched for the account serving turns: nothing to flag.
     let harness = harness.with_catalog_for("acct_two").await;
@@ -2962,6 +2973,7 @@ async fn selecting_an_account_refetches_the_catalog_as_that_account() {
         .store
         .add(&grant("acct_two", "a-two"), None)
         .unwrap();
+    harness.store.select("acct_two").unwrap();
 
     let harness = harness.with_catalog_source(&catalogs.url).await;
 
@@ -3016,6 +3028,7 @@ async fn a_failed_refetch_keeps_the_catalog_already_in_force() {
         .store
         .add(&grant("acct_two", "a-two"), None)
         .unwrap();
+    harness.store.select("acct_two").unwrap();
     let harness = harness.with_catalog_source(&catalogs.url).await;
     assert_eq!(
         harness.call("models").await.unwrap()["models"][0]["id"],
@@ -3134,6 +3147,7 @@ async fn forgetting_the_serving_account_refetches_the_catalog() {
         .store
         .add(&grant("acct_two", "a-two"), None)
         .unwrap();
+    harness.store.select("acct_two").unwrap();
     let harness = harness.with_catalog_source(&catalogs.url).await;
 
     let answer = harness.call("accounts.forget").await.unwrap();
@@ -3238,6 +3252,7 @@ async fn accounts_and_status_say_what_kind_each_account_is() {
         .store
         .add_key("billing", "key-secret", Provider::Codex)
         .unwrap();
+    harness.store.select("billing").unwrap();
 
     let listed = harness.call("accounts").await.unwrap();
     assert_eq!(listed["accounts"][0]["kind"], json!("grant"));
@@ -3309,6 +3324,7 @@ async fn a_key_account_reports_no_plan_and_no_source_for_one() {
         .store
         .add(&grant("acct_one", "a-one"), None)
         .unwrap();
+    harness.store.select("acct_one").unwrap();
     let status = harness.call("status").await.unwrap();
     assert_eq!(status["auth"]["plan"], json!("plus"));
     assert_eq!(status["auth"]["plan_source"], json!("grant"));
@@ -3429,6 +3445,7 @@ async fn a_switch_the_target_account_cannot_serve_is_refused() {
         .store
         .add(&grant("acct_two", "a-two"), None)
         .unwrap();
+    harness.store.select("acct_two").unwrap();
 
     let error = harness
         .call_with("accounts.select", json!({ "account": "acct_one" }))
@@ -3589,6 +3606,7 @@ async fn a_tier_set_for_another_account_is_written_but_not_in_force() {
         .store
         .add(&grant("acct_two", "a-two"), Some("work"))
         .unwrap();
+    harness.store.select("work").unwrap();
 
     let before = harness.policy.get().tiers().to_vec();
     harness
@@ -3625,6 +3643,7 @@ async fn a_tier_set_for_another_account_without_persist_is_refused() {
         .store
         .add(&grant("acct_two", "a-two"), Some("work"))
         .unwrap();
+    harness.store.select("work").unwrap();
 
     let error = harness
         .call_with(
@@ -3655,6 +3674,7 @@ async fn a_tier_set_for_another_account_is_not_judged_by_this_ones_catalog() {
         .store
         .add(&grant("acct_two", "a-two"), Some("work"))
         .unwrap();
+    harness.store.select("work").unwrap();
 
     harness
         .call_with(
@@ -3908,6 +3928,7 @@ async fn a_change_for_another_account_does_not_claim_to_be_in_effect() {
         .store
         .add(&grant("acct_two", "a-two"), Some("work"))
         .unwrap();
+    harness.store.select("work").unwrap();
 
     let answer = harness
         .call_with(
@@ -4302,6 +4323,7 @@ async fn usage_names_each_account_beside_the_serving_figure() {
         .store
         .add(&grant("acct_main", "a-main"), Some("main"))
         .unwrap();
+    harness.store.select("main").unwrap();
 
     // A turn served as the pinned account, and one as the serving account.
     harness
@@ -4486,6 +4508,7 @@ async fn selecting_another_account_keeps_every_accounts_figure() {
         .store
         .add(&grant("acct_main", "a-main"), Some("main"))
         .unwrap();
+    harness.store.select("main").unwrap();
     harness
         .usage
         .record_for(Some("spare"), &quota(77.0), proxenos::usage::Source::Turn);
@@ -4532,6 +4555,7 @@ async fn forgetting_an_account_drops_that_accounts_figure() {
         .store
         .add(&grant("acct_main", "a-main"), Some("main"))
         .unwrap();
+    harness.store.select("main").unwrap();
     harness
         .usage
         .record_for(Some("spare"), &quota(77.0), proxenos::usage::Source::Turn);
@@ -4575,4 +4599,54 @@ async fn the_tier_mapping_is_read_under_a_bare_noun() {
         "answered {}",
         gone.message
     );
+}
+
+/// A serving account on the second provider makes the tier mapping inert
+/// (`proxy-behavior.md` §9.1), and the render says so.
+///
+/// The four tier rows printed with no qualifier read as "your turns go to
+/// these models". For a relay-serving account they do not: every id relays
+/// verbatim, and the mapping decides nothing. A pinned tier is the exception
+/// and stays live, because a pin names its own account.
+#[test]
+fn the_rendered_status_says_ids_relay_when_the_serving_account_relays() {
+    let rendered = render::status(&json!({
+        "base_url": "http://127.0.0.1:8787",
+        "auth": { "connected": true, "account": "sub", "kind": "key", "provider": "anthropic" },
+        "tiers": {
+            "opus": "claude-opus-5",
+            "haiku": { "model": "gpt-5.6-luna", "account": "work" },
+        },
+    }));
+
+    assert!(
+        rendered.contains("relay"),
+        "the relay behavior must be stated: {rendered}"
+    );
+    assert!(
+        rendered.contains("claude-opus-5") && rendered.contains("inert"),
+        "an unpinned row must be marked inert: {rendered}"
+    );
+    assert!(
+        rendered.contains("gpt-5.6-luna (as work)"),
+        "a pinned row stays live and keeps its pin: {rendered}"
+    );
+    assert!(
+        !rendered.contains("gpt-5.6-luna (as work) (inert"),
+        "a pinned row must not be marked inert: {rendered}"
+    );
+}
+
+/// The same render for an account on the first provider says nothing about
+/// relaying, and leaves every row unqualified.
+#[test]
+fn the_rendered_status_is_quiet_about_relaying_for_a_translating_account() {
+    let rendered = render::status(&json!({
+        "base_url": "http://127.0.0.1:8787",
+        "auth": { "connected": true, "account": "work", "provider": "codex" },
+        "tiers": { "opus": "gpt-5.6-terra" },
+    }));
+
+    assert!(!rendered.contains("inert"), "{rendered}");
+    assert!(!rendered.to_lowercase().contains("relay"), "{rendered}");
 }
