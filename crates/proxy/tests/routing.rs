@@ -65,7 +65,31 @@ async fn upstream() -> (String, Seen) {
                         .to_owned(),
                 );
             }
+            // A quota snapshot at the head of the stream, as the backend
+            // sends one — with a percentage that names the account whose
+            // token asked, so a figure filed under the wrong account is
+            // visible rather than plausible.
+            let used_percent = match headers
+                .get(axum::http::header::AUTHORIZATION)
+                .and_then(|value| value.to_str().ok())
+            {
+                Some("Bearer spare-token") => 77,
+                _ => 11,
+            };
             let body = [
+                json!({
+                    "type": "codex.rate_limits",
+                    "plan_type": "plus",
+                    "rate_limits": {
+                        "limit_reached": false,
+                        "primary": {
+                            "used_percent": used_percent,
+                            "window_minutes": 300,
+                            "reset_at": 1_789_487_264u64,
+                        },
+                        "secondary": null,
+                    },
+                }),
                 json!({ "type": "response.created", "response": { "id": "resp_1" } }),
                 json!({ "type": "response.output_text.delta", "delta": "hi" }),
                 json!({ "type": "response.completed", "response": { "id": "resp_1" } }),
@@ -94,7 +118,10 @@ async fn upstream() -> (String, Seen) {
 /// The conduit factory is built the way `main.rs` builds it, WebSocket
 /// omitted: the socket is covered by its own tests and this is about which
 /// credential goes on the request.
-async fn daemon(store: Arc<FileStore>, tiers: Vec<ResolvedTier>) -> (String, Seen) {
+async fn daemon(
+    store: Arc<FileStore>,
+    tiers: Vec<ResolvedTier>,
+) -> (String, Seen, Arc<proxenos::usage::UsageStore>) {
     let (endpoint, seen) = upstream().await;
 
     let authorizer: Arc<dyn proxenos::auth::authorize::Authorizer> =
@@ -121,6 +148,13 @@ async fn daemon(store: Arc<FileStore>, tiers: Vec<ResolvedTier>) -> (String, See
         ))
     });
 
+    // Bound to the same store the turns authenticate against, which is how
+    // the daemon builds it: an unpinned turn's account is whoever it has
+    // selected at the moment that turn is served.
+    let usage = Arc::new(proxenos::usage::UsageStore::for_accounts(
+        Arc::clone(&store) as Arc<dyn AccountStore>,
+    ));
+
     let state = AppState {
         policy: Arc::new(proxenos::policy::Policy::new(
             proxenos::policy::Snapshot::new(
@@ -136,7 +170,7 @@ async fn daemon(store: Arc<FileStore>, tiers: Vec<ResolvedTier>) -> (String, See
         conduits: Some(conduits),
         recorder: None,
         capture: Arc::new(proxenos::recorder::Switches::new(None)),
-        usage: Arc::new(proxenos::usage::UsageStore::default()),
+        usage: Arc::clone(&usage),
         instructions: Arc::new(proxenos::config::InstructionsConfig {
             identity: false,
             append: None,
@@ -151,7 +185,7 @@ async fn daemon(store: Arc<FileStore>, tiers: Vec<ResolvedTier>) -> (String, See
     tokio::spawn(async move {
         let _ = axum::serve(listener, router(state)).await;
     });
-    (format!("http://{addr}"), seen)
+    (format!("http://{addr}"), seen, usage)
 }
 
 /// One turn on one tier, with a body distinct enough to be its own
@@ -199,7 +233,7 @@ async fn a_pinned_tier_spends_the_account_it_names() {
     let dir = tempfile::tempdir().unwrap();
     let store = store_with_two_accounts(&dir);
 
-    let (base, seen) = daemon(
+    let (base, seen, _usage) = daemon(
         Arc::clone(&store),
         vec![
             tier("sonnet", "gpt-5.6-terra", None),
@@ -232,7 +266,7 @@ async fn a_pin_the_store_cannot_answer_for_refuses_the_turn_by_name() {
     let dir = tempfile::tempdir().unwrap();
     let store = store_with_two_accounts(&dir);
 
-    let (base, seen) = daemon(
+    let (base, seen, _usage) = daemon(
         Arc::clone(&store),
         vec![tier("haiku", "gpt-5.6-luna", Some("retired"))],
     )
@@ -268,7 +302,7 @@ async fn a_pinned_credential_of_the_wrong_kind_is_refused_by_name() {
         .unwrap();
     store.select("acct_serving").unwrap();
 
-    let (base, seen) = daemon(
+    let (base, seen, _usage) = daemon(
         Arc::clone(&store),
         vec![tier("haiku", "gpt-5.6-luna", Some("billing"))],
     )
@@ -284,4 +318,70 @@ async fn a_pinned_credential_of_the_wrong_kind_is_refused_by_name() {
     assert!(message.contains("key"), "{message}");
 
     assert!(seen.lock().unwrap().is_empty(), "nothing was sent");
+}
+
+/// **Build 1.** A turn on a pinned tier records its quota under the pin, and
+/// the serving account keeps its own figure: both survive side by side.
+///
+/// The figures are what separates this from the header assertions above. A
+/// daemon holding one latest snapshot answers both turns and reports the cheap
+/// tier's account as though it were the one the operator is watching — which
+/// reads as headroom, and reads exactly like the right answer.
+#[tokio::test]
+async fn each_accounts_quota_survives_a_turn_on_the_other() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = store_with_two_accounts(&dir);
+
+    let (base, _seen, usage) = daemon(
+        Arc::clone(&store),
+        vec![
+            tier("sonnet", "gpt-5.6-terra", None),
+            tier("haiku", "gpt-5.6-luna", Some("spare")),
+        ],
+    )
+    .await;
+
+    assert_eq!(turn(&base, "sonnet", "the main turn").await.status(), 200);
+    assert_eq!(turn(&base, "haiku", "the cheap turn").await.status(), 200);
+
+    let percent = |account: &str| {
+        usage
+            .latest_for(account)
+            .map(|measured| measured.snapshot.windows[0].used_percent)
+    };
+    assert_eq!(
+        percent("acct_serving"),
+        Some(11.0),
+        "the serving account's figure was displaced by the pinned tier's turn"
+    );
+    assert_eq!(
+        percent("spare"),
+        Some(77.0),
+        "the pinned account's turn was filed under someone else"
+    );
+
+    // And the figure reported where a single daemon-wide one always was is the
+    // serving account's, whichever turn happened to be last.
+    assert_eq!(
+        usage.latest().map(|s| s.windows[0].used_percent),
+        Some(11.0)
+    );
+}
+
+/// A figure that rode a turn says so.
+#[tokio::test]
+async fn a_turns_figure_states_that_it_rode_a_turn() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = store_with_two_accounts(&dir);
+
+    let (base, _seen, usage) = daemon(
+        Arc::clone(&store),
+        vec![tier("sonnet", "gpt-5.6-terra", None)],
+    )
+    .await;
+    assert_eq!(turn(&base, "sonnet", "the main turn").await.status(), 200);
+
+    let measured = usage.latest_for("acct_serving").expect("a turn was served");
+    assert_eq!(measured.source, proxenos::usage::Source::Turn);
+    assert!(measured.at > 0);
 }

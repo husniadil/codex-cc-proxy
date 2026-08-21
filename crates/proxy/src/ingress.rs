@@ -419,7 +419,13 @@ async fn messages(
         .flatten()
         .find_map(|payload| crate::usage::Snapshot::parse(payload))
     {
-        state.usage.record(&snapshot);
+        // §8.3 — filed under the account this turn was served as: the pin
+        // where the tier named one, and the serving account otherwise. A
+        // single latest figure would report the cheap tier's account as the
+        // one being asked about.
+        state
+            .usage
+            .record_for(account.as_deref(), &snapshot, crate::usage::Source::Turn);
         rate_limit_headers = snapshot.headers();
     }
 
