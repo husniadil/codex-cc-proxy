@@ -140,6 +140,13 @@ in [`docs/api.md`](docs/api.md) §6.
   hold. Nothing about a real key endpoint has been confirmed — `docs/roadmap.md`
   §L carries what only a live one can settle.
 
+- **`doctor --live` refuses when it cannot authenticate, instead of reporting
+  the backend as broken.** With no credential — or with a key selected, whose
+  probe path held a grant's token source — it answered with the whole matrix,
+  every row failed, under a header saying the backend answered and was billed.
+  Nothing had been sent. It now resolves the credential first and says only
+  that, and probes the endpoint the account's kind belongs to.
+
 - **`accounts --rename FROM TO` changes what an account is called.** A login
   carrying no `--as` names the account by the id the backend knows it by, which
   is a UUID nobody wants to type at `--use`. Renaming moves that name and

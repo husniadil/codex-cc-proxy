@@ -376,3 +376,44 @@ fn a_cli_login_tells_a_running_daemon_to_hand_over() {
     );
     assert!(daemon.run(&["status"]).contains("billing"));
 }
+
+/// §2 — a live probe run that cannot authenticate says so, once.
+///
+/// It used to answer with the whole capability matrix, every row failed and
+/// the header claiming the backend answered and was billed. Nothing had been
+/// sent and nothing had been billed: the transport never got a token. A matrix
+/// that reports seven capabilities as broken when the credential is what is
+/// missing sends whoever reads it to the wrong place entirely — and it is the
+/// same failure the probes exist to prevent, printed the other way round.
+#[test]
+fn a_live_probe_run_without_a_credential_refuses_rather_than_reporting_failures() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().join("home");
+    std::fs::create_dir_all(&home).unwrap();
+
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_codex-cc-proxy"))
+        .args(["doctor", "--live"])
+        .env("CODEX_CC_PROXY_HOME", &home)
+        .env("TMPDIR", dir.path())
+        .output()
+        .expect("the binary should run");
+
+    assert!(!output.status.success(), "it cannot have succeeded");
+    let said = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        said.contains("login"),
+        "it should say what is missing: {said}"
+    );
+    assert!(
+        !said.contains("Capability matrix"),
+        "nothing was probed, so nothing may be reported about the backend: {said}"
+    );
+    assert!(
+        !said.contains("billed"),
+        "nothing was sent, so nothing was billed: {said}"
+    );
+}

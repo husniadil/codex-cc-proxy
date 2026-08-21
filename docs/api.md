@@ -114,6 +114,14 @@ produces is the one every later request spends. The printed URL says so, and
 names a private window as the way to pick a different account. It also means an
 environment with no browser at all is not a special case.
 
+A live run **resolves its credential before it probes anything**, and answers
+with that refusal alone when it cannot. A matrix reporting seven capabilities
+as broken because there is no credential — under a header saying the backend
+answered and was billed, when nothing was sent — is the same failure the probes
+exist to prevent, printed the other way round. It probes the endpoint the
+account's kind belongs to (`proxy-behavior.md` §8.2), so a key is answered for
+rather than reported as a subscription that failed everything.
+
 `doctor` runs the capability probes and prints a matrix. Against the fixture
 corpus — the default — it contacts nothing and costs nothing. `--live` answers
 the same probes from the real backend instead, one turn each, and spends real

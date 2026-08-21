@@ -48,23 +48,43 @@ async fn main() -> Result<()> {
 /// nothing here exercises the incremental path, and the WebSocket transport's
 /// value is entirely in that path. The simpler transport is also the one whose
 /// failures are legible when a probe does fail.
-fn live_transport() -> Result<Arc<dyn codex_cc_proxy::upstream::Transport>> {
-    let credentials: Arc<dyn codex_cc_proxy::auth::store::CredentialStore> = Arc::new(
+async fn live_transport() -> Result<Arc<dyn codex_cc_proxy::upstream::Transport>> {
+    let credentials: Arc<dyn codex_cc_proxy::auth::store::AccountStore> = Arc::new(
         codex_cc_proxy::auth::store::FileStore::new(credential_path()),
     );
     let tokens = Arc::new(codex_cc_proxy::auth::tokens::TokenSource::new(
-        credentials,
+        Arc::clone(&credentials) as Arc<dyn codex_cc_proxy::auth::store::CredentialStore>,
         codex_cc_proxy::auth::flow::token_endpoint(),
         codex_cc_proxy::auth::flow::CLIENT_ID,
         Arc::new(codex_cc_proxy::auth::tokens::SystemClock),
     ));
+    let authorizer: Arc<dyn codex_cc_proxy::auth::authorize::Authorizer> =
+        Arc::new(codex_cc_proxy::auth::authorize::AccountAuthorizer::new(
+            Arc::clone(&credentials),
+            Arc::clone(&tokens),
+        ));
+
+    // Resolved before anything is probed. A run that cannot authenticate used
+    // to answer with the whole matrix, every row failed and the header saying
+    // the backend answered and was billed — when nothing had been sent at all.
+    // A capability reported as broken because the credential is missing sends
+    // whoever reads it somewhere else entirely.
+    let authorization = authorizer.authorize().await?;
 
     // The operator's endpoint, not a compiled-in one: a probe run that contacts
-    // somewhere other than the daemon would answer about the wrong backend.
-    let endpoint = Config::load()?.upstream.endpoint;
+    // somewhere other than the daemon would answer about the wrong backend. Of
+    // the kind the account holds, because the two are not interchangeable
+    // (`proxy-behavior.md` §8.2).
+    let config = Config::load()?;
+    let endpoint = match authorization.kind {
+        codex_cc_proxy::auth::authorize::Kind::Key => config.upstream.key.endpoint,
+        codex_cc_proxy::auth::authorize::Kind::Subscription => config.upstream.endpoint,
+    };
 
     Ok(Arc::new(
-        HttpTransport::new(endpoint).with_credentials(tokens),
+        HttpTransport::new(endpoint)
+            .for_endpoint(authorization.kind)
+            .with_credentials(authorizer),
     ))
 }
 
@@ -117,7 +137,7 @@ async fn doctor(args: cli::DoctorArgs) -> Result<()> {
             codex_cc_proxy::doctor::run_live(
                 &fixtures,
                 args.probe.as_deref(),
-                live_transport()?,
+                live_transport().await?,
                 live_models()?,
                 Config::load()?.effort_ceiling()?,
             )
