@@ -181,6 +181,9 @@ async fn messages(
     // Read for the ingress capture, and relayed as sent on the §9 path.
     // Routing never depends on a header.
     headers: axum::http::HeaderMap,
+    // The query string, relayed as sent on the §9 path — `?beta=true` is
+    // observed live. Routing never depends on it either.
+    uri: axum::http::Uri,
     body: axum::body::Bytes,
 ) -> Response {
     // One snapshot for the whole turn. Taken before anything is translated, so
@@ -255,7 +258,7 @@ async fn messages(
                 );
             }
 
-            return match relay.forward(&account, &headers, body).await {
+            return match relay.forward(&account, &headers, uri.query(), body).await {
                 Ok(response) => response,
                 Err(error) => error.into_response(),
             };

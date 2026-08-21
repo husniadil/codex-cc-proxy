@@ -30,6 +30,7 @@ use std::sync::Mutex;
 struct Seen {
     bodies: Vec<String>,
     headers: Vec<HeaderMap>,
+    queries: Vec<Option<String>>,
 }
 
 type Recorded = Arc<Mutex<Seen>>;
@@ -72,11 +73,15 @@ async fn upstream(refuse: bool) -> (String, Recorded) {
 
     let app = axum::Router::new().route(
         "/v1/messages",
-        axum::routing::post(move |headers: HeaderMap, body: String| {
-            if let Ok(mut seen) = sink.lock() {
-                seen.bodies.push(body);
-                seen.headers.push(headers);
-            }
+        axum::routing::post(
+            move |axum::extract::RawQuery(query): axum::extract::RawQuery,
+                  headers: HeaderMap,
+                  body: String| {
+                if let Ok(mut seen) = sink.lock() {
+                    seen.bodies.push(body);
+                    seen.headers.push(headers);
+                    seen.queries.push(query);
+                }
             async move {
                 if refuse {
                     return (
@@ -507,6 +512,46 @@ async fn an_unpinned_tier_follows_the_selection_back_to_the_translating_path() {
     // failing there is the assertion.
     assert_ne!(turn(&base, CLIENT_BODY).await.status(), 200);
     assert!(seen.lock().unwrap().bodies.is_empty());
+}
+
+/// The request path's query string reaches the backend as sent.
+///
+/// Observed live: the client posts `/v1/messages?beta=true`. The relay's
+/// endpoint is fixed, so a query dropped at the ingress silently unsubscribes
+/// the client from whatever it asked for there — and nothing about the turn
+/// would ever say so.
+#[tokio::test]
+async fn the_query_string_is_relayed_as_sent() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = store_with_a_relay_account(&dir);
+    store.select("relay").unwrap();
+
+    let (base, seen) = daemon(
+        Arc::clone(&store),
+        vec![tier("sonnet", "claude-sonnet-5", None)],
+        false,
+    )
+    .await;
+
+    let response = reqwest::Client::new()
+        .post(format!("{base}/v1/messages?beta=true"))
+        .header("content-type", "application/json")
+        .header("authorization", "Bearer the-client-placeholder")
+        .header("anthropic-version", "2023-06-01")
+        .body(CLIENT_BODY)
+        .send()
+        .await
+        .expect("the ingress should answer");
+
+    assert_eq!(response.status(), 200);
+    assert_eq!(
+        seen.lock().unwrap().queries[0].as_deref(),
+        Some("beta=true")
+    );
+
+    // And a request without one stays without one: nothing invents a query.
+    assert_eq!(turn(&base, CLIENT_BODY).await.status(), 200);
+    assert_eq!(seen.lock().unwrap().queries[1], None);
 }
 
 /// An id the mapping does not name, arriving while an account on the second

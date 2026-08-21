@@ -207,6 +207,7 @@ impl Relay {
         &self,
         account: &str,
         headers: &HeaderMap,
+        query: Option<&str>,
         body: Bytes,
     ) -> Result<Response, ProxyError> {
         let authorization = self
@@ -215,7 +216,15 @@ impl Relay {
             .await?
             .for_endpoint(Kind::Key)?;
 
-        let mut request = self.client.post(&self.endpoint);
+        // The query string as the client sent it — `?beta=true` is observed
+        // live. The endpoint decides the path; the client decides the query,
+        // and a query dropped here would silently unsubscribe the client from
+        // whatever it asked for in it.
+        let url = match query {
+            Some(query) => format!("{}?{query}", self.endpoint),
+            None => self.endpoint.clone(),
+        };
+        let mut request = self.client.post(url);
         for (name, value) in headers {
             // The client's own bearer is a placeholder — `ANTHROPIC_AUTH_TOKEN`
             // has to be set for the client's sake and its value is ignored

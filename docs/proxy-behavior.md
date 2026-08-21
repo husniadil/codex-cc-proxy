@@ -1350,7 +1350,10 @@ cannot speak to.
 
 ### 9.2 Headers
 
-The header set is the only thing that changes between ingress and egress.
+The header set is the only thing that changes between ingress and egress. The
+request path's query string follows the body's rule, not this one: it is
+forwarded exactly as sent — `?beta=true` is observed live — and never
+invented where the client sent none.
 
 - **`authorization` is replaced** with the account's credential. The client's
   own bearer is a placeholder: `ANTHROPIC_AUTH_TOKEN` has to be set for the
