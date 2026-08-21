@@ -4819,3 +4819,121 @@ async fn every_rendered_account_row_names_its_provider() {
     assert!(key_anthropic.contains("anthropic"), "{rendered}");
     assert!(key_anthropic.contains("key"), "{rendered}");
 }
+
+/// The auth line names the provider for an oauth account, not only for a key.
+///
+/// The provider used to be printed only where it was not the one this proxy
+/// started with, so a grant on the default provider rendered as an address and
+/// nothing else. With two providers in the store that row is the one an
+/// operator has to guess about — the same rule the accounts listing already
+/// carries.
+#[test]
+fn the_rendered_status_names_the_provider_for_an_oauth_account() {
+    let rendered = render::status(&json!({
+        "base_url": "http://127.0.0.1:8787",
+        "auth": {
+            "connected": true,
+            "email": "someone@example.com",
+            "provider": "codex",
+        },
+    }));
+
+    assert!(
+        rendered.contains("connected (someone@example.com, codex)"),
+        "the oauth account's provider must be named: {rendered}"
+    );
+}
+
+/// Operator-facing rows name a provider by its stored id, never by an ordinal.
+///
+/// "the second provider" is the spec's internal vocabulary for a role. It says
+/// nothing to a person reading `status`, who has `codex` and `anthropic` in
+/// front of them in every accounts listing.
+#[test]
+fn the_rendered_status_names_the_relay_provider_rather_than_its_ordinal() {
+    let rendered = render::status(&json!({
+        "base_url": "http://127.0.0.1:8787",
+        "auth": { "connected": true, "account": "sub", "kind": "key", "provider": "anthropic" },
+        "tiers": { "opus": "claude-opus-5" },
+        "catalog_curated": true,
+    }));
+
+    assert!(
+        rendered.contains("relay verbatim to anthropic"),
+        "the routing line must name the provider: {rendered}"
+    );
+    assert!(
+        rendered.contains("built-in list for anthropic"),
+        "the catalog line must name the provider: {rendered}"
+    );
+    assert!(
+        !rendered.contains("second provider"),
+        "no ordinal phrasing survives: {rendered}"
+    );
+}
+
+/// The curated `models` note names the provider whose list it is.
+#[test]
+fn the_rendered_models_note_names_the_provider_whose_list_is_curated() {
+    let rendered = render::models(&json!({
+        "models": [],
+        "authoritative": false,
+        "curated": true,
+        "provider": "anthropic",
+    }));
+
+    assert!(
+        rendered.contains("anthropic's list is built in"),
+        "the curated note must name the provider: {rendered}"
+    );
+    assert!(!rendered.contains("second provider"), "{rendered}");
+}
+
+/// A per-account usage reason names the provider it is talking about.
+///
+/// "this provider" leaves the reader to work out which of the two accounts in
+/// the block it refers to; the row is the only place the answer would be.
+#[tokio::test]
+async fn a_usage_reason_names_the_provider_it_describes() {
+    let harness = Harness::start().await;
+    harness
+        .store
+        .add(&grant("acct_main", "a-main"), Some("main"))
+        .unwrap();
+    harness
+        .store
+        .add_key("relay", "relay-secret", Provider::Anthropic)
+        .unwrap();
+    harness.store.select("main").unwrap();
+
+    let usage = harness.call("usage").await.unwrap();
+    let relay = usage["accounts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["account"] == json!("relay"))
+        .unwrap()
+        .clone();
+    let detail = relay["detail"].as_str().unwrap();
+
+    assert!(
+        detail.starts_with("anthropic states quota"),
+        "the reason must name the provider: {detail}"
+    );
+    assert!(!detail.contains("this provider"), "{detail}");
+
+    let main = usage["accounts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["account"] == json!("main"))
+        .unwrap()
+        .clone();
+    assert!(
+        main["detail"]
+            .as_str()
+            .unwrap()
+            .starts_with("codex reports quota"),
+        "{main}"
+    );
+}

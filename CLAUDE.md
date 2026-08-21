@@ -150,3 +150,12 @@ Identifiers describe what they do, not who calls them. The upstream is a
 provider, not a brand; the client is a harness, not a product tier. Comments may
 name a real client or endpoint where that is the accurate explanation for a rule
 — the constraint is on names, not on prose that has to be true to be useful.
+
+**Operator-facing output is the carve-out, and it runs the other way.** What
+`status`, `models`, `usage`, `accounts`, `login`, and a CLI error print must
+name the real provider — `codex`, `anthropic` — because a role word like "the
+second provider" is this project's internal vocabulary and means nothing to the
+person reading it. Use the store's own provider ids, the same strings
+`accounts` lists, and expand to a company or product name only where the id
+alone would not be understood. Identifiers, module names, and spec section
+prose stay role-based.

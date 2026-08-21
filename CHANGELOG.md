@@ -8,6 +8,20 @@ in [`docs/api.md`](docs/api.md) §6.
 
 ### Changed
 
+- **Operator-facing output names a provider, never an ordinal.** `status`
+  printed "built-in list for the second provider" and `usage` explained a
+  missing figure with "this provider" — this project's internal word for a
+  role, in front of a reader who has `codex` and `anthropic` in every
+  `accounts` listing. The `routing` and `catalog` lines of `status`, the
+  curated note on `models`, and every per-account reason in `usage` now carry
+  the stored provider id. `models` reports that id as `provider` alongside
+  `curated` so the name comes from the payload rather than from the renderer's
+  assumption.
+- **The `status` auth line names the provider on every connected row.** It used
+  to name one only where it was not `codex`, so an oauth account on the
+  provider this proxy started with rendered as an address and nothing else —
+  the same gap the `accounts` listing just closed.
+
 - **Every `accounts` row names its provider.** The listing named one only where
   it was not `codex`, so a store holding both providers printed three rows whose
   provider had to be inferred from the one row that had it. It is a column every

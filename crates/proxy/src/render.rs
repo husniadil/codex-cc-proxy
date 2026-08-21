@@ -267,14 +267,17 @@ pub fn status(result: &Value) -> String {
             Some("key") => ", key",
             _ => "",
         };
-        // And the provider, by the same rule: only where it is not the one
-        // this proxy started with.
+        // And the provider, on every connected row. With two providers in
+        // the store an unnamed one is a guess, and this line is where an
+        // operator looks to find out whose backend the next turn reaches.
+        // Omitted only where the payload does not carry it — a daemon that
+        // predates providers — because filling that in would invent it.
         let provider = match auth
             .and_then(|auth| field(auth, "provider"))
             .and_then(Value::as_str)
         {
-            Some(provider) if provider != "codex" => format!(", {provider}"),
-            _ => String::new(),
+            Some(provider) => format!(", {provider}"),
+            None => String::new(),
         };
         format!("auth       connected ({who}{kind}{provider})")
     } else {
@@ -324,12 +327,16 @@ pub fn status(result: &Value) -> String {
     // unpinned tier row decides nothing at all — and four rows printed with no
     // qualifier read as "your turns go to these models", which is the one
     // thing they do not mean in this state.
-    let relaying = connected
-        && matches!(
-            auth.and_then(|auth| field(auth, "provider"))
-                .and_then(Value::as_str),
-            Some(provider) if provider != "codex"
-        );
+    // Named rather than ordinal: the operator has `codex` and `anthropic` in
+    // front of them in every accounts listing, and "the second provider" is
+    // the spec's word for a role, not anything they can act on.
+    let relaying = match auth
+        .and_then(|auth| field(auth, "provider"))
+        .and_then(Value::as_str)
+    {
+        Some(provider) if connected && provider != "codex" => Some(provider),
+        _ => None,
+    };
 
     if let Some(tiers) = field(result, "tiers").and_then(Value::as_object) {
         for (tier, value) in tiers {
@@ -341,7 +348,7 @@ pub fn status(result: &Value) -> String {
                 // relaying one takes that tier with it and the mapped model is
                 // never asked for. A pin names its own account and stays live
                 // either way — that is what pinning one is for.
-                (Some(model), _) if relaying => format!("{model} (inert while relaying)"),
+                (Some(model), _) if relaying.is_some() => format!("{model} (inert while relaying)"),
                 (Some(model), _) => model.to_owned(),
                 (None, Some(pinned)) => format!(
                     "{} (as {})",
@@ -356,11 +363,7 @@ pub fn status(result: &Value) -> String {
 
     // And what the mapping's inert rows are inert in favour of, named rather
     // than left to be inferred from a provider in the auth line.
-    if relaying {
-        let provider = auth
-            .and_then(|auth| field(auth, "provider"))
-            .and_then(Value::as_str)
-            .unwrap_or("the second provider");
+    if let Some(provider) = relaying {
         lines.push(format!(
             "routing    model ids relay verbatim to {provider} — \
              the account serving turns is on it, so an unpinned tier decides nothing"
@@ -373,9 +376,10 @@ pub fn status(result: &Value) -> String {
     // catalog was never these models' menu, so "not validated" would report a
     // check that was never owed.
     if field(result, "catalog_curated").and_then(Value::as_bool) == Some(true) {
-        lines.push(
-            "catalog    built-in list for the second provider — curated, not fetched".to_owned(),
-        );
+        let provider = relaying.unwrap_or("another provider");
+        lines.push(format!(
+            "catalog    built-in list for {provider} — curated, not fetched"
+        ));
     } else if field(result, "catalog_authoritative").and_then(Value::as_bool) == Some(false) {
         lines.push("catalog    unavailable — the tier mapping has not been validated".to_owned());
     }
@@ -455,9 +459,16 @@ pub fn models(result: &Value) -> String {
     let mut lines = Vec::new();
 
     if field(result, "curated").and_then(Value::as_bool) == Some(true) {
-        lines.push(
-            "(the second provider's list is built in; windows are curated, not fetched)".to_owned(),
-        );
+        // Named from the payload, and left out where the payload does not
+        // carry one — a daemon older than the field. Naming it anyway would
+        // be inventing the answer.
+        let whose = match field(result, "provider").and_then(Value::as_str) {
+            Some(provider) => format!("{provider}'s list is"),
+            None => "this list is".to_owned(),
+        };
+        lines.push(format!(
+            "({whose} built in; windows are curated, not fetched)"
+        ));
     } else if field(result, "authoritative").and_then(Value::as_bool) == Some(false) {
         lines.push("(the catalog could not be fetched; this is the fallback list)".to_owned());
     }

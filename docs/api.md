@@ -791,9 +791,19 @@ returns if it comes back.
 catalog was never these models' menu (`proxy-behavior.md` §9.1), and the second
 provider's own list endpoint names ids but states no windows — so `models` for
 a relay-serving daemon answers from a list built into the binary, windows
-included, and says `curated: true` rather than presenting it as a fetch. It is
+included, and says `curated: true` rather than presenting it as a fetch. The
+same answer carries `provider`, the stored id of the account serving turns, so
+a renderer can name whose list it is instead of describing it by role. It is
 a menu for reading, never a list to refuse by: no mapping is validated against
 it, and `status` reports the catalog as curated instead of unvalidated.
+
+**Operator-facing rows name a provider by its stored id** — `codex`,
+`anthropic` — the same ids `accounts` prints. That covers the `routing` and
+`catalog` lines of `status`, the curated note on `models`, and every
+per-account reason in `usage`. The `auth` line names it on every connected row,
+including an oauth account on the provider this proxy started with: with two
+providers in the store, the row that leaves it out is the one an operator has
+to guess about.
 
 **A catalog belongs to the account it was fetched for** (`proxy-behavior.md`
 §7.0). `accounts.select` and an `accounts.forget` that hands over to another account

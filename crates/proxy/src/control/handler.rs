@@ -320,6 +320,9 @@ fn models(state: &ControlState) -> Value {
             "models": entries,
             "authoritative": false,
             "curated": true,
+            // Whose list this is. The renderer names it, and naming it from
+            // the payload keeps the answer with the account it came from.
+            "provider": serving_provider(state),
             "stale": false,
         });
     }
@@ -465,28 +468,33 @@ fn per_account(state: &ControlState) -> Vec<Value> {
 }
 
 /// Why an account has no figure.
-fn unavailable(account: &crate::auth::store::Account) -> &'static str {
+fn unavailable(account: &crate::auth::store::Account) -> String {
+    // Every reason names the provider it is about. The block prints one row
+    // per account and the providers differ between rows, so "this provider"
+    // leaves the reader to work out which one the sentence means.
+    let provider = &account.provider;
     if account.provider == crate::auth::store::Provider::Anthropic.as_str() {
         // §9.4 — this provider states quota in the response headers of every
         // relayed turn, and for a subscription token that is the only place it
         // states one: its usage endpoint refuses that credential for want of a
         // scope. So the reader is one turn away from a figure, and saying the
         // provider reports none would send them looking for a feature instead.
-        return "this provider states quota on every turn; none has been relayed \
-                as this account yet";
+        return format!(
+            "{provider} states quota on every turn; none has been relayed as this account yet"
+        );
     }
     if account.provider != crate::auth::store::Provider::Codex.as_str() {
         // `roadmap.md` §L — whether this provider answers a quota question at
         // all is unmeasured, and a figure of zero would be an answer nobody
         // gave.
-        return "this provider does not report a quota to this proxy yet";
+        return format!("{provider} does not report a quota to this proxy yet");
     }
     if account.kind == "key" {
         // §8.2 — the figure is a subscription entitlement, and a key is not
         // one.
-        return "a key holds no subscription quota";
+        return "a key holds no subscription quota".to_owned();
     }
-    "the backend reports quota when a turn is made; none has been made as this account yet"
+    format!("{provider} reports quota when a turn is made; none has been made as this account yet")
 }
 
 /// `docs/api.md` §2.1 — the environment Claude Code needs.
@@ -1113,6 +1121,20 @@ async fn login(state: &ControlState, params: Option<&Value>) -> Result<Value, Pr
 /// account an unpinned tier's turns are relayed as.
 fn serving_account_relays(state: &ControlState) -> bool {
     crate::upstream::relay::relays(&state.credentials.accounts().unwrap_or_default(), None)
+}
+
+/// The provider of the account serving turns, for the rows that name it.
+///
+/// Falls back to the store's own default rather than to a role word: the
+/// operator sees these ids in every accounts listing, and a row that declines
+/// to name one is the row they have to guess about.
+fn serving_provider(state: &ControlState) -> &'static str {
+    let accounts = state.credentials.accounts().unwrap_or_default();
+    accounts
+        .iter()
+        .find(|account| account.selected)
+        .map(|account| account.provider)
+        .unwrap_or_else(|| crate::auth::store::Provider::Codex.as_str())
 }
 
 fn serving_account(state: &ControlState) -> Option<String> {
