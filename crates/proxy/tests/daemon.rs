@@ -2,10 +2,10 @@
 
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::indexing_slicing)]
 
-use codex_cc_proxy::config::Config;
-use codex_cc_proxy::config::Tiers;
-use codex_cc_proxy::daemon::bind;
 use pretty_assertions::assert_eq;
+use proxenos::config::Config;
+use proxenos::config::Tiers;
+use proxenos::daemon::bind;
 
 fn complete_tiers() -> Tiers {
     Tiers {
@@ -264,17 +264,13 @@ fn configuration_has_no_credential_fields() {
 #[test]
 fn the_configuration_is_read_from_disk() {
     let dir = tempfile::tempdir().unwrap();
-    std::fs::write(
-        dir.path().join("config.toml"),
-        codex_cc_proxy::config::EXAMPLE,
-    )
-    .unwrap();
+    std::fs::write(dir.path().join("config.toml"), proxenos::config::EXAMPLE).unwrap();
 
     // SAFETY-adjacent: the variable is scoped to this process, and the test is
     // the only reader.
-    unsafe { std::env::set_var("CODEX_CC_PROXY_HOME", dir.path()) };
+    unsafe { std::env::set_var("PROXENOS_HOME", dir.path()) };
     let config = Config::load().expect("the example should load");
-    unsafe { std::env::remove_var("CODEX_CC_PROXY_HOME") };
+    unsafe { std::env::remove_var("PROXENOS_HOME") };
 
     assert_eq!(config.port, 8787);
     assert!(config.tiers.resolve().is_ok());
@@ -289,9 +285,9 @@ fn the_configuration_is_read_from_disk() {
 fn a_missing_configuration_falls_back_to_the_defaults() {
     let dir = tempfile::tempdir().unwrap();
 
-    unsafe { std::env::set_var("CODEX_CC_PROXY_HOME", dir.path().join("nothing-here")) };
+    unsafe { std::env::set_var("PROXENOS_HOME", dir.path().join("nothing-here")) };
     let config = Config::load().expect("a missing configuration is a first run, not a failure");
-    unsafe { std::env::remove_var("CODEX_CC_PROXY_HOME") };
+    unsafe { std::env::remove_var("PROXENOS_HOME") };
 
     assert_eq!(config.port, 8787);
     assert!(config.tiers.resolve().is_ok());
@@ -305,9 +301,9 @@ fn an_unparseable_configuration_is_still_refused() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("config.toml"), "port = \"not a number\"").unwrap();
 
-    unsafe { std::env::set_var("CODEX_CC_PROXY_HOME", dir.path()) };
+    unsafe { std::env::set_var("PROXENOS_HOME", dir.path()) };
     let error = Config::load().expect_err("a malformed configuration should fail");
-    unsafe { std::env::remove_var("CODEX_CC_PROXY_HOME") };
+    unsafe { std::env::remove_var("PROXENOS_HOME") };
 
     assert!(error.message.contains("config.toml"), "{}", error.message);
 }
@@ -317,7 +313,7 @@ fn an_unparseable_configuration_is_still_refused() {
 #[test]
 fn the_example_configuration_is_valid() {
     let config: Config =
-        toml::from_str(codex_cc_proxy::config::EXAMPLE).expect("the example should parse");
+        toml::from_str(proxenos::config::EXAMPLE).expect("the example should parse");
     assert!(config.tiers.resolve().is_ok());
 }
 
@@ -363,14 +359,14 @@ fn a_recognized_effort_parses() {
 
     assert_eq!(
         config.effort_ceiling().unwrap(),
-        Some(codex_cc_proxy_core::responses::Effort::Low)
+        Some(proxenos_core::responses::Effort::Low)
     );
 }
 
 /// No ceiling means the backend's own default, not zero effort.
 #[test]
 fn no_effort_key_means_no_ceiling() {
-    let config: Config = toml::from_str(codex_cc_proxy::config::EXAMPLE).unwrap();
+    let config: Config = toml::from_str(proxenos::config::EXAMPLE).unwrap();
     assert_eq!(config.effort_ceiling().unwrap(), None);
 }
 
@@ -630,7 +626,7 @@ fn an_account_section_overrides_the_effort_ceiling() {
     )
     .unwrap();
 
-    use codex_cc_proxy_core::responses::Effort;
+    use proxenos_core::responses::Effort;
     assert_eq!(
         config.effort_ceiling_for(Some("api")).unwrap(),
         Some(Effort::Low)
@@ -675,7 +671,7 @@ fn an_unknown_key_in_an_account_section_is_refused() {
 #[test]
 fn the_example_states_the_defaults_it_documents() {
     let example: Config =
-        toml::from_str(codex_cc_proxy::config::EXAMPLE).expect("the example should parse");
+        toml::from_str(proxenos::config::EXAMPLE).expect("the example should parse");
     let defaults = Config::default();
 
     // Tier and model only. `defaulted` differs by construction and says so

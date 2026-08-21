@@ -6,8 +6,8 @@
 
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::indexing_slicing)]
 
-use codex_cc_proxy::launch;
 use pretty_assertions::assert_eq;
+use proxenos::launch;
 
 const POLICY: &str = r#"{"permissions":{"deny":["Skill(claude-api)"]}}"#;
 
@@ -58,7 +58,7 @@ fn a_settings_flag_from_the_caller_is_refused_rather_than_dropped() {
             error.message
         );
         assert!(
-            error.message.contains("codex-cc-proxy settings"),
+            error.message.contains("proxenos settings"),
             "and the way out of it: {}",
             error.message
         );
@@ -118,8 +118,9 @@ fn an_empty_command_is_refused() {
 fn exec_refuses_before_starting_anything_when_the_daemon_is_not_answering() {
     let dir = tempfile::tempdir().unwrap();
 
-    let output = std::process::Command::new(env!("CARGO_BIN_EXE_codex-cc-proxy"))
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_proxenos"))
         .args(["exec", "claude", "--resume", "x"])
+        .env("PROXENOS_HOME", dir.path())
         .env("TMPDIR", dir.path())
         .output()
         .expect("the binary should run");
@@ -130,7 +131,7 @@ fn exec_refuses_before_starting_anything_when_the_daemon_is_not_answering() {
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("codex-cc-proxy run"),
+        stderr.contains("proxenos run"),
         "the refusal has to say how to fix it: {stderr}"
     );
 }
@@ -146,7 +147,7 @@ fn exec_refuses_before_starting_anything_when_the_daemon_is_not_answering() {
 ///
 /// **It contacts nothing.** Without credentials the daemon short-circuits to
 /// the fallback model list before any request is built, which the log states in
-/// as many words. `TMPDIR` moves the control socket and `CODEX_CC_PROXY_HOME`
+/// as many words. `TMPDIR` moves the control socket and `PROXENOS_HOME`
 /// moves the configuration, so neither this developer's daemon nor their
 /// configuration is touched.
 #[cfg(unix)]
@@ -170,17 +171,17 @@ fn a_launched_child_is_given_the_policy_and_the_environment() {
     drop(file);
     std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o755)).unwrap();
 
-    let binary = env!("CARGO_BIN_EXE_codex-cc-proxy");
+    let binary = env!("CARGO_BIN_EXE_proxenos");
     let mut daemon = std::process::Command::new(binary)
         .args(["run", "--port", "0"])
-        .env("CODEX_CC_PROXY_HOME", &home)
+        .env("PROXENOS_HOME", &home)
         .env("TMPDIR", dir.path())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .spawn()
         .expect("the daemon should start");
 
-    let socket = dir.path().join("codex-cc-proxy.sock");
+    let socket = dir.path().join("proxenos.sock");
     for _ in 0..200 {
         if socket.exists() {
             break;
@@ -190,7 +191,7 @@ fn a_launched_child_is_given_the_policy_and_the_environment() {
 
     let launched = std::process::Command::new(binary)
         .args(["exec", "claude", "--resume", "abc"])
-        .env("CODEX_CC_PROXY_HOME", &home)
+        .env("PROXENOS_HOME", &home)
         .env("TMPDIR", dir.path())
         .env(
             "PATH",
@@ -241,7 +242,7 @@ fn settings_and_exec_refuse_a_daemon_that_predates_client_policy() {
     use std::io::Write;
 
     let dir = tempfile::tempdir().unwrap();
-    let socket = dir.path().join("codex-cc-proxy.sock");
+    let socket = dir.path().join("proxenos.sock");
     let listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
 
     let server = std::thread::spawn(move || {
@@ -258,10 +259,11 @@ fn settings_and_exec_refuse_a_daemon_that_predates_client_policy() {
         }
     });
 
-    let binary = env!("CARGO_BIN_EXE_codex-cc-proxy");
+    let binary = env!("CARGO_BIN_EXE_proxenos");
     let run = |args: &[&str]| {
         std::process::Command::new(binary)
             .args(args)
+            .env("PROXENOS_HOME", dir.path())
             .env("TMPDIR", dir.path())
             .output()
             .expect("the binary should run")
@@ -317,7 +319,7 @@ fn settings_and_exec_refuse_a_daemon_that_predates_client_policy() {
 ///
 /// It contacts nothing: without credentials the daemon short-circuits to the
 /// fallback model list before any request is built. `TMPDIR` moves the control
-/// socket and `CODEX_CC_PROXY_HOME` the configuration, so a developer's own
+/// socket and `PROXENOS_HOME` the configuration, so a developer's own
 /// daemon is never involved.
 #[cfg(unix)]
 #[test]
@@ -326,17 +328,17 @@ fn a_stop_asked_for_over_the_socket_ends_the_process() {
     let home = dir.path().join("home");
     std::fs::create_dir_all(&home).unwrap();
 
-    let binary = env!("CARGO_BIN_EXE_codex-cc-proxy");
+    let binary = env!("CARGO_BIN_EXE_proxenos");
     let mut daemon = std::process::Command::new(binary)
         .args(["run", "--port", "0"])
-        .env("CODEX_CC_PROXY_HOME", &home)
+        .env("PROXENOS_HOME", &home)
         .env("TMPDIR", dir.path())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .spawn()
         .expect("the daemon should start");
 
-    let socket = dir.path().join("codex-cc-proxy.sock");
+    let socket = dir.path().join("proxenos.sock");
     for _ in 0..200 {
         if socket.exists() {
             break;
@@ -347,7 +349,7 @@ fn a_stop_asked_for_over_the_socket_ends_the_process() {
 
     let stopped = std::process::Command::new(binary)
         .arg("stop")
-        .env("CODEX_CC_PROXY_HOME", &home)
+        .env("PROXENOS_HOME", &home)
         .env("TMPDIR", dir.path())
         .output()
         .expect("the stop verb should run");
@@ -405,7 +407,7 @@ fn stop_names_the_upgrade_problem_when_the_daemon_predates_it() {
     use std::io::Write;
 
     let dir = tempfile::tempdir().unwrap();
-    let socket = dir.path().join("codex-cc-proxy.sock");
+    let socket = dir.path().join("proxenos.sock");
     let listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
 
     // Faithful to what an older daemon does: it answers `status` perfectly well
@@ -428,8 +430,9 @@ fn stop_names_the_upgrade_problem_when_the_daemon_predates_it() {
         }
     });
 
-    let output = std::process::Command::new(env!("CARGO_BIN_EXE_codex-cc-proxy"))
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_proxenos"))
         .arg("stop")
+        .env("PROXENOS_HOME", dir.path())
         .env("TMPDIR", dir.path())
         .output()
         .expect("the binary should run");
@@ -459,11 +462,11 @@ fn a_detached_run_outlives_the_command_that_started_it() {
     let dir = tempfile::tempdir().unwrap();
     let home = dir.path().join("home");
     std::fs::create_dir_all(&home).unwrap();
-    let binary = env!("CARGO_BIN_EXE_codex-cc-proxy");
+    let binary = env!("CARGO_BIN_EXE_proxenos");
 
     let started = std::process::Command::new(binary)
         .args(["run", "--detach", "--port", "0"])
-        .env("CODEX_CC_PROXY_HOME", &home)
+        .env("PROXENOS_HOME", &home)
         .env("TMPDIR", dir.path())
         .output()
         .expect("the detach command should run");
@@ -476,7 +479,7 @@ fn a_detached_run_outlives_the_command_that_started_it() {
     );
     let said = String::from_utf8_lossy(&started.stdout);
     assert!(
-        said.contains("codex-cc-proxy stop"),
+        said.contains("proxenos stop"),
         "it should say how to stop what it started: {said}"
     );
 
@@ -491,7 +494,7 @@ fn a_detached_run_outlives_the_command_that_started_it() {
 
     let stopped = std::process::Command::new(binary)
         .arg("stop")
-        .env("CODEX_CC_PROXY_HOME", &home)
+        .env("PROXENOS_HOME", &home)
         .env("TMPDIR", dir.path())
         .output()
         .expect("the stop verb should run");
@@ -512,7 +515,7 @@ fn a_detached_daemon_that_dies_at_startup_is_reported_from_its_log() {
     let dir = tempfile::tempdir().unwrap();
     let home = dir.path().join("home");
     std::fs::create_dir_all(&home).unwrap();
-    let binary = env!("CARGO_BIN_EXE_codex-cc-proxy");
+    let binary = env!("CARGO_BIN_EXE_proxenos");
 
     let holder = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let port = holder.local_addr().unwrap().port().to_string();
@@ -523,7 +526,7 @@ fn a_detached_daemon_that_dies_at_startup_is_reported_from_its_log() {
 
     let started = std::process::Command::new(binary)
         .args(["run", "--detach", "--port", &port])
-        .env("CODEX_CC_PROXY_HOME", &home)
+        .env("PROXENOS_HOME", &home)
         .env("TMPDIR", dir.path())
         .output()
         .expect("the detach command should run");
@@ -551,11 +554,11 @@ fn a_second_detach_is_refused_while_the_first_still_answers() {
     let dir = tempfile::tempdir().unwrap();
     let home = dir.path().join("home");
     std::fs::create_dir_all(&home).unwrap();
-    let binary = env!("CARGO_BIN_EXE_codex-cc-proxy");
+    let binary = env!("CARGO_BIN_EXE_proxenos");
 
     let first = std::process::Command::new(binary)
         .args(["run", "--detach", "--port", "0"])
-        .env("CODEX_CC_PROXY_HOME", &home)
+        .env("PROXENOS_HOME", &home)
         .env("TMPDIR", dir.path())
         .output()
         .expect("the first detach should run");
@@ -567,7 +570,7 @@ fn a_second_detach_is_refused_while_the_first_still_answers() {
 
     let second = std::process::Command::new(binary)
         .args(["run", "--detach", "--port", "0"])
-        .env("CODEX_CC_PROXY_HOME", &home)
+        .env("PROXENOS_HOME", &home)
         .env("TMPDIR", dir.path())
         .output()
         .expect("the second detach should run");
@@ -583,7 +586,7 @@ fn a_second_detach_is_refused_while_the_first_still_answers() {
 
     let _ = std::process::Command::new(binary)
         .arg("stop")
-        .env("CODEX_CC_PROXY_HOME", &home)
+        .env("PROXENOS_HOME", &home)
         .env("TMPDIR", dir.path())
         .output();
 }
@@ -612,17 +615,17 @@ fn a_launch_that_cannot_carry_the_policy_names_the_loss() {
     drop(file);
     std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o755)).unwrap();
 
-    let binary = env!("CARGO_BIN_EXE_codex-cc-proxy");
+    let binary = env!("CARGO_BIN_EXE_proxenos");
     let mut daemon = std::process::Command::new(binary)
         .args(["run", "--port", "0"])
-        .env("CODEX_CC_PROXY_HOME", &home)
+        .env("PROXENOS_HOME", &home)
         .env("TMPDIR", dir.path())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .spawn()
         .expect("the daemon should start");
 
-    let socket = dir.path().join("codex-cc-proxy.sock");
+    let socket = dir.path().join("proxenos.sock");
     for _ in 0..200 {
         if socket.exists() {
             break;
@@ -632,7 +635,7 @@ fn a_launch_that_cannot_carry_the_policy_names_the_loss() {
 
     let launched = std::process::Command::new(binary)
         .args(["exec", "tool"])
-        .env("CODEX_CC_PROXY_HOME", &home)
+        .env("PROXENOS_HOME", &home)
         .env("TMPDIR", dir.path())
         .env(
             "PATH",
@@ -657,5 +660,50 @@ fn a_launch_that_cannot_carry_the_policy_names_the_loss() {
     assert!(
         stderr.contains("policy"),
         "the loss has to be named, not silent: {stderr}"
+    );
+}
+
+/// The project was renamed at v0.5.0, and an environment still exporting the
+/// old home variable is an operator who has not heard. Reading nothing and
+/// starting with an empty store would look like every credential vanished;
+/// the only honest answer is a refusal that names the new variable.
+#[test]
+fn the_old_home_variable_is_refused_by_name() {
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_proxenos"))
+        .args(["status"])
+        .env("CODEX_CC_PROXY_HOME", "/tmp/anywhere")
+        .env_remove("PROXENOS_HOME")
+        .output()
+        .expect("the binary runs");
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("CODEX_CC_PROXY_HOME") && stderr.contains("PROXENOS_HOME"),
+        "the refusal names both the old variable and its replacement: {stderr}"
+    );
+}
+
+/// A default home written by the old binary, with nothing yet at the new
+/// path, is the same operator in the same situation without the variable.
+/// The refusal names both directories and the move, and nothing is migrated
+/// automatically: an old daemon may still be running against that directory.
+#[test]
+fn a_store_under_the_old_default_home_is_refused_with_the_move() {
+    let dir = tempfile::tempdir().expect("a scratch directory");
+    let old = dir.path().join("codex-cc-proxy");
+    std::fs::create_dir_all(&old).expect("the old home");
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_proxenos"))
+        .args(["status"])
+        .env("XDG_CONFIG_HOME", dir.path())
+        .env_remove("PROXENOS_HOME")
+        .env_remove("CODEX_CC_PROXY_HOME")
+        .output()
+        .expect("the binary runs");
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains(old.to_string_lossy().as_ref())
+            && stderr.contains(dir.path().join("proxenos").to_string_lossy().as_ref()),
+        "the refusal names where the store is and where it moved: {stderr}"
     );
 }

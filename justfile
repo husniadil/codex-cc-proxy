@@ -1,4 +1,4 @@
-# codex-cc-proxy task runner
+# proxenos task runner
 
 # Format, lint, and test — the full local gate
 default: check
@@ -33,15 +33,15 @@ snapshots:
 
 # Run the daemon locally with verbose logging
 run *ARGS:
-    RUST_LOG=codex_cc_proxy=debug cargo run -p codex-cc-proxy -- run {{ARGS}}
+    RUST_LOG=proxenos=debug cargo run -p proxenos -- run {{ARGS}}
 
 # Capture upstream exchanges as test fixtures
 record *ARGS:
-    cargo run -p codex-cc-proxy -- record {{ARGS}}
+    cargo run -p proxenos -- record {{ARGS}}
 
 # Probe live backend capabilities — spends real inference quota
 doctor *ARGS:
-    cargo run -p codex-cc-proxy -- doctor {{ARGS}}
+    cargo run -p proxenos -- doctor {{ARGS}}
 
 # Install development tooling
 setup:

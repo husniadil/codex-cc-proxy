@@ -13,8 +13,8 @@ pub mod pool;
 pub mod websocket;
 
 use crate::error::ProxyError;
-use codex_cc_proxy_core::responses::ResponsesRequest;
 use futures::stream::BoxStream;
+use proxenos_core::responses::ResponsesRequest;
 
 /// One upstream exchange: the event payloads, in order, exactly as §5.0 leaves
 /// them.

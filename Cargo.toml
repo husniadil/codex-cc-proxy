@@ -7,11 +7,11 @@ version = "0.4.0"
 edition = "2024"
 rust-version = "1.97"
 license = "Apache-2.0"
-repository = "https://github.com/husniadil/codex-cc-proxy"
-authors = ["codex-cc-proxy contributors"]
+repository = "https://github.com/husniadil/proxenos"
+authors = ["proxenos contributors"]
 
 [workspace.dependencies]
-codex-cc-proxy-core = { path = "crates/core" }
+proxenos-core = { path = "crates/core" }
 
 anyhow = "1"
 async-trait = "0.1"

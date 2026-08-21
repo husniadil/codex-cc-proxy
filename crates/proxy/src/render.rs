@@ -33,11 +33,11 @@ pub fn env_shell(result: &Value) -> String {
                     .to_owned(),
             );
             lines.push(
-                "# settings file and has no environment variable. `codex-cc-proxy settings` \
+                "# settings file and has no environment variable. `proxenos settings` \
                  carries it,"
                     .to_owned(),
             );
-            lines.push("# and `codex-cc-proxy exec` applies it for one run.".to_owned());
+            lines.push("# and `proxenos exec` applies it for one run.".to_owned());
         }
         // Present and empty: the daemon knows about this and has nothing to say.
         Some(_) => {}
@@ -125,7 +125,7 @@ pub fn accounts(result: &Value) -> String {
         return "no accounts".to_owned();
     };
     if accounts.is_empty() {
-        return "no accounts — run `codex-cc-proxy login`".to_owned();
+        return "no accounts — run `proxenos login`".to_owned();
     }
 
     accounts
@@ -194,7 +194,7 @@ pub fn forgotten_account(result: &Value) -> String {
         .unwrap_or("nothing");
     match field(result, "serving").and_then(Value::as_str) {
         Some(serving) => format!("forgot {forgotten}; serving turns as {serving}"),
-        None => format!("forgot {forgotten}; no accounts left — run `codex-cc-proxy login`"),
+        None => format!("forgot {forgotten}; no accounts left — run `proxenos login`"),
     }
 }
 
@@ -250,7 +250,7 @@ pub fn status(result: &Value) -> String {
         };
         format!("auth       connected ({who}{kind})")
     } else {
-        "auth       not connected — run `codex-cc-proxy login`".to_owned()
+        "auth       not connected — run `proxenos login`".to_owned()
     });
 
     // Reported, never enforced. Models and efforts are gated on it, and a

@@ -12,20 +12,20 @@
     clippy::panic
 )]
 
-use codex_cc_proxy::upstream::compression::worth_compressing;
-use codex_cc_proxy::upstream::compression::zstd as compress;
-use codex_cc_proxy::upstream::conduit::Conduit;
-use codex_cc_proxy::upstream::conduit::Sent;
-use codex_cc_proxy::upstream::http::HttpTransport;
-use codex_cc_proxy::upstream::websocket::Upload;
-use codex_cc_proxy::upstream::websocket::WebSocketTransport;
-use codex_cc_proxy::upstream::websocket::plan_upload;
-use codex_cc_proxy_core::responses::InputItem;
-use codex_cc_proxy_core::responses::ResponsesRequest;
-use codex_cc_proxy_core::session::Baseline;
 use futures::SinkExt;
 use futures::StreamExt;
 use pretty_assertions::assert_eq;
+use proxenos::upstream::compression::worth_compressing;
+use proxenos::upstream::compression::zstd as compress;
+use proxenos::upstream::conduit::Conduit;
+use proxenos::upstream::conduit::Sent;
+use proxenos::upstream::http::HttpTransport;
+use proxenos::upstream::websocket::Upload;
+use proxenos::upstream::websocket::WebSocketTransport;
+use proxenos::upstream::websocket::plan_upload;
+use proxenos_core::responses::InputItem;
+use proxenos_core::responses::ResponsesRequest;
+use proxenos_core::session::Baseline;
 use serde_json::Value;
 use serde_json::json;
 use std::sync::Arc;

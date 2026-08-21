@@ -17,15 +17,15 @@ use axum::response::IntoResponse;
 use axum::response::Response;
 use axum::routing::get;
 use axum::routing::post;
-use codex_cc_proxy_core::anthropic::MessagesRequest;
-use codex_cc_proxy_core::sse::encode_frame;
-use codex_cc_proxy_core::translate::ResponseOptions;
-use codex_cc_proxy_core::translate::ResponseTranslator;
-use codex_cc_proxy_core::translate::TranslateOptions;
-use codex_cc_proxy_core::translate::discovered_tool_names;
-use codex_cc_proxy_core::translate::translate_request;
 use futures::StreamExt;
 use futures::stream;
+use proxenos_core::anthropic::MessagesRequest;
+use proxenos_core::sse::encode_frame;
+use proxenos_core::translate::ResponseOptions;
+use proxenos_core::translate::ResponseTranslator;
+use proxenos_core::translate::TranslateOptions;
+use proxenos_core::translate::discovered_tool_names;
+use proxenos_core::translate::translate_request;
 use serde_json::Value;
 use std::sync::Arc;
 
@@ -412,7 +412,7 @@ fn sse_response(
     empty_stream_watch: Option<(crate::recorder::Recorder, Value)>,
     calibration: Calibration,
     session: Arc<crate::session::Session>,
-    sent_input: Vec<codex_cc_proxy_core::responses::InputItem>,
+    sent_input: Vec<proxenos_core::responses::InputItem>,
     record_upstream: bool,
 ) -> Response {
     let state = StreamState {
@@ -441,7 +441,7 @@ fn sse_response(
                 if frames.iter().any(|frame| {
                     matches!(
                         frame,
-                        codex_cc_proxy_core::anthropic::Frame::ContentBlockDelta { .. }
+                        proxenos_core::anthropic::Frame::ContentBlockDelta { .. }
                     )
                 }) {
                     state.produced_content = true;
@@ -452,7 +452,7 @@ fn sse_response(
             Some(Err(error)) => {
                 // The status is already sent, so a mid-stream failure is an
                 // error frame rather than a status change (§1.1).
-                let frame = codex_cc_proxy_core::anthropic::Frame::Error {
+                let frame = proxenos_core::anthropic::Frame::Error {
                     error: error.body(),
                 };
                 let chunk = encode_frame(&frame);
@@ -518,7 +518,7 @@ struct StreamState {
     session: Arc<crate::session::Session>,
     /// What this turn put on the wire, which together with what the server adds
     /// becomes the baseline the next turn must extend (§4.3).
-    sent_input: Vec<codex_cc_proxy_core::responses::InputItem>,
+    sent_input: Vec<proxenos_core::responses::InputItem>,
 }
 
 impl StreamState {
@@ -564,7 +564,7 @@ impl StreamState {
     /// Without them the next turn's delta would resend what the backend already
     /// has, or worse, be computed against a conversation neither side holds.
     fn close_turn(&self) {
-        let mut returned: Vec<codex_cc_proxy_core::responses::InputItem> = Vec::new();
+        let mut returned: Vec<proxenos_core::responses::InputItem> = Vec::new();
 
         for event in &self.seen {
             if let Some(id) = event.pointer("/response/id").and_then(Value::as_str) {
@@ -572,9 +572,8 @@ impl StreamState {
             }
             if event.get("type").and_then(Value::as_str) == Some("response.output_item.done")
                 && let Some(item) = event.get("item")
-                && let Ok(parsed) = serde_json::from_value::<
-                    codex_cc_proxy_core::responses::InputItem,
-                >(item.clone())
+                && let Ok(parsed) =
+                    serde_json::from_value::<proxenos_core::responses::InputItem>(item.clone())
             {
                 returned.push(parsed);
             }
@@ -691,6 +690,6 @@ fn upstream_refusal(payload: &str) -> Option<ProxyError> {
     Some(ProxyError::from_upstream_status(status, message))
 }
 
-fn render(frames: &[codex_cc_proxy_core::anthropic::Frame]) -> String {
+fn render(frames: &[proxenos_core::anthropic::Frame]) -> String {
     frames.iter().map(encode_frame).collect()
 }

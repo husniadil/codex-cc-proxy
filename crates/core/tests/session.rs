@@ -7,12 +7,12 @@
 
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::indexing_slicing)]
 
-use codex_cc_proxy_core::responses::InputItem;
-use codex_cc_proxy_core::session::Baseline;
-use codex_cc_proxy_core::session::Plan;
-use codex_cc_proxy_core::session::delta;
-use codex_cc_proxy_core::session::extends;
 use pretty_assertions::assert_eq;
+use proxenos_core::responses::InputItem;
+use proxenos_core::session::Baseline;
+use proxenos_core::session::Plan;
+use proxenos_core::session::delta;
+use proxenos_core::session::extends;
 use serde_json::json;
 
 fn items(values: serde_json::Value) -> Vec<InputItem> {
@@ -266,7 +266,7 @@ fn reasoning_in_the_baseline_does_not_break_the_match() {
         message("second question"),
     ]));
 
-    let reconciled = codex_cc_proxy_core::session::reconcile(&baseline, &replay)
+    let reconciled = proxenos_core::session::reconcile(&baseline, &replay)
         .expect("the replay should line up around the reasoning item");
 
     assert_eq!(reconciled.new_items, 1, "only the new question is new");
@@ -294,10 +294,7 @@ fn reconciliation_still_refuses_an_edited_history() {
 
     let edited = items(json!([message("a different question"), message("next")]));
 
-    assert_eq!(
-        codex_cc_proxy_core::session::reconcile(&baseline, &edited),
-        None
-    );
+    assert_eq!(proxenos_core::session::reconcile(&baseline, &edited), None);
 }
 
 /// A shortened replay does not reconcile either.
@@ -310,7 +307,7 @@ fn reconciliation_refuses_a_shortened_history() {
     ]));
 
     assert_eq!(
-        codex_cc_proxy_core::session::reconcile(&baseline, &items(json!([message("one")]))),
+        proxenos_core::session::reconcile(&baseline, &items(json!([message("one")]))),
         None
     );
 }

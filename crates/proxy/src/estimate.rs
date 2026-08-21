@@ -6,9 +6,9 @@
 //! pre-flight call with no upstream counterpart, and for `message_start`, which
 //! must carry a number before upstream has produced one.
 
-use codex_cc_proxy_core::anthropic::ContentBlock;
-use codex_cc_proxy_core::anthropic::Message;
-use codex_cc_proxy_core::anthropic::MessagesRequest;
+use proxenos_core::anthropic::ContentBlock;
+use proxenos_core::anthropic::Message;
+use proxenos_core::anthropic::MessagesRequest;
 use std::sync::Mutex;
 
 /// Rough per-item framing cost, in tokens.

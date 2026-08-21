@@ -1,5 +1,5 @@
 [package]
-name = "codex-cc-proxy-core"
+name = "proxenos-core"
 description = "Translation between the Anthropic Messages API and the OpenAI Responses API"
 version.workspace = true
 edition.workspace = true

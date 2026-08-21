@@ -64,7 +64,7 @@ fn carries_settings_flag(arguments: &[String]) -> bool {
 pub fn plan(command: &[String], policy: Option<&str>) -> Result<Launch, ProxyError> {
     let Some((program, forwarded)) = command.split_first() else {
         return Err(ProxyError::invalid_request(
-            "no command to run; name the program to start, as in `codex-cc-proxy exec claude`",
+            "no command to run; name the program to start, as in `proxenos exec claude`",
         ));
     };
 
@@ -77,7 +77,7 @@ pub fn plan(command: &[String], policy: Option<&str>) -> Result<Launch, ProxyErr
         return Err(ProxyError::invalid_request(format!(
             "`{program}` was given {SETTINGS_FLAG} and this proxy needs the same flag to deliver \
              its client policy. The client keeps only the last one, so one of the two would be \
-             dropped without a word. Merge them into a single document — `codex-cc-proxy \
+             dropped without a word. Merge them into a single document — `proxenos \
              settings` prints this proxy's half — or switch the policy off in `[client]`."
         )));
     }

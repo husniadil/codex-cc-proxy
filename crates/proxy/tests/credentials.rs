@@ -9,18 +9,18 @@
 
 mod replay;
 
-use codex_cc_proxy::auth::authorize::AccountAuthorizer;
-use codex_cc_proxy::auth::authorize::Authorizer;
-use codex_cc_proxy::auth::authorize::Kind;
-use codex_cc_proxy::auth::store::AccountStore;
-use codex_cc_proxy::auth::store::CredentialStore;
-use codex_cc_proxy::auth::store::FileStore;
-use codex_cc_proxy::auth::tokens::SystemClock;
-use codex_cc_proxy::auth::tokens::TokenSource;
-use codex_cc_proxy::upstream::Transport;
-use codex_cc_proxy::upstream::http::HttpTransport;
 use futures::StreamExt;
 use pretty_assertions::assert_eq;
+use proxenos::auth::authorize::AccountAuthorizer;
+use proxenos::auth::authorize::Authorizer;
+use proxenos::auth::authorize::Kind;
+use proxenos::auth::store::AccountStore;
+use proxenos::auth::store::CredentialStore;
+use proxenos::auth::store::FileStore;
+use proxenos::auth::tokens::SystemClock;
+use proxenos::auth::tokens::TokenSource;
+use proxenos::upstream::Transport;
+use proxenos::upstream::http::HttpTransport;
 use std::sync::Arc;
 
 /// A key nothing in this repository could produce from context: the assertion
@@ -31,10 +31,10 @@ const KEY: &str = "sk-probe-7f3a91c4e88b40d2-do-not-guess";
 /// What the stub answers with, likewise unguessable.
 const MARKER: &str = "resp_4d81f0ac-key-path";
 
-fn request() -> codex_cc_proxy_core::responses::ResponsesRequest {
-    codex_cc_proxy_core::responses::ResponsesRequest {
+fn request() -> proxenos_core::responses::ResponsesRequest {
+    proxenos_core::responses::ResponsesRequest {
         model: "gpt-5.6-terra".to_owned(),
-        ..codex_cc_proxy_core::responses::ResponsesRequest::default()
+        ..proxenos_core::responses::ResponsesRequest::default()
     }
 }
 
@@ -150,10 +150,10 @@ async fn a_key_endpoint_is_never_sent_a_compressed_body() {
     .await;
 
     // Well past the size that would be compressed on the subscription path.
-    let bulky = codex_cc_proxy_core::responses::ResponsesRequest {
+    let bulky = proxenos_core::responses::ResponsesRequest {
         model: "gpt-5.6-terra".to_owned(),
         instructions: Some("x".repeat(8_000)),
-        ..codex_cc_proxy_core::responses::ResponsesRequest::default()
+        ..proxenos_core::responses::ResponsesRequest::default()
     };
 
     let transport = HttpTransport::new(server.url.clone())

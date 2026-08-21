@@ -4,6 +4,29 @@ All notable changes to this project are recorded here. This project follows
 [semantic versioning](https://semver.org). The semver-bound surfaces are listed
 in [`docs/api.md`](docs/api.md) §6.
 
+## [0.5.0]
+
+The project is named for what it does. `codex-cc-proxy` named one provider on
+one side of a daemon that is about to serve more than one; **proxenos** — the
+ancient Greek office the word "proxy" descends from, a citizen representing a
+foreign guest's interests in his own city — names the role and no provider.
+
+### Changed
+
+- **Everything the old name reached is renamed, with no aliases kept.** The
+  repository, both crates (`proxenos`, `proxenos-core`), the binary, and the
+  environment prefix: `CODEX_CC_PROXY_PORT` and `CODEX_CC_PROXY_HOME` are
+  `PROXENOS_PORT` and `PROXENOS_HOME`. One rename on a minor bump under the
+  pre-1.0 exception recorded in `docs/api.md` §6. Wire identity is untouched:
+  the originator and user agent the upstream sees never carried the project
+  name.
+- **A store under the old name refuses loudly instead of vanishing.** A binary
+  finding `CODEX_CC_PROXY_HOME` exported, or a default home written by the old
+  binary with nothing at the new path, refuses to run and says exactly what to
+  move where. Starting fresh with an empty store would have read as every
+  credential having disappeared. Nothing is migrated automatically — an old
+  daemon may still be running against that directory.
+
 ## [0.4.0]
 
 The tier mapping stopped belonging to the daemon and started belonging to an

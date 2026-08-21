@@ -1,6 +1,6 @@
 # API contract
 
-What codex-cc-proxy exposes, and what callers may rely on.
+What proxenos exposes, and what callers may rely on.
 [`proxy-behavior.md`](proxy-behavior.md) is the companion spec for how it
 behaves internally.
 
@@ -65,19 +65,19 @@ changing an already-sent status.
 ## 2. Command line
 
 ```
-codex-cc-proxy run        start the daemon (--detach: in the background)
-codex-cc-proxy login      authenticate (--as NAME labels it, --key reads one from stdin)
-codex-cc-proxy accounts   stored accounts (--use switches, --rename, --forget drops)
-codex-cc-proxy status     connection, tier mapping, model catalog
-codex-cc-proxy models     available models
-codex-cc-proxy env        environment for Claude Code, as shell exports
-codex-cc-proxy settings   the same configuration, as one settings document
-codex-cc-proxy exec       run a command with that configuration applied
-codex-cc-proxy stop       ask the running daemon to stop
-codex-cc-proxy doctor     probe live backend capabilities
-codex-cc-proxy usage      what quota is left
-codex-cc-proxy statusline wrap a status-line script, adding that quota
-codex-cc-proxy record     capture exchanges as fixtures
+proxenos run        start the daemon (--detach: in the background)
+proxenos login      authenticate (--as NAME labels it, --key reads one from stdin)
+proxenos accounts   stored accounts (--use switches, --rename, --forget drops)
+proxenos status     connection, tier mapping, model catalog
+proxenos models     available models
+proxenos env        environment for Claude Code, as shell exports
+proxenos settings   the same configuration, as one settings document
+proxenos exec       run a command with that configuration applied
+proxenos stop       ask the running daemon to stop
+proxenos doctor     probe live backend capabilities
+proxenos usage      what quota is left
+proxenos statusline wrap a status-line script, adding that quota
+proxenos record     capture exchanges as fixtures
 ```
 
 Every verb except `run` and `login` operates through the control socket (§3)
@@ -186,7 +186,7 @@ keeps working unchanged and gains a figure it could not otherwise have.
 
 ```json
 { "statusLine": { "type": "command",
-                  "command": "codex-cc-proxy statusline -- ~/.claude/my-statusline.sh" } }
+                  "command": "proxenos statusline -- ~/.claude/my-statusline.sh" } }
 ```
 
 The merged payload gains `rate_limits.five_hour` and `rate_limits.seven_day`
@@ -341,8 +341,8 @@ Runs a command with the configuration of §2.2 applied, so starting a client is
 one step rather than two.
 
 ```
-codex-cc-proxy exec claude --resume abc
-codex-cc-proxy exec -- claude --help
+proxenos exec claude --resume abc
+proxenos exec -- claude --help
 ```
 
 The environment half is set on the child. The policy half rides on the client's
@@ -368,7 +368,7 @@ When the forwarded arguments already carry `--settings`. Measured: given two
 settings flags on one argument list, the client keeps the last, drops the first,
 exits 0, and writes nothing to stderr. So leading with this proxy's document
 loses the policy and trailing loses the caller's, both without a word. The
-refusal names the collision and the way out; `codex-cc-proxy settings` prints
+refusal names the collision and the way out; `proxenos settings` prints
 this proxy's half to merge. A program that does not read the flag is never given
 one, so its own `--settings` is not a collision — and because that launch drops
 a rule the operator configured, it is named on stderr rather than left silent:
@@ -384,7 +384,7 @@ that spawns a client composes its own `--settings`.
 Asks the running daemon to stop, then reports what it observed afterwards.
 
 ```
-$ codex-cc-proxy stop
+$ proxenos stop
 stopped 0.2.0; something started it again as 0.3.0
 ```
 
@@ -428,9 +428,9 @@ work out that a protocol error is really an upgrade problem.
 Starts the daemon in the background and returns once it answers.
 
 ```
-$ codex-cc-proxy run --detach
-daemon running (pid 4711), logging to ~/.config/codex-cc-proxy/daemon.log
-stop it with `codex-cc-proxy stop`
+$ proxenos run --detach
+daemon running (pid 4711), logging to ~/.config/proxenos/daemon.log
+stop it with `proxenos stop`
 ```
 
 The child is a plain `run` of the same binary in its own process group, with
@@ -660,8 +660,8 @@ new daemon work.
 
 ## 4. Configuration
 
-TOML in the platform configuration directory — `$CODEX_CC_PROXY_HOME`, else
-`$XDG_CONFIG_HOME/codex-cc-proxy`, else `~/.config/codex-cc-proxy`. Credentials
+TOML in the platform configuration directory — `$PROXENOS_HOME`, else
+`$XDG_CONFIG_HOME/proxenos`, else `~/.config/proxenos`. Credentials
 are never stored here.
 
 ```toml
@@ -832,7 +832,7 @@ pending work.
 - **The credential directory has to be on a filesystem that locks.** Every write
   of the credential file takes a lock beside it, and a filesystem that cannot
   take one — a network mount is the case that exists — fails the write rather
-  than proceeding without it. The error names `CODEX_CC_PROXY_HOME`, which
+  than proceeding without it. The error names `PROXENOS_HOME`, which
   points the whole directory somewhere else.
 - **A key account's catalog carries no windows or efforts.** The list is real
   and is the account's own, and the endpoint states neither for any entry. The
@@ -876,7 +876,9 @@ Semantic versioning does not bind a zero major, and nothing outside this
 project's own CLI has ever spoken the socket — the CLI and the daemon are one
 binary, so a rename lands on both at once. A name that turns out wrong is
 therefore renamed on a minor bump, said in the changelog, and gone rather than
-left beside its replacement. `accounts.forget` arrived that way. The exception
+left beside its replacement. `accounts.forget` arrived that way, and so did the
+project's own name: everything `codex-cc-proxy` and `CODEX_CC_PROXY_*` named is
+`proxenos` and `PROXENOS_*` from v0.5.0, one rename with no aliases kept. The exception
 ends when a second caller exists — the graphical front-end is the one planned,
 and any other program that speaks this socket ends it just as well — and it ends
 whether or not 1.0 has been reached: the moment something else has to be

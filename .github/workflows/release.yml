@@ -62,19 +62,19 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          name="codex-cc-proxy-${{ matrix.target }}"
+          name="proxenos-${{ matrix.target }}"
           mkdir -p "dist/$name"
-          if [ -f "target/${{ matrix.target }}/release/codex-cc-proxy.exe" ]; then
-            cp "target/${{ matrix.target }}/release/codex-cc-proxy.exe" "dist/$name/"
+          if [ -f "target/${{ matrix.target }}/release/proxenos.exe" ]; then
+            cp "target/${{ matrix.target }}/release/proxenos.exe" "dist/$name/"
           else
-            cp "target/${{ matrix.target }}/release/codex-cc-proxy" "dist/$name/"
+            cp "target/${{ matrix.target }}/release/proxenos" "dist/$name/"
           fi
           cp README.md LICENSE "dist/$name/"
           cd dist && tar -czf "$name.tar.gz" "$name"
 
       - uses: actions/upload-artifact@v7
         with:
-          name: codex-cc-proxy-${{ matrix.target }}
+          name: proxenos-${{ matrix.target }}
           path: dist/*.tar.gz
 
   publish:
@@ -109,6 +109,6 @@ jobs:
             against a live subscription — `docs/roadmap.md` §L lists each
             question, its answer, and the four things the offline work believed
             that a live backend falsified. A few remain derived rather than
-            confirmed, and §L says which. `codex-cc-proxy doctor` makes the same
+            confirmed, and §L says which. `proxenos doctor` makes the same
             distinction in its own output: a replayed run says so, and a probe
             that could not run is reported as skipped rather than passed.

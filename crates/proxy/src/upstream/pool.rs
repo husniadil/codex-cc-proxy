@@ -7,9 +7,9 @@
 use super::EventStream;
 use super::websocket::ResponseCreate;
 use crate::error::ProxyError;
-use codex_cc_proxy_core::responses::ResponsesRequest;
 use futures::SinkExt;
 use futures::StreamExt;
+use proxenos_core::responses::ResponsesRequest;
 use yawc::frame::Frame;
 use yawc::frame::OpCode;
 

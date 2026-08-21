@@ -9,11 +9,11 @@
 
 mod replay;
 
-use codex_cc_proxy::doctor::Corpus;
-use codex_cc_proxy::probe;
-use codex_cc_proxy::probe::Outcome;
-use codex_cc_proxy::probe::Status;
 use pretty_assertions::assert_eq;
+use proxenos::doctor::Corpus;
+use proxenos::probe;
+use proxenos::probe::Outcome;
+use proxenos::probe::Status;
 use std::path::PathBuf;
 
 fn corpus() -> PathBuf {
@@ -25,7 +25,7 @@ fn corpus() -> PathBuf {
 /// Run one probe through `doctor`, which is the path that ships. A test harness
 /// that reimplements the runner proves the harness works, not the tool.
 async fn run_via_doctor(name: &str) -> Outcome {
-    codex_cc_proxy::doctor::run(&Corpus::Dir(corpus()), Some(name))
+    proxenos::doctor::run(&Corpus::Dir(corpus()), Some(name))
         .await
         .expect("the probe should be known")
         .into_iter()
@@ -36,7 +36,7 @@ async fn run_via_doctor(name: &str) -> Outcome {
 /// Every probe passes against the corpus.
 #[tokio::test]
 async fn every_probe_passes_against_the_replay_corpus() {
-    let outcomes = codex_cc_proxy::doctor::run(&Corpus::Dir(corpus()), None)
+    let outcomes = proxenos::doctor::run(&Corpus::Dir(corpus()), None)
         .await
         .expect("the suite should run");
 
@@ -74,7 +74,7 @@ async fn each_probe_runs_on_its_own() {
 /// Asking for a probe that does not exist names the ones that do.
 #[tokio::test]
 async fn an_unknown_probe_lists_the_known_ones() {
-    let error = codex_cc_proxy::doctor::run(&Corpus::Dir(corpus()), Some("not-a-probe"))
+    let error = proxenos::doctor::run(&Corpus::Dir(corpus()), Some("not-a-probe"))
         .await
         .expect_err("an unknown probe should fail");
 
@@ -88,7 +88,7 @@ async fn an_unknown_probe_lists_the_known_ones() {
 async fn a_probe_that_cannot_run_reports_honestly() {
     let empty = tempfile::tempdir().unwrap();
 
-    let outcomes = codex_cc_proxy::doctor::run(&Corpus::Dir(empty.path().to_path_buf()), None)
+    let outcomes = proxenos::doctor::run(&Corpus::Dir(empty.path().to_path_buf()), None)
         .await
         .expect("the suite should still run");
 
@@ -108,12 +108,12 @@ async fn a_probe_that_cannot_run_reports_honestly() {
     assert!(rendered.contains("0 passed"), "{rendered}");
 }
 
-/// The corpus travels with the binary. An installed `codex-cc-proxy` has no
+/// The corpus travels with the binary. An installed `proxenos` has no
 /// checkout to read `fixtures/` out of, and a `doctor` that skips every probe
 /// there is a first run that establishes nothing.
 #[tokio::test]
 async fn every_probe_passes_against_the_embedded_corpus() {
-    let outcomes = codex_cc_proxy::doctor::run(&Corpus::Embedded, None)
+    let outcomes = proxenos::doctor::run(&Corpus::Embedded, None)
         .await
         .expect("the suite should run with no directory at all");
 
@@ -282,10 +282,10 @@ fn every_marker_is_absent_from_the_rest_of_the_corpus() {
 /// output §9.3 exists to prevent.
 #[tokio::test]
 async fn the_matrix_states_its_evidence() {
-    let outcomes = codex_cc_proxy::doctor::run(&Corpus::Dir(corpus()), None)
+    let outcomes = proxenos::doctor::run(&Corpus::Dir(corpus()), None)
         .await
         .unwrap();
-    let rendered = probe::matrix(&outcomes, codex_cc_proxy::doctor::AGAINST_REPLAY);
+    let rendered = probe::matrix(&outcomes, proxenos::doctor::AGAINST_REPLAY);
 
     assert!(
         rendered.contains("the backend was not contacted"),
@@ -310,15 +310,15 @@ async fn a_live_run_uses_the_transport_and_labels_itself() {
         serde_json::from_value(fixture["upstream"].clone()).unwrap();
 
     let server = replay::ReplayServer::start(replay::Behavior::Events(events)).await;
-    let transport = std::sync::Arc::new(codex_cc_proxy::upstream::http::HttpTransport::new(
+    let transport = std::sync::Arc::new(proxenos::upstream::http::HttpTransport::new(
         server.url.clone(),
     ));
 
-    let outcomes = codex_cc_proxy::doctor::run_live(
+    let outcomes = proxenos::doctor::run_live(
         &Corpus::Dir(corpus()),
         Some("tool-calling"),
         transport,
-        std::sync::Arc::new(vec![codex_cc_proxy::ingress::ModelMapping {
+        std::sync::Arc::new(vec![proxenos::ingress::ModelMapping {
             requested: "claude-sonnet-5".to_owned(),
             upstream: "gpt-5.6-terra".to_owned(),
         }]),
@@ -335,7 +335,7 @@ async fn a_live_run_uses_the_transport_and_labels_itself() {
     assert_eq!(seen.len(), 1, "the live run should have sent one request");
     assert_eq!(seen[0]["model"], serde_json::json!("gpt-5.6-terra"));
 
-    let rendered = probe::matrix(&outcomes, codex_cc_proxy::doctor::AGAINST_LIVE);
+    let rendered = probe::matrix(&outcomes, proxenos::doctor::AGAINST_LIVE);
     assert!(rendered.contains("the backend answered"), "{rendered}");
 }
 
@@ -353,19 +353,19 @@ async fn a_live_run_honours_the_configured_effort_ceiling() {
         serde_json::from_value(fixture["upstream"].clone()).unwrap();
 
     let server = replay::ReplayServer::start(replay::Behavior::Events(events)).await;
-    let transport = std::sync::Arc::new(codex_cc_proxy::upstream::http::HttpTransport::new(
+    let transport = std::sync::Arc::new(proxenos::upstream::http::HttpTransport::new(
         server.url.clone(),
     ));
 
-    codex_cc_proxy::doctor::run_live(
+    proxenos::doctor::run_live(
         &Corpus::Dir(corpus()),
         Some("tool-calling"),
         transport,
-        std::sync::Arc::new(vec![codex_cc_proxy::ingress::ModelMapping {
+        std::sync::Arc::new(vec![proxenos::ingress::ModelMapping {
             requested: "claude-sonnet-5".to_owned(),
             upstream: "gpt-5.6-terra".to_owned(),
         }]),
-        Some(codex_cc_proxy_core::responses::Effort::Low),
+        Some(proxenos_core::responses::Effort::Low),
     )
     .await
     .expect("the probe should be known");
@@ -404,7 +404,7 @@ fn fixture_bound_checks_are_marked_as_such() {
 /// failure nothing would catch.
 #[test]
 fn every_capability_has_a_probe() {
-    use codex_cc_proxy_core::fixture::Capability;
+    use proxenos_core::fixture::Capability;
 
     let covered: Vec<Capability> = probe::all().iter().map(|probe| probe.capability).collect();
 
@@ -430,17 +430,17 @@ fn the_matrix_counts_outcomes() {
     let outcomes = vec![
         Outcome {
             name: "a".to_owned(),
-            capability: codex_cc_proxy_core::fixture::Capability::ReadImage,
+            capability: proxenos_core::fixture::Capability::ReadImage,
             status: Status::Passed,
         },
         Outcome {
             name: "b".to_owned(),
-            capability: codex_cc_proxy_core::fixture::Capability::WebSearch,
+            capability: proxenos_core::fixture::Capability::WebSearch,
             status: Status::Failed("nope".to_owned()),
         },
         Outcome {
             name: "c".to_owned(),
-            capability: codex_cc_proxy_core::fixture::Capability::CountTokens,
+            capability: proxenos_core::fixture::Capability::CountTokens,
             status: Status::Skipped("no stream".to_owned()),
         },
     ];

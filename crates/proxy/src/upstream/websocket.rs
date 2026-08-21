@@ -3,9 +3,9 @@
 
 use super::EventStream;
 use crate::error::ProxyError;
-use codex_cc_proxy_core::responses::InputItem;
-use codex_cc_proxy_core::responses::ResponsesRequest;
 use futures::StreamExt;
+use proxenos_core::responses::InputItem;
+use proxenos_core::responses::ResponsesRequest;
 use serde::Serialize;
 
 /// The beta opt-in the WebSocket endpoint requires.
@@ -313,7 +313,7 @@ impl WebSocketTransport {
 /// resolves toward the full send: a full send costs bandwidth, a wrong delta
 /// corrupts the conversation and does not fail visibly (§4.3).
 pub fn plan_upload<'a>(
-    baseline: &codex_cc_proxy_core::session::Baseline,
+    baseline: &proxenos_core::session::Baseline,
     request: &'a ResponsesRequest,
     previous_request: Option<&ResponsesRequest>,
     previous_response_id: Option<&str>,
@@ -342,12 +342,12 @@ pub fn plan_upload<'a>(
         // client retrying an unchanged conversation would be handed the
         // previous turn again rather than a fresh one. There is nothing to send
         // incrementally, so everything is sent.
-        codex_cc_proxy_core::session::Plan::Delta([]) => Upload::Full,
-        codex_cc_proxy_core::session::Plan::Delta(items) => Upload::Delta {
+        proxenos_core::session::Plan::Delta([]) => Upload::Full,
+        proxenos_core::session::Plan::Delta(items) => Upload::Delta {
             items,
             previous_response_id: response_id.to_owned(),
         },
-        codex_cc_proxy_core::session::Plan::Full => {
+        proxenos_core::session::Plan::Full => {
             tracing::debug!("full: the input did not continue the baseline");
             Upload::Full
         }

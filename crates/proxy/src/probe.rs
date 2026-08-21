@@ -11,7 +11,7 @@
 //! intact. They do not establish that the backend does its half. That needs a
 //! live subscription and is roadmap §L, and the matrix says so on its face.
 
-use codex_cc_proxy_core::fixture::Capability;
+use proxenos_core::fixture::Capability;
 use serde_json::Value;
 
 /// One thing that must be true of the upstream request, or of the frames the

@@ -61,7 +61,7 @@ push and pull request.
 
 ## 2. Request translation
 
-`proxy-behavior.md` §2, as pure functions in `codex-cc-proxy-core`.
+`proxy-behavior.md` §2, as pure functions in `proxenos-core`.
 
 Instructions folding, content blocks, attachments nested in tool results, tool
 flattening, `tool_choice`, deferred tool loading, web-search declaration, request
@@ -75,7 +75,7 @@ in a user message and nested inside a `tool_result`.
 
 ## 3. Response translation
 
-`proxy-behavior.md` §5, as a state machine in `codex-cc-proxy-core`.
+`proxy-behavior.md` §5, as a state machine in `proxenos-core`.
 
 SSE framing including multi-line `data:` reassembly, event mapping, deferred
 `tool_use` headers, stop-reason derivation, reasoning blocks, search-result
@@ -285,7 +285,7 @@ cannot start the next one. `env` stays: a launcher is a convenience over it, not
 a replacement for it.
 
 **Done when** a client started this way is indistinguishable from one started
-after `eval "$(codex-cc-proxy env)"`, unknown arguments reach the child
+after `eval "$(proxenos env)"`, unknown arguments reach the child
 untouched, the child's exit status is the launcher's, and a client given its own
 `--settings` fails visibly rather than losing one of the two.
 
@@ -388,12 +388,13 @@ if a second caller arrives first — see `api.md` §6.
 ### v0.5.0
 
 **The name stops being half-true.** The next release makes this daemon serve a
-second provider, and `codex-cc-proxy` names the first one. The name is welded
-into the repo, the crates, the binary, and the `CODEX_CC_PROXY_*` environment
-prefix, and today the cost of changing all four is one commit and one re-login.
-After anyone else depends on it, the cost is permanent. The new name is not
-chosen here; the decision is that it changes now, before 1.0 and before the
-provider work makes the old one wrong.
+second provider, and the old name — `codex-cc-proxy` — named the first one. The
+name is welded into the repo, the crates, the binary, and the environment
+prefix, and the cost of changing all four while nobody else depends on them is
+one commit and one re-login. After that, the cost is permanent. The name chosen
+is **proxenos** — the ancient Greek office the word "proxy" descends from: a
+citizen who represented a foreign guest's interests in his own city. It names
+what the daemon does and no provider on either side of it.
 
 **Done when** nothing user-facing carries the old name, and a configuration or
 credential store written under the old home is either migrated or refused with

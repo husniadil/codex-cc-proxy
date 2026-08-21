@@ -1,5 +1,5 @@
 [package]
-name = "codex-cc-proxy"
+name = "proxenos"
 description = "Run Claude Code against models served over a ChatGPT subscription"
 version.workspace = true
 edition.workspace = true
@@ -9,11 +9,11 @@ repository.workspace = true
 authors.workspace = true
 
 [lib]
-name = "codex_cc_proxy"
+name = "proxenos"
 path = "src/lib.rs"
 
 [[bin]]
-name = "codex-cc-proxy"
+name = "proxenos"
 path = "src/main.rs"
 
 [features]
@@ -26,7 +26,7 @@ tokenizer = ["dep:tiktoken-rs"]
 workspace = true
 
 [dependencies]
-codex-cc-proxy-core.workspace = true
+proxenos-core.workspace = true
 
 anyhow.workspace = true
 async-trait.workspace = true
@@ -52,7 +52,7 @@ url.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
-codex-cc-proxy-core.workspace = true
+proxenos-core.workspace = true
 hyper.workspace = true
 hyper-util.workspace = true
 insta.workspace = true

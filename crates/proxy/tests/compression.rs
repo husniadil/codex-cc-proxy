@@ -11,9 +11,9 @@
 
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::indexing_slicing)]
 
-use codex_cc_proxy::upstream::websocket::WebSocketTransport;
-use codex_cc_proxy_core::responses::ResponsesRequest;
 use futures::StreamExt;
+use proxenos::upstream::websocket::WebSocketTransport;
+use proxenos_core::responses::ResponsesRequest;
 use std::sync::Arc;
 use std::sync::Mutex;
 
@@ -333,14 +333,14 @@ async fn the_upgrade_carries_the_identity_headers() {
 
     assert_eq!(
         seen.get("openai-beta").map(String::as_str),
-        Some(codex_cc_proxy::upstream::websocket::BETA_HEADER)
+        Some(proxenos::upstream::websocket::BETA_HEADER)
     );
     assert_eq!(
         seen.get("originator").map(String::as_str),
-        Some(codex_cc_proxy::upstream::http::ORIGINATOR)
+        Some(proxenos::upstream::http::ORIGINATOR)
     );
     assert_eq!(
         seen.get("user-agent").map(String::as_str),
-        Some(codex_cc_proxy::upstream::http::USER_AGENT)
+        Some(proxenos::upstream::http::USER_AGENT)
     );
 }

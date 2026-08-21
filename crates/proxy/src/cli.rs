@@ -5,7 +5,7 @@ use clap::Subcommand;
 
 /// Run Claude Code against models served over a ChatGPT subscription.
 #[derive(Debug, Parser)]
-#[command(name = "codex-cc-proxy", version, about, long_about = None)]
+#[command(name = "proxenos", version, about, long_about = None)]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Command,
@@ -101,7 +101,7 @@ pub struct AccountsArgs {
 #[derive(Debug, clap::Args)]
 pub struct RunArgs {
     /// Port to bind on loopback. Overrides the configured value.
-    #[arg(long, env = "CODEX_CC_PROXY_PORT")]
+    #[arg(long, env = "PROXENOS_PORT")]
     pub port: Option<u16>,
     /// Start the daemon in the background and return once it answers.
     #[arg(long)]
@@ -190,7 +190,7 @@ mod tests {
 
     #[test]
     fn stop_parses_as_a_verb_of_its_own() {
-        let cli = Cli::try_parse_from(["codex-cc-proxy", "stop"]).unwrap();
+        let cli = Cli::try_parse_from(["proxenos", "stop"]).unwrap();
         assert!(matches!(cli.command, Command::Stop));
     }
 
@@ -198,13 +198,13 @@ mod tests {
     /// terminal, which is the right default for watching it work.
     #[test]
     fn run_can_be_asked_to_detach() {
-        let cli = Cli::try_parse_from(["codex-cc-proxy", "run", "--detach"]).unwrap();
+        let cli = Cli::try_parse_from(["proxenos", "run", "--detach"]).unwrap();
         let Command::Run(args) = cli.command else {
             panic!("run should parse");
         };
         assert!(args.detach);
 
-        let cli = Cli::try_parse_from(["codex-cc-proxy", "run"]).unwrap();
+        let cli = Cli::try_parse_from(["proxenos", "run"]).unwrap();
         let Command::Run(args) = cli.command else {
             panic!("run should parse");
         };
@@ -214,8 +214,7 @@ mod tests {
     /// A key is not an authorization, and the secret is never an argument.
     #[test]
     fn login_can_store_a_key_instead_of_starting_a_flow() {
-        let cli =
-            Cli::try_parse_from(["codex-cc-proxy", "login", "--key", "--as", "billing"]).unwrap();
+        let cli = Cli::try_parse_from(["proxenos", "login", "--key", "--as", "billing"]).unwrap();
         let Command::Login(args) = cli.command else {
             panic!("login should parse");
         };
@@ -223,20 +222,20 @@ mod tests {
         assert_eq!(args.label.as_deref(), Some("billing"));
 
         // There is nowhere to put a secret on the command line.
-        assert!(Cli::try_parse_from(["codex-cc-proxy", "login", "--key", "sk-secret"]).is_err());
+        assert!(Cli::try_parse_from(["proxenos", "login", "--key", "sk-secret"]).is_err());
     }
 
     /// A login names the account it produces, so an operator holding two of
     /// them has something to call each.
     #[test]
     fn login_takes_a_label() {
-        let cli = Cli::try_parse_from(["codex-cc-proxy", "login", "--as", "work"]).unwrap();
+        let cli = Cli::try_parse_from(["proxenos", "login", "--as", "work"]).unwrap();
         let Command::Login(args) = cli.command else {
             panic!("login should parse");
         };
         assert_eq!(args.label.as_deref(), Some("work"));
 
-        let cli = Cli::try_parse_from(["codex-cc-proxy", "login"]).unwrap();
+        let cli = Cli::try_parse_from(["proxenos", "login"]).unwrap();
         let Command::Login(args) = cli.command else {
             panic!("login should parse");
         };
@@ -247,8 +246,7 @@ mod tests {
     /// leave the command guessing which account it was about.
     #[test]
     fn accounts_renames_with_both_halves_or_not_at_all() {
-        let cli =
-            Cli::try_parse_from(["codex-cc-proxy", "accounts", "--rename", "old", "new"]).unwrap();
+        let cli = Cli::try_parse_from(["proxenos", "accounts", "--rename", "old", "new"]).unwrap();
         let Command::Accounts(args) = cli.command else {
             panic!("accounts should parse");
         };
@@ -257,16 +255,10 @@ mod tests {
             Some(["old".to_owned(), "new".to_owned()].as_slice())
         );
 
-        assert!(Cli::try_parse_from(["codex-cc-proxy", "accounts", "--rename", "old"]).is_err());
+        assert!(Cli::try_parse_from(["proxenos", "accounts", "--rename", "old"]).is_err());
         assert!(
             Cli::try_parse_from([
-                "codex-cc-proxy",
-                "accounts",
-                "--rename",
-                "old",
-                "new",
-                "--use",
-                "other"
+                "proxenos", "accounts", "--rename", "old", "new", "--use", "other"
             ])
             .is_err()
         );
@@ -277,7 +269,7 @@ mod tests {
     /// about to lose.
     #[test]
     fn accounts_forgets_only_the_account_it_is_given() {
-        let cli = Cli::try_parse_from(["codex-cc-proxy", "accounts", "--forget", "spare"]).unwrap();
+        let cli = Cli::try_parse_from(["proxenos", "accounts", "--forget", "spare"]).unwrap();
         let Command::Accounts(args) = cli.command else {
             panic!("accounts should parse");
         };
@@ -285,11 +277,10 @@ mod tests {
         assert_eq!(args.select, None);
 
         // A bare `--forget` has no default target.
-        assert!(Cli::try_parse_from(["codex-cc-proxy", "accounts", "--forget"]).is_err());
+        assert!(Cli::try_parse_from(["proxenos", "accounts", "--forget"]).is_err());
         // And it is not a switch.
         assert!(
-            Cli::try_parse_from(["codex-cc-proxy", "accounts", "--use", "a", "--forget", "b"])
-                .is_err()
+            Cli::try_parse_from(["proxenos", "accounts", "--use", "a", "--forget", "b"]).is_err()
         );
     }
 
@@ -298,27 +289,27 @@ mod tests {
     /// wrong account.
     #[test]
     fn accounts_lists_by_default_and_switches_only_when_asked() {
-        let cli = Cli::try_parse_from(["codex-cc-proxy", "accounts"]).unwrap();
+        let cli = Cli::try_parse_from(["proxenos", "accounts"]).unwrap();
         let Command::Accounts(args) = cli.command else {
             panic!("accounts should parse");
         };
         assert_eq!(args.select, None);
 
-        let cli = Cli::try_parse_from(["codex-cc-proxy", "accounts", "--use", "work"]).unwrap();
+        let cli = Cli::try_parse_from(["proxenos", "accounts", "--use", "work"]).unwrap();
         let Command::Accounts(args) = cli.command else {
             panic!("accounts should parse");
         };
         assert_eq!(args.select.as_deref(), Some("work"));
 
         // A bare name is not a switch.
-        assert!(Cli::try_parse_from(["codex-cc-proxy", "accounts", "work"]).is_err());
+        assert!(Cli::try_parse_from(["proxenos", "accounts", "work"]).is_err());
     }
 
     /// `env --json` and `settings` are one document under two names, so a
     /// caller cannot pick the one that leaves the policy out.
     #[test]
     fn settings_parses_as_a_verb_of_its_own() {
-        let cli = Cli::try_parse_from(["codex-cc-proxy", "settings"]).unwrap();
+        let cli = Cli::try_parse_from(["proxenos", "settings"]).unwrap();
         assert!(matches!(cli.command, Command::Settings));
     }
 
@@ -328,8 +319,7 @@ mod tests {
     #[test]
     fn exec_forwards_everything_after_the_program() {
         let cli =
-            Cli::try_parse_from(["codex-cc-proxy", "exec", "claude", "--resume", "abc", "-p"])
-                .unwrap();
+            Cli::try_parse_from(["proxenos", "exec", "claude", "--resume", "abc", "-p"]).unwrap();
         let Command::Exec(args) = cli.command else {
             panic!("expected exec");
         };
@@ -340,8 +330,7 @@ mod tests {
     /// here. The separator itself is not passed on.
     #[test]
     fn exec_accepts_a_double_dash_boundary() {
-        let cli =
-            Cli::try_parse_from(["codex-cc-proxy", "exec", "--", "claude", "--help"]).unwrap();
+        let cli = Cli::try_parse_from(["proxenos", "exec", "--", "claude", "--help"]).unwrap();
         let Command::Exec(args) = cli.command else {
             panic!("expected exec");
         };
@@ -352,13 +341,13 @@ mod tests {
     fn record_requires_an_explicit_mode() {
         // Defaulting the mode would let `record` spend quota without being asked
         // to. The mode is always stated.
-        let parsed = Cli::try_parse_from(["codex-cc-proxy", "record"]);
+        let parsed = Cli::try_parse_from(["proxenos", "record"]);
         assert!(parsed.is_err());
     }
 
     #[test]
     fn record_ingress_parses() {
-        let cli = Cli::try_parse_from(["codex-cc-proxy", "record", "ingress"]).unwrap();
+        let cli = Cli::try_parse_from(["proxenos", "record", "ingress"]).unwrap();
         assert!(matches!(
             cli.command,
             Command::Record(RecordArgs {

@@ -1,6 +1,6 @@
 # Proxy behavior
 
-Normative specification for how codex-cc-proxy translates between the Anthropic
+Normative specification for how proxenos translates between the Anthropic
 Messages API and the OpenAI Responses API, and how it manages sessions,
 transports, credentials, and token accounting.
 
@@ -1022,7 +1022,7 @@ A filesystem that cannot take the lock **cannot hold credentials**, and the
 write says so rather than proceeding without one. Locking is not universal — a
 home on a network mount is the case that exists — and the alternative is a write
 that reports success while doing exactly what this rule was written to stop.
-The failure names the file and names the move: `CODEX_CC_PROXY_HOME` points the
+The failure names the file and names the move: `PROXENOS_HOME` points the
 whole directory somewhere local. Falling back to an unlocked write is
 deliberately not offered; if it ever is, it belongs behind something the
 operator chose, not behind a log line nobody reads.

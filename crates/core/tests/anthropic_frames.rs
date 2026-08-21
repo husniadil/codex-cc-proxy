@@ -5,17 +5,17 @@
 
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::indexing_slicing)]
 
-use codex_cc_proxy_core::anthropic::AssistantLiteral;
-use codex_cc_proxy_core::anthropic::BlockStart;
-use codex_cc_proxy_core::anthropic::Delta;
-use codex_cc_proxy_core::anthropic::Frame;
-use codex_cc_proxy_core::anthropic::MessageDelta;
-use codex_cc_proxy_core::anthropic::MessageLiteral;
-use codex_cc_proxy_core::anthropic::MessageStart;
-use codex_cc_proxy_core::anthropic::StopReason;
-use codex_cc_proxy_core::anthropic::Usage;
-use codex_cc_proxy_core::sse::encode_frame;
 use pretty_assertions::assert_eq;
+use proxenos_core::anthropic::AssistantLiteral;
+use proxenos_core::anthropic::BlockStart;
+use proxenos_core::anthropic::Delta;
+use proxenos_core::anthropic::Frame;
+use proxenos_core::anthropic::MessageDelta;
+use proxenos_core::anthropic::MessageLiteral;
+use proxenos_core::anthropic::MessageStart;
+use proxenos_core::anthropic::StopReason;
+use proxenos_core::anthropic::Usage;
+use proxenos_core::sse::encode_frame;
 use serde_json::json;
 
 fn value(frame: &Frame) -> serde_json::Value {

@@ -32,10 +32,10 @@ impl Model {
     /// Models differ: some stop at `xhigh` and some go to `max`. Sending one
     /// more than it supports fails the turn, and the client cannot know which
     /// model it is talking to — it asked for a tier.
-    pub fn highest_effort(&self) -> Option<codex_cc_proxy_core::responses::Effort> {
+    pub fn highest_effort(&self) -> Option<proxenos_core::responses::Effort> {
         self.efforts
             .iter()
-            .filter_map(|effort| codex_cc_proxy_core::responses::Effort::parse(effort))
+            .filter_map(|effort| proxenos_core::responses::Effort::parse(effort))
             .max()
     }
 
@@ -43,10 +43,10 @@ impl Model {
     ///
     /// Levels this proxy has no name for are dropped rather than guessed at:
     /// an effort it cannot represent is one it could not have sent anyway.
-    pub fn supported_efforts(&self) -> Vec<codex_cc_proxy_core::responses::Effort> {
+    pub fn supported_efforts(&self) -> Vec<proxenos_core::responses::Effort> {
         self.efforts
             .iter()
-            .filter_map(|effort| codex_cc_proxy_core::responses::Effort::parse(effort))
+            .filter_map(|effort| proxenos_core::responses::Effort::parse(effort))
             .collect()
     }
 

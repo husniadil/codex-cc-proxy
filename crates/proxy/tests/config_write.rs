@@ -12,8 +12,8 @@
 
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::indexing_slicing)]
 
-use codex_cc_proxy::config::edit;
 use pretty_assertions::assert_eq;
+use proxenos::config::edit;
 
 const DOCUMENT: &str = r#"# Every key here has a default.
 

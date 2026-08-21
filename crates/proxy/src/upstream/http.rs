@@ -4,10 +4,10 @@ use super::EventStream;
 use super::Transport;
 use crate::error::ProxyError;
 use axum::http::StatusCode;
-use codex_cc_proxy_core::responses::ResponsesRequest;
-use codex_cc_proxy_core::sse::SseDecoder;
 use futures::StreamExt;
 use futures::stream;
+use proxenos_core::responses::ResponsesRequest;
+use proxenos_core::sse::SseDecoder;
 use std::sync::Arc;
 
 /// The identity this proxy presents upstream.

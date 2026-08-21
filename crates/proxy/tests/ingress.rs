@@ -7,11 +7,11 @@
 
 mod replay;
 
-use codex_cc_proxy::ingress::AppState;
-use codex_cc_proxy::ingress::ModelMapping;
-use codex_cc_proxy::ingress::router;
-use codex_cc_proxy::upstream::http::HttpTransport;
 use pretty_assertions::assert_eq;
+use proxenos::ingress::AppState;
+use proxenos::ingress::ModelMapping;
+use proxenos::ingress::router;
+use proxenos::upstream::http::HttpTransport;
 use replay::Behavior;
 use replay::ReplayServer;
 use serde_json::Value;
@@ -24,9 +24,9 @@ struct Harness {
     client: reqwest::Client,
     /// The same switches the control socket holds, so a test can turn capture
     /// on the way `record.start` does.
-    switches: Arc<codex_cc_proxy::recorder::Switches>,
+    switches: Arc<proxenos::recorder::Switches>,
     /// The same store the control socket answers `usage` from.
-    usage: Arc<codex_cc_proxy::usage::UsageStore>,
+    usage: Arc<proxenos::usage::UsageStore>,
 }
 
 impl Harness {
@@ -36,41 +36,39 @@ impl Harness {
 
     async fn start_with(
         behavior: Behavior,
-        recorder: Option<codex_cc_proxy::recorder::Recorder>,
+        recorder: Option<proxenos::recorder::Recorder>,
     ) -> Self {
         // A recorder passed here means the test wants ingress capture on from
         // the start, which is what `record ingress` does.
-        let mode = recorder
-            .as_ref()
-            .map(|_| codex_cc_proxy::recorder::Mode::Ingress);
+        let mode = recorder.as_ref().map(|_| proxenos::recorder::Mode::Ingress);
         Self::build(behavior, recorder, mode).await
     }
 
     /// Capture upstream as well, which is what `record upstream` turns on.
     async fn start_recording_upstream(
         behavior: Behavior,
-        recorder: codex_cc_proxy::recorder::Recorder,
+        recorder: proxenos::recorder::Recorder,
     ) -> Self {
         Self::build(
             behavior,
             Some(recorder),
-            Some(codex_cc_proxy::recorder::Mode::Upstream),
+            Some(proxenos::recorder::Mode::Upstream),
         )
         .await
     }
 
     async fn build(
         behavior: Behavior,
-        recorder: Option<codex_cc_proxy::recorder::Recorder>,
-        mode: Option<codex_cc_proxy::recorder::Mode>,
+        recorder: Option<proxenos::recorder::Recorder>,
+        mode: Option<proxenos::recorder::Mode>,
     ) -> Self {
         let upstream = ReplayServer::start(behavior).await;
-        let switches = Arc::new(codex_cc_proxy::recorder::Switches::new(mode));
-        let usage = Arc::new(codex_cc_proxy::usage::UsageStore::default());
+        let switches = Arc::new(proxenos::recorder::Switches::new(mode));
+        let usage = Arc::new(proxenos::usage::UsageStore::default());
 
         let state = AppState {
-            policy: Arc::new(codex_cc_proxy::policy::Policy::new(
-                codex_cc_proxy::policy::Snapshot::routing_only(
+            policy: Arc::new(proxenos::policy::Policy::new(
+                proxenos::policy::Snapshot::routing_only(
                     vec![ModelMapping {
                         requested: "claude-sonnet-5".to_owned(),
                         upstream: "gpt-5.6-terra".to_owned(),
@@ -78,20 +76,20 @@ impl Harness {
                     None,
                 ),
             )),
-            catalog: Arc::new(codex_cc_proxy::catalog::CatalogSource::fixed(
-                codex_cc_proxy::catalog::Catalog::fallback(),
+            catalog: Arc::new(proxenos::catalog::CatalogSource::fixed(
+                proxenos::catalog::Catalog::fallback(),
             )),
             transport: Arc::new(HttpTransport::new(upstream.url.clone())),
             conduits: None,
             recorder: recorder.clone(),
             capture: Arc::clone(&switches),
             usage: Arc::clone(&usage),
-            instructions: Arc::new(codex_cc_proxy::config::InstructionsConfig {
+            instructions: Arc::new(proxenos::config::InstructionsConfig {
                 identity: false,
                 append: None,
                 working_budget: false,
             }),
-            sessions: Arc::new(codex_cc_proxy::session::SessionStore::new()),
+            sessions: Arc::new(proxenos::session::SessionStore::new()),
         };
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -654,7 +652,7 @@ async fn a_stream_read_to_completion_does_reach_the_end_upstream() {
 #[tokio::test]
 async fn an_empty_stream_is_recorded() {
     let dir = tempfile::tempdir().unwrap();
-    let recorder = codex_cc_proxy::recorder::Recorder::new(dir.path());
+    let recorder = proxenos::recorder::Recorder::new(dir.path());
 
     let harness = Harness::start_with(
         Behavior::Events(vec![
@@ -708,7 +706,7 @@ async fn an_empty_stream_is_recorded() {
 #[tokio::test]
 async fn a_stream_that_produced_content_is_not_recorded() {
     let dir = tempfile::tempdir().unwrap();
-    let recorder = codex_cc_proxy::recorder::Recorder::new(dir.path());
+    let recorder = proxenos::recorder::Recorder::new(dir.path());
 
     let harness = Harness::start_with(
         Behavior::Events(vec![
@@ -753,7 +751,7 @@ async fn a_stream_that_produced_content_is_not_recorded() {
 #[tokio::test]
 async fn upstream_capture_records_a_turn_that_produced_content() {
     let dir = tempfile::tempdir().unwrap();
-    let recorder = codex_cc_proxy::recorder::Recorder::new(dir.path());
+    let recorder = proxenos::recorder::Recorder::new(dir.path());
 
     let harness = Harness::start_recording_upstream(
         Behavior::Events(vec![
@@ -853,8 +851,8 @@ async fn the_configured_instructions_reach_the_backend() {
     .await;
 
     let state = AppState {
-        policy: Arc::new(codex_cc_proxy::policy::Policy::new(
-            codex_cc_proxy::policy::Snapshot::routing_only(
+        policy: Arc::new(proxenos::policy::Policy::new(
+            proxenos::policy::Snapshot::routing_only(
                 vec![ModelMapping {
                     requested: "claude-sonnet-5".to_owned(),
                     upstream: "gpt-5.6-terra".to_owned(),
@@ -862,22 +860,22 @@ async fn the_configured_instructions_reach_the_backend() {
                 None,
             ),
         )),
-        catalog: Arc::new(codex_cc_proxy::catalog::CatalogSource::fixed(
-            codex_cc_proxy::catalog::Catalog::fallback(),
+        catalog: Arc::new(proxenos::catalog::CatalogSource::fixed(
+            proxenos::catalog::Catalog::fallback(),
         )),
         transport: Arc::new(HttpTransport::new(upstream.url.clone())),
         conduits: None,
         recorder: None,
-        capture: Arc::new(codex_cc_proxy::recorder::Switches::default()),
-        usage: Arc::new(codex_cc_proxy::usage::UsageStore::default()),
-        instructions: Arc::new(codex_cc_proxy::config::InstructionsConfig {
+        capture: Arc::new(proxenos::recorder::Switches::default()),
+        usage: Arc::new(proxenos::usage::UsageStore::default()),
+        instructions: Arc::new(proxenos::config::InstructionsConfig {
             identity: true,
             append: Some("  Answer briefly.  ".to_owned()),
             // This test asserts the exact instructions string, so the budget is
             // off — its own placement is covered in the core translation tests.
             working_budget: false,
         }),
-        sessions: Arc::new(codex_cc_proxy::session::SessionStore::new()),
+        sessions: Arc::new(proxenos::session::SessionStore::new()),
     };
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -931,8 +929,8 @@ async fn the_working_budget_reaches_upstream_on_a_default_configuration() {
     ]))
     .await;
     let state = AppState {
-        policy: Arc::new(codex_cc_proxy::policy::Policy::new(
-            codex_cc_proxy::policy::Snapshot::routing_only(
+        policy: Arc::new(proxenos::policy::Policy::new(
+            proxenos::policy::Snapshot::routing_only(
                 vec![ModelMapping {
                     requested: "claude-sonnet-5".to_owned(),
                     upstream: "gpt-5.6-terra".to_owned(),
@@ -940,17 +938,17 @@ async fn the_working_budget_reaches_upstream_on_a_default_configuration() {
                 None,
             ),
         )),
-        catalog: Arc::new(codex_cc_proxy::catalog::CatalogSource::fixed(
-            codex_cc_proxy::catalog::Catalog::fallback(),
+        catalog: Arc::new(proxenos::catalog::CatalogSource::fixed(
+            proxenos::catalog::Catalog::fallback(),
         )),
         transport: Arc::new(HttpTransport::new(upstream.url.clone())),
         conduits: None,
         recorder: None,
-        capture: Arc::new(codex_cc_proxy::recorder::Switches::default()),
-        usage: Arc::new(codex_cc_proxy::usage::UsageStore::default()),
+        capture: Arc::new(proxenos::recorder::Switches::default()),
+        usage: Arc::new(proxenos::usage::UsageStore::default()),
         // The shipped default, not a hand-built one.
-        instructions: Arc::new(codex_cc_proxy::config::InstructionsConfig::default()),
-        sessions: Arc::new(codex_cc_proxy::session::SessionStore::new()),
+        instructions: Arc::new(proxenos::config::InstructionsConfig::default()),
+        sessions: Arc::new(proxenos::session::SessionStore::new()),
     };
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -995,7 +993,7 @@ async fn the_working_budget_reaches_upstream_on_a_default_configuration() {
 #[tokio::test]
 async fn capture_can_be_switched_on_while_the_daemon_runs() {
     let dir = tempfile::tempdir().unwrap();
-    let recorder = codex_cc_proxy::recorder::Recorder::new(dir.path());
+    let recorder = proxenos::recorder::Recorder::new(dir.path());
 
     let harness = Harness::build(
         Behavior::Events(vec![
@@ -1025,9 +1023,7 @@ async fn capture_can_be_switched_on_while_the_daemon_runs() {
     ask().await;
     assert_eq!(captures(dir.path(), "ingress-"), 0, "nothing asked for yet");
 
-    harness
-        .switches
-        .start(codex_cc_proxy::recorder::Mode::Ingress);
+    harness.switches.start(proxenos::recorder::Mode::Ingress);
     ask().await;
     assert_eq!(
         captures(dir.path(), "ingress-"),
@@ -1062,7 +1058,7 @@ fn captures(dir: &std::path::Path, prefix: &str) -> usize {
 #[tokio::test]
 async fn ingress_capture_records_the_untranslated_request() {
     let dir = tempfile::tempdir().unwrap();
-    let recorder = codex_cc_proxy::recorder::Recorder::new(dir.path());
+    let recorder = proxenos::recorder::Recorder::new(dir.path());
 
     let harness = Harness::start_with(
         Behavior::Events(vec![
@@ -1117,7 +1113,7 @@ async fn ingress_capture_records_the_untranslated_request() {
 #[tokio::test]
 async fn a_capture_parses_as_a_corpus_fixture() {
     let dir = tempfile::tempdir().unwrap();
-    let recorder = codex_cc_proxy::recorder::Recorder::new(dir.path());
+    let recorder = proxenos::recorder::Recorder::new(dir.path());
 
     let harness = Harness::start_with(
         Behavior::Events(vec![
@@ -1149,12 +1145,12 @@ async fn a_capture_parses_as_a_corpus_fixture() {
         .expect("something should have been captured");
 
     let raw = std::fs::read_to_string(&capture).unwrap();
-    let fixture: codex_cc_proxy_core::fixture::Fixture =
+    let fixture: proxenos_core::fixture::Fixture =
         serde_json::from_str(&raw).expect("a capture should parse as a fixture");
 
     assert_eq!(
         fixture.provenance,
-        codex_cc_proxy_core::fixture::Provenance::Captured
+        proxenos_core::fixture::Provenance::Captured
     );
     assert!(!fixture.note.is_empty());
 }
@@ -1395,8 +1391,8 @@ async fn ingress_sends_through_a_conduit_and_uploads_incrementally() {
     .await;
 
     let endpoint = upstream.url.clone();
-    let conduits: codex_cc_proxy::ingress::ConduitFactory = Arc::new(move |session_id| {
-        Arc::new(codex_cc_proxy::upstream::conduit::Conduit::new(
+    let conduits: proxenos::ingress::ConduitFactory = Arc::new(move |session_id| {
+        Arc::new(proxenos::upstream::conduit::Conduit::new(
             Arc::new(HttpTransport::new(endpoint.clone())),
             // No WebSocket here: this asserts the conduit is *used*, and HTTP
             // is the transport a replay server can answer.
@@ -1406,8 +1402,8 @@ async fn ingress_sends_through_a_conduit_and_uploads_incrementally() {
     });
 
     let state = AppState {
-        policy: Arc::new(codex_cc_proxy::policy::Policy::new(
-            codex_cc_proxy::policy::Snapshot::routing_only(
+        policy: Arc::new(proxenos::policy::Policy::new(
+            proxenos::policy::Snapshot::routing_only(
                 vec![ModelMapping {
                     requested: "claude-sonnet-5".to_owned(),
                     upstream: "gpt-5.6-terra".to_owned(),
@@ -1415,20 +1411,20 @@ async fn ingress_sends_through_a_conduit_and_uploads_incrementally() {
                 None,
             ),
         )),
-        catalog: Arc::new(codex_cc_proxy::catalog::CatalogSource::fixed(
-            codex_cc_proxy::catalog::Catalog::fallback(),
+        catalog: Arc::new(proxenos::catalog::CatalogSource::fixed(
+            proxenos::catalog::Catalog::fallback(),
         )),
         transport: Arc::new(HttpTransport::new(upstream.url.clone())),
         conduits: Some(conduits),
         recorder: None,
-        capture: Arc::new(codex_cc_proxy::recorder::Switches::default()),
-        usage: Arc::new(codex_cc_proxy::usage::UsageStore::default()),
-        instructions: Arc::new(codex_cc_proxy::config::InstructionsConfig {
+        capture: Arc::new(proxenos::recorder::Switches::default()),
+        usage: Arc::new(proxenos::usage::UsageStore::default()),
+        instructions: Arc::new(proxenos::config::InstructionsConfig {
             identity: false,
             append: None,
             working_budget: false,
         }),
-        sessions: Arc::new(codex_cc_proxy::session::SessionStore::new()),
+        sessions: Arc::new(proxenos::session::SessionStore::new()),
     };
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -1518,13 +1514,13 @@ async fn a_second_turn_uploads_the_new_items_and_not_nothing() {
     let ws = replay::WsReplay::start(events).await;
     let socket = ws.url.clone();
 
-    let conduits: codex_cc_proxy::ingress::ConduitFactory = Arc::new(move |session_id| {
-        Arc::new(codex_cc_proxy::upstream::conduit::Conduit::new(
+    let conduits: proxenos::ingress::ConduitFactory = Arc::new(move |session_id| {
+        Arc::new(proxenos::upstream::conduit::Conduit::new(
             // Unreachable on purpose: a fallback here would hide the failure
             // this test exists to catch.
             Arc::new(HttpTransport::new("http://127.0.0.1:1/unused")),
             Some(Arc::new(
-                codex_cc_proxy::upstream::websocket::WebSocketTransport::new(socket.clone())
+                proxenos::upstream::websocket::WebSocketTransport::new(socket.clone())
                     .with_compression(false),
             )),
             session_id,
@@ -1532,8 +1528,8 @@ async fn a_second_turn_uploads_the_new_items_and_not_nothing() {
     });
 
     let state = AppState {
-        policy: Arc::new(codex_cc_proxy::policy::Policy::new(
-            codex_cc_proxy::policy::Snapshot::routing_only(
+        policy: Arc::new(proxenos::policy::Policy::new(
+            proxenos::policy::Snapshot::routing_only(
                 vec![ModelMapping {
                     requested: "claude-sonnet-5".to_owned(),
                     upstream: "gpt-5.6-terra".to_owned(),
@@ -1541,20 +1537,20 @@ async fn a_second_turn_uploads_the_new_items_and_not_nothing() {
                 None,
             ),
         )),
-        catalog: Arc::new(codex_cc_proxy::catalog::CatalogSource::fixed(
-            codex_cc_proxy::catalog::Catalog::fallback(),
+        catalog: Arc::new(proxenos::catalog::CatalogSource::fixed(
+            proxenos::catalog::Catalog::fallback(),
         )),
         transport: Arc::new(HttpTransport::new("http://127.0.0.1:1/unused")),
         conduits: Some(conduits),
         recorder: None,
-        capture: Arc::new(codex_cc_proxy::recorder::Switches::default()),
-        usage: Arc::new(codex_cc_proxy::usage::UsageStore::default()),
-        instructions: Arc::new(codex_cc_proxy::config::InstructionsConfig {
+        capture: Arc::new(proxenos::recorder::Switches::default()),
+        usage: Arc::new(proxenos::usage::UsageStore::default()),
+        instructions: Arc::new(proxenos::config::InstructionsConfig {
             identity: false,
             append: None,
             working_budget: false,
         }),
-        sessions: Arc::new(codex_cc_proxy::session::SessionStore::new()),
+        sessions: Arc::new(proxenos::session::SessionStore::new()),
     };
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -1626,12 +1622,12 @@ async fn a_second_turn_uploads_the_new_items_and_not_nothing() {
 ///401s, and no test that uses a credential-free replay server would notice.
 #[tokio::test]
 async fn upstream_requests_carry_the_access_token() {
-    use codex_cc_proxy::auth::store::CredentialStore;
+    use proxenos::auth::store::CredentialStore;
 
     let dir = tempfile::tempdir().unwrap();
-    let store = codex_cc_proxy::auth::store::FileStore::new(dir.path().join("credentials.json"));
+    let store = proxenos::auth::store::FileStore::new(dir.path().join("credentials.json"));
     store
-        .save(&codex_cc_proxy::auth::store::Credentials {
+        .save(&proxenos::auth::store::Credentials {
             access_token: "token-abc".to_owned(),
             refresh_token: "r".to_owned(),
             id_token: None,
@@ -1647,22 +1643,21 @@ async fn upstream_requests_carry_the_access_token() {
     ]))
     .await;
 
-    let tokens = Arc::new(codex_cc_proxy::auth::tokens::TokenSource::new(
+    let tokens = Arc::new(proxenos::auth::tokens::TokenSource::new(
         Arc::new(store) as Arc<dyn CredentialStore>,
         "http://127.0.0.1:1/unused".to_owned(),
         "client",
-        Arc::new(codex_cc_proxy::auth::tokens::SystemClock),
+        Arc::new(proxenos::auth::tokens::SystemClock),
     ));
 
-    let transport = HttpTransport::new(upstream.url.clone()).with_credentials(
-        Arc::clone(&tokens) as Arc<dyn codex_cc_proxy::auth::authorize::Authorizer>
-    );
+    let transport = HttpTransport::new(upstream.url.clone())
+        .with_credentials(Arc::clone(&tokens) as Arc<dyn proxenos::auth::authorize::Authorizer>);
 
-    let request = codex_cc_proxy_core::responses::ResponsesRequest {
+    let request = proxenos_core::responses::ResponsesRequest {
         model: "gpt-5.6-terra".to_owned(),
         ..Default::default()
     };
-    let _ = codex_cc_proxy::upstream::Transport::stream(&transport, &request, None)
+    let _ = proxenos::upstream::Transport::stream(&transport, &request, None)
         .await
         .expect("the request should reach the replay server");
 
@@ -1712,11 +1707,11 @@ async fn a_reasoning_turn_does_not_end_the_session() {
     let ws = replay::WsReplay::start(events).await;
     let socket = ws.url.clone();
 
-    let conduits: codex_cc_proxy::ingress::ConduitFactory = Arc::new(move |session_id| {
-        Arc::new(codex_cc_proxy::upstream::conduit::Conduit::new(
+    let conduits: proxenos::ingress::ConduitFactory = Arc::new(move |session_id| {
+        Arc::new(proxenos::upstream::conduit::Conduit::new(
             Arc::new(HttpTransport::new("http://127.0.0.1:1/unused")),
             Some(Arc::new(
-                codex_cc_proxy::upstream::websocket::WebSocketTransport::new(socket.clone())
+                proxenos::upstream::websocket::WebSocketTransport::new(socket.clone())
                     .with_compression(false),
             )),
             session_id,
@@ -1724,8 +1719,8 @@ async fn a_reasoning_turn_does_not_end_the_session() {
     });
 
     let state = AppState {
-        policy: Arc::new(codex_cc_proxy::policy::Policy::new(
-            codex_cc_proxy::policy::Snapshot::routing_only(
+        policy: Arc::new(proxenos::policy::Policy::new(
+            proxenos::policy::Snapshot::routing_only(
                 vec![ModelMapping {
                     requested: "claude-sonnet-5".to_owned(),
                     upstream: "gpt-5.6-terra".to_owned(),
@@ -1733,20 +1728,20 @@ async fn a_reasoning_turn_does_not_end_the_session() {
                 None,
             ),
         )),
-        catalog: Arc::new(codex_cc_proxy::catalog::CatalogSource::fixed(
-            codex_cc_proxy::catalog::Catalog::fallback(),
+        catalog: Arc::new(proxenos::catalog::CatalogSource::fixed(
+            proxenos::catalog::Catalog::fallback(),
         )),
         transport: Arc::new(HttpTransport::new("http://127.0.0.1:1/unused")),
         conduits: Some(conduits),
         recorder: None,
-        capture: Arc::new(codex_cc_proxy::recorder::Switches::default()),
-        usage: Arc::new(codex_cc_proxy::usage::UsageStore::default()),
-        instructions: Arc::new(codex_cc_proxy::config::InstructionsConfig {
+        capture: Arc::new(proxenos::recorder::Switches::default()),
+        usage: Arc::new(proxenos::usage::UsageStore::default()),
+        instructions: Arc::new(proxenos::config::InstructionsConfig {
             identity: false,
             append: None,
             working_budget: false,
         }),
-        sessions: Arc::new(codex_cc_proxy::session::SessionStore::new()),
+        sessions: Arc::new(proxenos::session::SessionStore::new()),
     };
     let sessions = Arc::clone(&state.sessions);
 
@@ -1834,13 +1829,13 @@ async fn a_failed_turn_does_not_advance_the_baseline() {
     let ws = replay::WsReplay::start(events).await;
     let socket = ws.url.clone();
 
-    let conduits: codex_cc_proxy::ingress::ConduitFactory = Arc::new(move |session_id| {
-        Arc::new(codex_cc_proxy::upstream::conduit::Conduit::new(
+    let conduits: proxenos::ingress::ConduitFactory = Arc::new(move |session_id| {
+        Arc::new(proxenos::upstream::conduit::Conduit::new(
             // Unreachable, so a failing socket fails the turn rather than
             // quietly succeeding over HTTP.
             Arc::new(HttpTransport::new("http://127.0.0.1:1/unused")),
             Some(Arc::new(
-                codex_cc_proxy::upstream::websocket::WebSocketTransport::new(socket.clone())
+                proxenos::upstream::websocket::WebSocketTransport::new(socket.clone())
                     .with_compression(false),
             )),
             session_id,
@@ -1848,8 +1843,8 @@ async fn a_failed_turn_does_not_advance_the_baseline() {
     });
 
     let state = AppState {
-        policy: Arc::new(codex_cc_proxy::policy::Policy::new(
-            codex_cc_proxy::policy::Snapshot::routing_only(
+        policy: Arc::new(proxenos::policy::Policy::new(
+            proxenos::policy::Snapshot::routing_only(
                 vec![ModelMapping {
                     requested: "claude-sonnet-5".to_owned(),
                     upstream: "gpt-5.6-terra".to_owned(),
@@ -1857,20 +1852,20 @@ async fn a_failed_turn_does_not_advance_the_baseline() {
                 None,
             ),
         )),
-        catalog: Arc::new(codex_cc_proxy::catalog::CatalogSource::fixed(
-            codex_cc_proxy::catalog::Catalog::fallback(),
+        catalog: Arc::new(proxenos::catalog::CatalogSource::fixed(
+            proxenos::catalog::Catalog::fallback(),
         )),
         transport: Arc::new(HttpTransport::new("http://127.0.0.1:1/unused")),
         conduits: Some(conduits),
         recorder: None,
-        capture: Arc::new(codex_cc_proxy::recorder::Switches::default()),
-        usage: Arc::new(codex_cc_proxy::usage::UsageStore::default()),
-        instructions: Arc::new(codex_cc_proxy::config::InstructionsConfig {
+        capture: Arc::new(proxenos::recorder::Switches::default()),
+        usage: Arc::new(proxenos::usage::UsageStore::default()),
+        instructions: Arc::new(proxenos::config::InstructionsConfig {
             identity: false,
             append: None,
             working_budget: false,
         }),
-        sessions: Arc::new(codex_cc_proxy::session::SessionStore::new()),
+        sessions: Arc::new(proxenos::session::SessionStore::new()),
     };
     let sessions = Arc::clone(&state.sessions);
 
@@ -1934,12 +1929,12 @@ async fn a_failed_turn_does_not_advance_the_baseline() {
 }
 
 /// Translate a Messages body the way ingress does when identifying a session.
-fn input_of(body: &Value) -> Vec<codex_cc_proxy_core::responses::InputItem> {
-    let request: codex_cc_proxy_core::anthropic::MessagesRequest =
+fn input_of(body: &Value) -> Vec<proxenos_core::responses::InputItem> {
+    let request: proxenos_core::anthropic::MessagesRequest =
         serde_json::from_value(body.clone()).unwrap();
-    codex_cc_proxy_core::translate::translate_request(
+    proxenos_core::translate::translate_request(
         &request,
-        &codex_cc_proxy_core::translate::TranslateOptions::default(),
+        &proxenos_core::translate::TranslateOptions::default(),
     )
     .input
 }
@@ -1952,7 +1947,7 @@ fn input_of(body: &Value) -> Vec<codex_cc_proxy_core::responses::InputItem> {
 /// says about a request it could not read — and the client cannot act on that.
 #[tokio::test]
 async fn a_request_larger_than_the_window_is_refused() {
-    let catalog = codex_cc_proxy::catalog::Catalog::parse(
+    let catalog = proxenos::catalog::Catalog::parse(
         r#"{"models":[{"slug":"gpt-5.6-terra","context_window":1000}]}"#,
         95.0,
     )
@@ -1960,8 +1955,8 @@ async fn a_request_larger_than_the_window_is_refused() {
 
     let upstream = ReplayServer::start(Behavior::Events(Vec::new())).await;
     let state = AppState {
-        policy: Arc::new(codex_cc_proxy::policy::Policy::new(
-            codex_cc_proxy::policy::Snapshot::routing_only(
+        policy: Arc::new(proxenos::policy::Policy::new(
+            proxenos::policy::Snapshot::routing_only(
                 vec![ModelMapping {
                     requested: "claude-sonnet-5".to_owned(),
                     upstream: "gpt-5.6-terra".to_owned(),
@@ -1969,18 +1964,18 @@ async fn a_request_larger_than_the_window_is_refused() {
                 None,
             ),
         )),
-        catalog: Arc::new(codex_cc_proxy::catalog::CatalogSource::fixed(catalog)),
+        catalog: Arc::new(proxenos::catalog::CatalogSource::fixed(catalog)),
         transport: Arc::new(HttpTransport::new(upstream.url.clone())),
         conduits: None,
         recorder: None,
-        capture: Arc::new(codex_cc_proxy::recorder::Switches::default()),
-        usage: Arc::new(codex_cc_proxy::usage::UsageStore::default()),
-        instructions: Arc::new(codex_cc_proxy::config::InstructionsConfig {
+        capture: Arc::new(proxenos::recorder::Switches::default()),
+        usage: Arc::new(proxenos::usage::UsageStore::default()),
+        instructions: Arc::new(proxenos::config::InstructionsConfig {
             identity: false,
             append: None,
             working_budget: false,
         }),
-        sessions: Arc::new(codex_cc_proxy::session::SessionStore::new()),
+        sessions: Arc::new(proxenos::session::SessionStore::new()),
     };
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -2032,8 +2027,8 @@ async fn an_unknown_window_does_not_refuse_anything() {
     .await;
 
     let state = AppState {
-        policy: Arc::new(codex_cc_proxy::policy::Policy::new(
-            codex_cc_proxy::policy::Snapshot::routing_only(
+        policy: Arc::new(proxenos::policy::Policy::new(
+            proxenos::policy::Snapshot::routing_only(
                 vec![ModelMapping {
                     requested: "claude-sonnet-5".to_owned(),
                     upstream: "gpt-5.6-terra".to_owned(),
@@ -2042,20 +2037,20 @@ async fn an_unknown_window_does_not_refuse_anything() {
             ),
         )),
         // The fallback list carries ids only, and no windows at all.
-        catalog: Arc::new(codex_cc_proxy::catalog::CatalogSource::fixed(
-            codex_cc_proxy::catalog::Catalog::fallback(),
+        catalog: Arc::new(proxenos::catalog::CatalogSource::fixed(
+            proxenos::catalog::Catalog::fallback(),
         )),
         transport: Arc::new(HttpTransport::new(upstream.url.clone())),
         conduits: None,
         recorder: None,
-        capture: Arc::new(codex_cc_proxy::recorder::Switches::default()),
-        usage: Arc::new(codex_cc_proxy::usage::UsageStore::default()),
-        instructions: Arc::new(codex_cc_proxy::config::InstructionsConfig {
+        capture: Arc::new(proxenos::recorder::Switches::default()),
+        usage: Arc::new(proxenos::usage::UsageStore::default()),
+        instructions: Arc::new(proxenos::config::InstructionsConfig {
             identity: false,
             append: None,
             working_budget: false,
         }),
-        sessions: Arc::new(codex_cc_proxy::session::SessionStore::new()),
+        sessions: Arc::new(proxenos::session::SessionStore::new()),
     };
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -2086,7 +2081,7 @@ async fn an_unknown_window_does_not_refuse_anything() {
 /// could not have anticipated or fixed.
 #[tokio::test]
 async fn effort_is_capped_by_what_the_model_supports() {
-    let catalog = codex_cc_proxy::catalog::Catalog::parse(
+    let catalog = proxenos::catalog::Catalog::parse(
         r#"{"models":[{
             "slug": "modest-model",
             "context_window": 272000,
@@ -2108,8 +2103,8 @@ async fn effort_is_capped_by_what_the_model_supports() {
 
     let state = AppState {
         // No operator ceiling: the model's own limit is the only one.
-        policy: Arc::new(codex_cc_proxy::policy::Policy::new(
-            codex_cc_proxy::policy::Snapshot::routing_only(
+        policy: Arc::new(proxenos::policy::Policy::new(
+            proxenos::policy::Snapshot::routing_only(
                 vec![ModelMapping {
                     requested: "sonnet".to_owned(),
                     upstream: "modest-model".to_owned(),
@@ -2117,18 +2112,18 @@ async fn effort_is_capped_by_what_the_model_supports() {
                 None,
             ),
         )),
-        catalog: Arc::new(codex_cc_proxy::catalog::CatalogSource::fixed(catalog)),
+        catalog: Arc::new(proxenos::catalog::CatalogSource::fixed(catalog)),
         transport: Arc::new(HttpTransport::new(upstream.url.clone())),
         conduits: None,
         recorder: None,
-        capture: Arc::new(codex_cc_proxy::recorder::Switches::default()),
-        usage: Arc::new(codex_cc_proxy::usage::UsageStore::default()),
-        instructions: Arc::new(codex_cc_proxy::config::InstructionsConfig {
+        capture: Arc::new(proxenos::recorder::Switches::default()),
+        usage: Arc::new(proxenos::usage::UsageStore::default()),
+        instructions: Arc::new(proxenos::config::InstructionsConfig {
             identity: false,
             append: None,
             working_budget: false,
         }),
-        sessions: Arc::new(codex_cc_proxy::session::SessionStore::new()),
+        sessions: Arc::new(proxenos::session::SessionStore::new()),
     };
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -2172,8 +2167,8 @@ async fn an_unlisted_model_does_not_cap_effort() {
     .await;
 
     let state = AppState {
-        policy: Arc::new(codex_cc_proxy::policy::Policy::new(
-            codex_cc_proxy::policy::Snapshot::routing_only(
+        policy: Arc::new(proxenos::policy::Policy::new(
+            proxenos::policy::Snapshot::routing_only(
                 vec![ModelMapping {
                     requested: "sonnet".to_owned(),
                     upstream: "gpt-5.6-terra".to_owned(),
@@ -2181,20 +2176,20 @@ async fn an_unlisted_model_does_not_cap_effort() {
                 None,
             ),
         )),
-        catalog: Arc::new(codex_cc_proxy::catalog::CatalogSource::fixed(
-            codex_cc_proxy::catalog::Catalog::fallback(),
+        catalog: Arc::new(proxenos::catalog::CatalogSource::fixed(
+            proxenos::catalog::Catalog::fallback(),
         )),
         transport: Arc::new(HttpTransport::new(upstream.url.clone())),
         conduits: None,
         recorder: None,
-        capture: Arc::new(codex_cc_proxy::recorder::Switches::default()),
-        usage: Arc::new(codex_cc_proxy::usage::UsageStore::default()),
-        instructions: Arc::new(codex_cc_proxy::config::InstructionsConfig {
+        capture: Arc::new(proxenos::recorder::Switches::default()),
+        usage: Arc::new(proxenos::usage::UsageStore::default()),
+        instructions: Arc::new(proxenos::config::InstructionsConfig {
             identity: false,
             append: None,
             working_budget: false,
         }),
-        sessions: Arc::new(codex_cc_proxy::session::SessionStore::new()),
+        sessions: Arc::new(proxenos::session::SessionStore::new()),
     };
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -2317,13 +2312,13 @@ async fn a_large_body_is_compressed_and_announced() {
 
     let transport = HttpTransport::new(upstream.url.clone()).with_compression(true);
 
-    let request = codex_cc_proxy_core::responses::ResponsesRequest {
+    let request = proxenos_core::responses::ResponsesRequest {
         model: "gpt-5.6-terra".to_owned(),
         instructions: Some("consideration ".repeat(200)),
         ..Default::default()
     };
 
-    let _ = codex_cc_proxy::upstream::Transport::stream(&transport, &request, None)
+    let _ = proxenos::upstream::Transport::stream(&transport, &request, None)
         .await
         .expect("the replay server should accept it");
 
@@ -2351,12 +2346,12 @@ async fn a_small_body_is_not_compressed() {
     .await;
 
     let transport = HttpTransport::new(upstream.url.clone()).with_compression(true);
-    let request = codex_cc_proxy_core::responses::ResponsesRequest {
+    let request = proxenos_core::responses::ResponsesRequest {
         model: "gpt-5.6-terra".to_owned(),
         ..Default::default()
     };
 
-    let _ = codex_cc_proxy::upstream::Transport::stream(&transport, &request, None)
+    let _ = proxenos::upstream::Transport::stream(&transport, &request, None)
         .await
         .unwrap();
 
@@ -2376,13 +2371,13 @@ async fn captures_are_private_and_bounded() {
     use std::os::unix::fs::PermissionsExt;
 
     let dir = tempfile::tempdir().unwrap();
-    let recorder = codex_cc_proxy::recorder::Recorder::new(dir.path().join("captures"));
+    let recorder = proxenos::recorder::Recorder::new(dir.path().join("captures"));
 
     let request = json!({ "model": "m", "messages": [{ "role": "user", "content": "secret" }] });
 
     let first = recorder
         .record(
-            codex_cc_proxy::recorder::Mode::Upstream,
+            proxenos::recorder::Mode::Upstream,
             &request,
             Vec::new(),
             "a note long enough to be meaningful for the corpus loader",
@@ -2409,7 +2404,7 @@ async fn captures_are_private_and_bounded() {
     // A repeating failure must not fill a disk.
     for _ in 0..40 {
         recorder.record(
-            codex_cc_proxy::recorder::Mode::Upstream,
+            proxenos::recorder::Mode::Upstream,
             &request,
             Vec::new(),
             "a note long enough to be meaningful for the corpus loader",
@@ -2439,7 +2434,7 @@ async fn captures_are_private_and_bounded() {
 /// conversation has ended, so idleness is the only signal there is.
 #[test]
 fn an_idle_conversation_is_forgotten() {
-    use codex_cc_proxy::session::SessionStore;
+    use proxenos::session::SessionStore;
 
     let store = SessionStore::new();
     let input = input_of(&json!({
@@ -2470,7 +2465,7 @@ fn an_idle_conversation_is_forgotten() {
 /// An active conversation is never dropped for being idle.
 #[test]
 fn an_active_conversation_survives_the_sweep() {
-    use codex_cc_proxy::session::SessionStore;
+    use proxenos::session::SessionStore;
 
     let store = SessionStore::new();
     let input = input_of(&json!({
@@ -2511,8 +2506,8 @@ async fn every_turn_of_a_conversation_carries_one_session_id() {
     .await;
 
     let state = AppState {
-        policy: Arc::new(codex_cc_proxy::policy::Policy::new(
-            codex_cc_proxy::policy::Snapshot::routing_only(
+        policy: Arc::new(proxenos::policy::Policy::new(
+            proxenos::policy::Snapshot::routing_only(
                 vec![ModelMapping {
                     requested: "claude-sonnet-5".to_owned(),
                     upstream: "gpt-5.6-terra".to_owned(),
@@ -2520,16 +2515,16 @@ async fn every_turn_of_a_conversation_carries_one_session_id() {
                 None,
             ),
         )),
-        catalog: Arc::new(codex_cc_proxy::catalog::CatalogSource::fixed(
-            codex_cc_proxy::catalog::Catalog::fallback(),
+        catalog: Arc::new(proxenos::catalog::CatalogSource::fixed(
+            proxenos::catalog::Catalog::fallback(),
         )),
         transport: Arc::new(HttpTransport::new(upstream.url.clone())),
         conduits: None,
         recorder: None,
-        capture: Arc::new(codex_cc_proxy::recorder::Switches::default()),
-        usage: Arc::new(codex_cc_proxy::usage::UsageStore::default()),
-        instructions: Arc::new(codex_cc_proxy::config::InstructionsConfig::default()),
-        sessions: Arc::new(codex_cc_proxy::session::SessionStore::new()),
+        capture: Arc::new(proxenos::recorder::Switches::default()),
+        usage: Arc::new(proxenos::usage::UsageStore::default()),
+        instructions: Arc::new(proxenos::config::InstructionsConfig::default()),
+        sessions: Arc::new(proxenos::session::SessionStore::new()),
     };
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

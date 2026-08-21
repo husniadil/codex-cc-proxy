@@ -5,8 +5,8 @@
 // here is an assertion.
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::indexing_slicing)]
 
-use codex_cc_proxy_core::sse::SseDecoder;
 use pretty_assertions::assert_eq;
+use proxenos_core::sse::SseDecoder;
 
 /// Feed the whole input as one chunk and collect every payload.
 fn decode(input: &str) -> Vec<String> {

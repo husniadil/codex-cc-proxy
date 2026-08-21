@@ -1,4 +1,4 @@
-# codex-cc-proxy
+# proxenos
 
 Claude Code, running on OpenAI models served through a ChatGPT subscription,
 without modifying Claude Code. An Anthropic Messages API on the front, the
@@ -126,7 +126,7 @@ transport ─── WebSocket (primary) │ HTTP + SSE (fallback)
 auth ──────── OAuth lifecycle, CredentialStore
 ```
 
-`codex-cc-proxy-core` holds the middle layer and nothing else: no sockets, no
+`proxenos-core` holds the middle layer and nothing else: no sockets, no
 clock, no filesystem, no configuration policy. That boundary is what makes every
 translation rule testable as a pure function over recorded data, and what stops
 transport assumptions from leaking into the part of the system that has to be

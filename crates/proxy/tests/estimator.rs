@@ -9,10 +9,10 @@
 
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::indexing_slicing)]
 
-use codex_cc_proxy::estimate::CalibratedEstimator;
-use codex_cc_proxy::estimate::Estimator;
-use codex_cc_proxy::estimate::shape_of;
-use codex_cc_proxy_core::anthropic::MessagesRequest;
+use proxenos::estimate::CalibratedEstimator;
+use proxenos::estimate::Estimator;
+use proxenos::estimate::shape_of;
+use proxenos_core::anthropic::MessagesRequest;
 use serde_json::json;
 
 fn request(turns: usize, words_per_turn: usize) -> MessagesRequest {
@@ -215,7 +215,7 @@ fn degenerate_observations_are_ignored() {
 #[cfg(feature = "tokenizer")]
 #[test]
 fn the_calibrated_estimator_beats_the_tokenizer_once_calibrated() {
-    use codex_cc_proxy::estimate::TokenizerEstimator;
+    use proxenos::estimate::TokenizerEstimator;
 
     let calibrated = CalibratedEstimator::new();
     let tokenizer = TokenizerEstimator::new().expect("the tokenizer should load");
@@ -260,7 +260,7 @@ fn the_calibrated_estimator_beats_the_tokenizer_once_calibrated() {
 #[cfg(feature = "tokenizer")]
 #[test]
 fn the_tokenizer_does_not_calibrate() {
-    use codex_cc_proxy::estimate::TokenizerEstimator;
+    use proxenos::estimate::TokenizerEstimator;
 
     let tokenizer = TokenizerEstimator::new().unwrap();
     let request = request(4, 40);

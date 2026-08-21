@@ -7,11 +7,11 @@
 // here is an assertion.
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::indexing_slicing)]
 
-use codex_cc_proxy_core::anthropic::MessagesRequest;
-use codex_cc_proxy_core::translate::TranslateOptions;
-use codex_cc_proxy_core::translate::discovered_tool_names;
-use codex_cc_proxy_core::translate::translate_request;
 use pretty_assertions::assert_eq;
+use proxenos_core::anthropic::MessagesRequest;
+use proxenos_core::translate::TranslateOptions;
+use proxenos_core::translate::discovered_tool_names;
+use proxenos_core::translate::translate_request;
 use rstest::rstest;
 use serde_json::Value;
 use serde_json::json;
@@ -845,7 +845,7 @@ fn an_effort_ceiling_applies_when_the_request_asks_for_nothing() {
     .unwrap();
 
     let options = TranslateOptions {
-        effort_ceiling: Some(codex_cc_proxy_core::responses::Effort::Low),
+        effort_ceiling: Some(proxenos_core::responses::Effort::Low),
         ..TranslateOptions::default()
     };
     let out = serde_json::to_value(translate_request(&request, &options)).unwrap();
@@ -870,7 +870,7 @@ fn a_ceiling_caps_without_raising(#[case] requested: &str, #[case] expected: &st
     .unwrap();
 
     let options = TranslateOptions {
-        effort_ceiling: Some(codex_cc_proxy_core::responses::Effort::Low),
+        effort_ceiling: Some(proxenos_core::responses::Effort::Low),
         ..TranslateOptions::default()
     };
     let out = serde_json::to_value(translate_request(&request, &options)).unwrap();
@@ -882,7 +882,7 @@ fn a_ceiling_caps_without_raising(#[case] requested: &str, #[case] expected: &st
 /// request exceed the ceiling an operator set.
 #[test]
 fn efforts_are_ordered_from_least_to_most() {
-    use codex_cc_proxy_core::responses::Effort;
+    use proxenos_core::responses::Effort;
 
     let ascending = [
         Effort::None,
@@ -917,7 +917,7 @@ fn efforts_are_ordered_from_least_to_most() {
 /// instruction has to be in order to take precedence over the prompt above it.
 #[test]
 fn the_operator_may_lead_and_follow_the_system_prompt() {
-    let request: codex_cc_proxy_core::anthropic::MessagesRequest = serde_json::from_value(json!({
+    let request: proxenos_core::anthropic::MessagesRequest = serde_json::from_value(json!({
         "model": "gpt-5.5",
         "max_tokens": 1024,
         "system": "You are Claude Code.",
@@ -945,7 +945,7 @@ fn the_operator_may_lead_and_follow_the_system_prompt() {
 /// blank run where the prompt would have been.
 #[test]
 fn operator_text_stands_alone_without_a_system_prompt() {
-    let request: codex_cc_proxy_core::anthropic::MessagesRequest = serde_json::from_value(json!({
+    let request: proxenos_core::anthropic::MessagesRequest = serde_json::from_value(json!({
         "model": "gpt-5.5",
         "max_tokens": 1024,
         "messages": [{ "role": "user", "content": "hello" }],
@@ -982,14 +982,14 @@ fn injected_instructions_are_identical_on_a_later_turn() {
         ..TranslateOptions::default()
     };
 
-    let first: codex_cc_proxy_core::anthropic::MessagesRequest = serde_json::from_value(json!({
+    let first: proxenos_core::anthropic::MessagesRequest = serde_json::from_value(json!({
         "model": "gpt-5.5",
         "max_tokens": 1024,
         "system": "Base prompt.",
         "messages": [{ "role": "user", "content": "one" }],
     }))
     .unwrap();
-    let later: codex_cc_proxy_core::anthropic::MessagesRequest = serde_json::from_value(json!({
+    let later: proxenos_core::anthropic::MessagesRequest = serde_json::from_value(json!({
         "model": "gpt-5.5",
         "max_tokens": 1024,
         "system": "Base prompt.",
@@ -1016,17 +1016,16 @@ fn injected_instructions_are_identical_on_a_later_turn() {
 /// the client could not have anticipated.
 #[test]
 fn the_effort_sent_is_one_the_model_supports() {
-    use codex_cc_proxy_core::responses::Effort;
+    use proxenos_core::responses::Effort;
 
     let ask = |effort: &str, supported: &[Effort]| -> Option<String> {
-        let request: codex_cc_proxy_core::anthropic::MessagesRequest =
-            serde_json::from_value(json!({
-                "model": "gpt-5",
-                "max_tokens": 16,
-                "output_config": { "effort": effort },
-                "messages": [{ "role": "user", "content": "hi" }],
-            }))
-            .unwrap();
+        let request: proxenos_core::anthropic::MessagesRequest = serde_json::from_value(json!({
+            "model": "gpt-5",
+            "max_tokens": 16,
+            "output_config": { "effort": effort },
+            "messages": [{ "role": "user", "content": "hi" }],
+        }))
+        .unwrap();
 
         let out = serde_json::to_value(translate_request(
             &request,
@@ -1076,7 +1075,7 @@ fn the_effort_sent_is_one_the_model_supports() {
 /// against a list nobody supplied would rewrite an effort on no basis at all.
 #[test]
 fn an_unknown_set_of_supported_efforts_changes_nothing() {
-    let request: codex_cc_proxy_core::anthropic::MessagesRequest = serde_json::from_value(json!({
+    let request: proxenos_core::anthropic::MessagesRequest = serde_json::from_value(json!({
         "model": "gpt-5",
         "max_tokens": 16,
         "output_config": { "effort": "minimal" },
@@ -1104,7 +1103,7 @@ fn an_unknown_set_of_supported_efforts_changes_nothing() {
 /// on purpose and a shipped default should not outrank it.
 #[test]
 fn the_working_budget_sits_between_the_prompt_and_the_operator_text() {
-    let request: codex_cc_proxy_core::anthropic::MessagesRequest = serde_json::from_value(json!({
+    let request: proxenos_core::anthropic::MessagesRequest = serde_json::from_value(json!({
         "model": "gpt-5.5",
         "max_tokens": 1024,
         "system": "You are Claude Code.",
@@ -1134,7 +1133,7 @@ fn the_working_budget_sits_between_the_prompt_and_the_operator_text() {
 /// Switched off, it leaves nothing behind — not a heading, not a blank run.
 #[test]
 fn no_working_budget_leaves_no_trace() {
-    let request: codex_cc_proxy_core::anthropic::MessagesRequest = serde_json::from_value(json!({
+    let request: proxenos_core::anthropic::MessagesRequest = serde_json::from_value(json!({
         "model": "gpt-5.5",
         "max_tokens": 1024,
         "system": "You are Claude Code.",

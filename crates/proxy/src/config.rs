@@ -13,10 +13,10 @@ pub const DEFAULT_PORT: u16 = 8787;
 
 /// Where the configuration lives.
 ///
-/// `CODEX_CC_PROXY_HOME` overrides it, which is what makes the daemon testable
+/// `PROXENOS_HOME` overrides it, which is what makes the daemon testable
 /// without touching the developer's own configuration.
 pub fn config_dir() -> std::path::PathBuf {
-    if let Some(home) = std::env::var_os("CODEX_CC_PROXY_HOME") {
+    if let Some(home) = std::env::var_os("PROXENOS_HOME") {
         return std::path::PathBuf::from(home);
     }
     let base = std::env::var_os("XDG_CONFIG_HOME")
@@ -25,11 +25,53 @@ pub fn config_dir() -> std::path::PathBuf {
             std::env::var_os("HOME").map(|home| std::path::PathBuf::from(home).join(".config"))
         })
         .unwrap_or_else(std::env::temp_dir);
-    base.join("codex-cc-proxy")
+    base.join("proxenos")
 }
 
 pub fn config_path() -> std::path::PathBuf {
     config_dir().join("config.toml")
+}
+
+/// The project was `codex-cc-proxy` before v0.5.0, and a store written under
+/// that name does not stop existing because this binary got a new one.
+///
+/// Two ways an operator can still be pointing at the old name, each refused by
+/// name rather than silently answered with an empty store — which would read
+/// as every credential having vanished:
+///
+/// - the old environment variable is exported and the new one is not;
+/// - nothing overrides the default, nothing exists at the new default path,
+///   and a directory exists at the old one.
+///
+/// Nothing is migrated automatically. A daemon from the old binary may still
+/// be running against that directory, and moving it underneath a live process
+/// strands its socket and its credential writes. The refusal says exactly what
+/// to run instead.
+pub fn renamed_home_refusal() -> Option<String> {
+    if std::env::var_os("PROXENOS_HOME").is_some() {
+        return None;
+    }
+    if std::env::var_os("CODEX_CC_PROXY_HOME").is_some() {
+        return Some(
+            "the environment variable `CODEX_CC_PROXY_HOME` is set, but this project was \
+             renamed and nothing reads it any more. Export `PROXENOS_HOME` with the same \
+             value instead, then remove the old variable."
+                .to_owned(),
+        );
+    }
+    let new = config_dir();
+    let old = new.with_file_name("codex-cc-proxy");
+    if !new.exists() && old.exists() {
+        return Some(format!(
+            "your configuration and credentials live at {}, written before this project \
+             was renamed. Stop any daemon still running from the old binary, then move the \
+             directory: mv {} {}",
+            old.display(),
+            old.display(),
+            new.display()
+        ));
+    }
+    None
 }
 
 /// An example that can be copied verbatim into place.
@@ -134,7 +176,7 @@ disable_connectors = true
 # version. The backend filters the list by it — each model declares a minimum,
 # and a version below every minimum returns an EMPTY LIST rather than an error,
 # which reads exactly like an account with no models. Raise it when a new model
-# is missing from `codex-cc-proxy models` but exists for your account.
+# is missing from `proxenos models` but exists for your account.
 # client_version = "2.0.0"
 
 # The share of a context window left usable once instructions, tool overhead,
@@ -549,9 +591,7 @@ impl Config {
     /// An unrecognized value is an error rather than a silent fallback: an
     /// operator who wrote `effort = "cheap"` meant to cap their spending, and
     /// quietly ignoring it spends their quota at full rate.
-    pub fn effort_ceiling(
-        &self,
-    ) -> Result<Option<codex_cc_proxy_core::responses::Effort>, ProxyError> {
+    pub fn effort_ceiling(&self) -> Result<Option<proxenos_core::responses::Effort>, ProxyError> {
         self.effort_ceiling_for(None)
     }
 
@@ -565,7 +605,7 @@ impl Config {
     pub fn effort_ceiling_for(
         &self,
         account: Option<&str>,
-    ) -> Result<Option<codex_cc_proxy_core::responses::Effort>, ProxyError> {
+    ) -> Result<Option<proxenos_core::responses::Effort>, ProxyError> {
         let effort = self
             .for_account(account)
             .and_then(|overrides| overrides.effort.as_ref())
@@ -750,8 +790,8 @@ pub struct ResolvedTier {
 /// An unrecognized value is an error rather than a silent fallback: an operator
 /// who wrote `effort = "cheap"` meant to cap their spending, and quietly
 /// ignoring it spends their quota at full rate.
-pub fn parse_effort(effort: &str) -> Result<codex_cc_proxy_core::responses::Effort, ProxyError> {
-    codex_cc_proxy_core::responses::Effort::parse(effort).ok_or_else(|| {
+pub fn parse_effort(effort: &str) -> Result<proxenos_core::responses::Effort, ProxyError> {
+    proxenos_core::responses::Effort::parse(effort).ok_or_else(|| {
         ProxyError::invalid_request(format!(
             "`{effort}` is not a recognized effort. \
              One of: none, minimal, low, medium, high, xhigh, max."

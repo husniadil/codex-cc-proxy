@@ -2,12 +2,12 @@
 
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::indexing_slicing)]
 
-use codex_cc_proxy::auth::pkce::Pkce;
-use codex_cc_proxy::auth::store::CredentialStore;
-use codex_cc_proxy::auth::store::Credentials;
-use codex_cc_proxy::auth::store::FileStore;
-use codex_cc_proxy::auth::store::WritePoint;
 use pretty_assertions::assert_eq;
+use proxenos::auth::pkce::Pkce;
+use proxenos::auth::store::CredentialStore;
+use proxenos::auth::store::Credentials;
+use proxenos::auth::store::FileStore;
+use proxenos::auth::store::WritePoint;
 use serde_json::Value;
 
 fn sample() -> Credentials {
@@ -157,8 +157,8 @@ use axum::Router;
 use axum::extract::State;
 use axum::response::IntoResponse;
 use axum::routing::post;
-use codex_cc_proxy::auth::tokens::Clock;
-use codex_cc_proxy::auth::tokens::TokenSource;
+use proxenos::auth::tokens::Clock;
+use proxenos::auth::tokens::TokenSource;
 use std::sync::Arc;
 use std::sync::Mutex;
 
@@ -422,7 +422,7 @@ async fn an_invalid_grant_is_marked_dead_and_not_retried() {
     let first = source.access_token().await.expect_err("should fail");
     assert_eq!(
         first.kind,
-        codex_cc_proxy_core::anthropic::ErrorKind::AuthenticationError
+        proxenos_core::anthropic::ErrorKind::AuthenticationError
     );
     assert!(source.is_dead());
 
@@ -450,7 +450,7 @@ async fn a_transient_failure_leaves_the_grant_alive() {
     let error = source.access_token().await.expect_err("should fail");
     assert_eq!(
         error.kind,
-        codex_cc_proxy_core::anthropic::ErrorKind::OverloadedError,
+        proxenos_core::anthropic::ErrorKind::OverloadedError,
         "a transient failure should surface as retryable"
     );
     assert!(!source.is_dead());
@@ -504,8 +504,8 @@ async fn an_empty_store_asks_for_login() {
 // ---------------------------------------------------------------------------
 
 use base64::Engine;
-use codex_cc_proxy::auth::flow;
-use codex_cc_proxy::auth::jwt;
+use proxenos::auth::flow;
+use proxenos::auth::jwt;
 
 /// Build an unsigned JWT with the given payload. Signature verification is not
 /// performed and is not wanted — see the note on the jwt module.
@@ -702,7 +702,7 @@ async fn refusals_are_classified_by_whether_the_grant_survives(
 // Completing a login.
 // ---------------------------------------------------------------------------
 
-use codex_cc_proxy::auth::login;
+use proxenos::auth::login;
 
 /// The state is checked before the code is spent. A response carrying the wrong
 /// state is not this flow's response, and exchanging its code would attach
@@ -811,7 +811,7 @@ async fn a_refused_exchange_stores_nothing() {
 
     assert_eq!(
         error.kind,
-        codex_cc_proxy_core::anthropic::ErrorKind::AuthenticationError
+        proxenos_core::anthropic::ErrorKind::AuthenticationError
     );
     assert!(store.load().unwrap().is_none(), "nothing should be stored");
 }
@@ -877,7 +877,7 @@ fn the_authorization_request_asks_for_no_scope_it_does_not_use() {
 // §8 — more than one account in one store.
 // ---------------------------------------------------------------------------
 
-use codex_cc_proxy::auth::store::AccountStore;
+use proxenos::auth::store::AccountStore;
 
 /// A grant belonging to somebody else, distinguishable from `sample()` in
 /// every field that matters.
@@ -1649,7 +1649,7 @@ fn a_write_that_cannot_lock_names_the_way_out() {
         .to_string();
 
     assert!(
-        error.contains("CODEX_CC_PROXY_HOME"),
+        error.contains("PROXENOS_HOME"),
         "nothing to act on: {error}"
     );
 }
@@ -1800,7 +1800,7 @@ fn renaming_onto_another_account_is_refused() {
 // §8 — a credential that is not a subscription grant.
 // ---------------------------------------------------------------------------
 
-use codex_cc_proxy::auth::store::Credential;
+use proxenos::auth::store::Credential;
 
 /// A key is an account like any other, of a different kind.
 ///
@@ -1943,12 +1943,12 @@ fn the_account_verbs_work_on_a_key() {
 /// request is a header the endpoint taking it never asked for.
 #[tokio::test]
 async fn each_kind_authorizes_with_the_headers_its_endpoint_expects() {
-    use codex_cc_proxy::auth::authorize::Authorizer;
-    use codex_cc_proxy::auth::authorize::Kind;
+    use proxenos::auth::authorize::Authorizer;
+    use proxenos::auth::authorize::Kind;
 
     let dir = tempfile::tempdir().unwrap();
     let store = Arc::new(FileStore::new(dir.path().join("credentials.json")));
-    let authorizer = codex_cc_proxy::auth::authorize::AccountAuthorizer::new(
+    let authorizer = proxenos::auth::authorize::AccountAuthorizer::new(
         Arc::clone(&store) as Arc<dyn AccountStore>,
         Arc::new(TokenSource::new(
             Arc::clone(&store) as Arc<dyn CredentialStore>,
@@ -1978,7 +1978,7 @@ async fn each_kind_authorizes_with_the_headers_its_endpoint_expects() {
 
     let grant = authorizer.authorize().await.unwrap();
     assert_eq!(grant.kind, Kind::Subscription);
-    let header = |set: &codex_cc_proxy::auth::authorize::Authorization, name: &str| {
+    let header = |set: &proxenos::auth::authorize::Authorization, name: &str| {
         set.headers
             .iter()
             .find(|(key, _)| key.eq_ignore_ascii_case(name))

@@ -10,18 +10,24 @@ use clap::Parser;
 use cli::Cli;
 use cli::Command;
 use cli::RunArgs;
-use codex_cc_proxy::config::Config;
-use codex_cc_proxy::control;
-use codex_cc_proxy::daemon;
-use codex_cc_proxy::ingress::AppState;
-use codex_cc_proxy::ingress::ModelMapping;
-use codex_cc_proxy::render;
-use codex_cc_proxy::upstream::http::HttpTransport;
+use proxenos::config::Config;
+use proxenos::control;
+use proxenos::daemon;
+use proxenos::ingress::AppState;
+use proxenos::ingress::ModelMapping;
+use proxenos::render;
+use proxenos::upstream::http::HttpTransport;
 use std::sync::Arc;
 
 #[tokio::main]
 async fn main() -> Result<()> {
     init_tracing();
+
+    // Before anything resolves a path: a store under the pre-rename name must
+    // refuse loudly, not be silently shadowed by a fresh empty one.
+    if let Some(refusal) = proxenos::config::renamed_home_refusal() {
+        anyhow::bail!("{refusal}");
+    }
 
     let cli = Cli::parse();
     match cli.command {
@@ -48,18 +54,17 @@ async fn main() -> Result<()> {
 /// nothing here exercises the incremental path, and the WebSocket transport's
 /// value is entirely in that path. The simpler transport is also the one whose
 /// failures are legible when a probe does fail.
-async fn live_transport() -> Result<Arc<dyn codex_cc_proxy::upstream::Transport>> {
-    let credentials: Arc<dyn codex_cc_proxy::auth::store::AccountStore> = Arc::new(
-        codex_cc_proxy::auth::store::FileStore::new(credential_path()),
-    );
-    let tokens = Arc::new(codex_cc_proxy::auth::tokens::TokenSource::new(
-        Arc::clone(&credentials) as Arc<dyn codex_cc_proxy::auth::store::CredentialStore>,
-        codex_cc_proxy::auth::flow::token_endpoint(),
-        codex_cc_proxy::auth::flow::CLIENT_ID,
-        Arc::new(codex_cc_proxy::auth::tokens::SystemClock),
+async fn live_transport() -> Result<Arc<dyn proxenos::upstream::Transport>> {
+    let credentials: Arc<dyn proxenos::auth::store::AccountStore> =
+        Arc::new(proxenos::auth::store::FileStore::new(credential_path()));
+    let tokens = Arc::new(proxenos::auth::tokens::TokenSource::new(
+        Arc::clone(&credentials) as Arc<dyn proxenos::auth::store::CredentialStore>,
+        proxenos::auth::flow::token_endpoint(),
+        proxenos::auth::flow::CLIENT_ID,
+        Arc::new(proxenos::auth::tokens::SystemClock),
     ));
-    let authorizer: Arc<dyn codex_cc_proxy::auth::authorize::Authorizer> =
-        Arc::new(codex_cc_proxy::auth::authorize::AccountAuthorizer::new(
+    let authorizer: Arc<dyn proxenos::auth::authorize::Authorizer> =
+        Arc::new(proxenos::auth::authorize::AccountAuthorizer::new(
             Arc::clone(&credentials),
             Arc::clone(&tokens),
         ));
@@ -77,8 +82,8 @@ async fn live_transport() -> Result<Arc<dyn codex_cc_proxy::upstream::Transport>
     // (`proxy-behavior.md` §8.2).
     let config = Config::load()?;
     let endpoint = match authorization.kind {
-        codex_cc_proxy::auth::authorize::Kind::Key => config.upstream.key.endpoint,
-        codex_cc_proxy::auth::authorize::Kind::Subscription => config.upstream.endpoint,
+        proxenos::auth::authorize::Kind::Key => config.upstream.key.endpoint,
+        proxenos::auth::authorize::Kind::Subscription => config.upstream.endpoint,
     };
 
     Ok(Arc::new(
@@ -130,11 +135,11 @@ fn live_models() -> Result<Arc<Vec<ModelMapping>>> {
 
 /// Probe the capabilities, and say what the answer rests on.
 async fn doctor(args: cli::DoctorArgs) -> Result<()> {
-    let fixtures = codex_cc_proxy::doctor::Corpus::resolve(args.fixtures);
+    let fixtures = proxenos::doctor::Corpus::resolve(args.fixtures);
 
     let (outcomes, against) = if args.live {
         (
-            codex_cc_proxy::doctor::run_live(
+            proxenos::doctor::run_live(
                 &fixtures,
                 args.probe.as_deref(),
                 live_transport().await?,
@@ -142,27 +147,27 @@ async fn doctor(args: cli::DoctorArgs) -> Result<()> {
                 Config::load()?.effort_ceiling()?,
             )
             .await?,
-            codex_cc_proxy::doctor::AGAINST_LIVE.to_owned(),
+            proxenos::doctor::AGAINST_LIVE.to_owned(),
         )
     } else {
         (
-            codex_cc_proxy::doctor::run(&fixtures, args.probe.as_deref()).await?,
+            proxenos::doctor::run(&fixtures, args.probe.as_deref()).await?,
             // Which corpus answered is part of what the run establishes: a
             // directory can hold a recording made minutes ago, the embedded
             // copy is whatever this binary was built from.
             format!(
                 "{} — {}",
-                codex_cc_proxy::doctor::AGAINST_REPLAY,
+                proxenos::doctor::AGAINST_REPLAY,
                 fixtures.describe()
             ),
         )
     };
 
-    println!("{}", codex_cc_proxy::probe::matrix(&outcomes, &against));
+    println!("{}", proxenos::probe::matrix(&outcomes, &against));
 
     let failed = outcomes
         .iter()
-        .filter(|outcome| matches!(outcome.status, codex_cc_proxy::probe::Status::Failed(_)))
+        .filter(|outcome| matches!(outcome.status, proxenos::probe::Status::Failed(_)))
         .count();
     if failed > 0 {
         bail!("{failed} probe(s) failed");
@@ -179,16 +184,15 @@ async fn doctor(args: cli::DoctorArgs) -> Result<()> {
 /// one every later request spends. Printing it leaves the choice where it
 /// belongs, and costs one paste.
 async fn login(args: cli::LoginArgs) -> Result<()> {
-    let store: Arc<dyn codex_cc_proxy::auth::store::AccountStore> = Arc::new(
-        codex_cc_proxy::auth::store::FileStore::new(credential_path()),
-    );
+    let store: Arc<dyn proxenos::auth::store::AccountStore> =
+        Arc::new(proxenos::auth::store::FileStore::new(credential_path()));
 
     if args.key {
         return store_key(&store, args.label.as_deref()).await;
     }
 
     let credentials =
-        codex_cc_proxy::auth::login::run(Arc::clone(&store), args.label.as_deref(), |url| {
+        proxenos::auth::login::run(Arc::clone(&store), args.label.as_deref(), |url| {
             println!(
                 "Open this URL to authorize:\n\n{url}\n\n\
              It authorizes whichever ChatGPT account that browser is signed into. \
@@ -226,7 +230,7 @@ async fn login(args: cli::LoginArgs) -> Result<()> {
 /// The name is required: a key carries no account id to be named by, and the
 /// name is what selects it afterwards.
 async fn store_key(
-    store: &Arc<dyn codex_cc_proxy::auth::store::AccountStore>,
+    store: &Arc<dyn proxenos::auth::store::AccountStore>,
     label: Option<&str>,
 ) -> Result<()> {
     let Some(name) = label else {
@@ -383,7 +387,7 @@ async fn statusline(args: cli::StatuslineArgs) -> Result<()> {
     let usage = control::call(&control::default_path(), "usage", None)
         .await
         .unwrap_or(serde_json::Value::Null);
-    let merged = codex_cc_proxy::statusline::merge(payload, &usage);
+    let merged = proxenos::statusline::merge(payload, &usage);
 
     // Falls back to what arrived: if the payload would not parse, merging
     // produced null, and handing a script `null` is worse than handing it the
@@ -473,7 +477,7 @@ async fn stop() -> Result<()> {
         Err(error) if error.status == axum::http::StatusCode::NOT_FOUND => {
             anyhow::bail!(
                 "The running daemon is from an older build and has no `stop`. End that \
-                 process however it was started, then `codex-cc-proxy run`."
+                 process however it was started, then `proxenos run`."
             );
         }
         Err(error) => return Err(error.into()),
@@ -580,7 +584,7 @@ async fn exec(args: cli::ExecArgs) -> Result<()> {
         .map_err(|error| {
             anyhow::anyhow!(
                 "the daemon is not answering ({error}), so there is no configuration to start \
-                 this with. Start it with `codex-cc-proxy run`."
+                 this with. Start it with `proxenos run`."
             )
         })?;
 
@@ -597,7 +601,7 @@ async fn exec(args: cli::ExecArgs) -> Result<()> {
         .map(serde_json::to_string)
         .transpose()?;
 
-    let plan = codex_cc_proxy::launch::plan(&args.command, policy.as_deref())?;
+    let plan = proxenos::launch::plan(&args.command, policy.as_deref())?;
 
     // By design, and said out loud: to the person whose deny rule just
     // vanished, a silent by-design is indistinguishable from a bug.
@@ -714,11 +718,11 @@ async fn detach(args: &RunArgs) -> Result<()> {
     if control::call(&socket, "status", None).await.is_ok() {
         bail!(
             "a daemon is already answering on the control socket. Stop it with \
-             `codex-cc-proxy stop` first."
+             `proxenos stop` first."
         );
     }
 
-    let log_path = codex_cc_proxy::config::config_dir().join("daemon.log");
+    let log_path = proxenos::config::config_dir().join("daemon.log");
     if let Some(parent) = log_path.parent() {
         std::fs::create_dir_all(parent)
             .with_context(|| format!("could not create {}", parent.display()))?;
@@ -771,7 +775,7 @@ async fn detach(args: &RunArgs) -> Result<()> {
         }
         if control::call(&socket, "status", None).await.is_ok() {
             println!(
-                "daemon running (pid {}), logging to {}\nstop it with `codex-cc-proxy stop`",
+                "daemon running (pid {}), logging to {}\nstop it with `proxenos stop`",
                 child.id(),
                 log_path.display()
             );
@@ -811,11 +815,11 @@ fn log_tail(path: &std::path::Path, since: u64) -> String {
 }
 
 async fn run_with(args: RunArgs, capture: Capture) -> Result<()> {
-    let usage = Arc::new(codex_cc_proxy::usage::UsageStore::default());
-    let switches = Arc::new(codex_cc_proxy::recorder::Switches::new(match capture {
+    let usage = Arc::new(proxenos::usage::UsageStore::default());
+    let switches = Arc::new(proxenos::recorder::Switches::new(match capture {
         Capture::Nothing => None,
-        Capture::Ingress => Some(codex_cc_proxy::recorder::Mode::Ingress),
-        Capture::Upstream => Some(codex_cc_proxy::recorder::Mode::Upstream),
+        Capture::Ingress => Some(proxenos::recorder::Mode::Ingress),
+        Capture::Upstream => Some(proxenos::recorder::Mode::Upstream),
     }));
     let config = Config::load()?;
     let port = args.port.unwrap_or(config.port);
@@ -824,9 +828,8 @@ async fn run_with(args: RunArgs, capture: Capture) -> Result<()> {
     // clamped — a clamp makes an operator's mistake look like it was accepted.
     config.validate()?;
 
-    let credentials: Arc<dyn codex_cc_proxy::auth::store::AccountStore> = Arc::new(
-        codex_cc_proxy::auth::store::FileStore::new(credential_path()),
-    );
+    let credentials: Arc<dyn proxenos::auth::store::AccountStore> =
+        Arc::new(proxenos::auth::store::FileStore::new(credential_path()));
 
     // Which account's mapping is in force. Read before the mapping is resolved
     // rather than after, because a catalog is one account's menu (§7.0) and a
@@ -851,18 +854,18 @@ async fn run_with(args: RunArgs, capture: Capture) -> Result<()> {
     let addr = listener.local_addr()?;
     tracing::info!(%addr, "listening");
 
-    let tokens = Arc::new(codex_cc_proxy::auth::tokens::TokenSource::new(
-        Arc::clone(&credentials) as Arc<dyn codex_cc_proxy::auth::store::CredentialStore>,
-        codex_cc_proxy::auth::flow::token_endpoint(),
-        codex_cc_proxy::auth::flow::CLIENT_ID,
-        Arc::new(codex_cc_proxy::auth::tokens::SystemClock),
+    let tokens = Arc::new(proxenos::auth::tokens::TokenSource::new(
+        Arc::clone(&credentials) as Arc<dyn proxenos::auth::store::CredentialStore>,
+        proxenos::auth::flow::token_endpoint(),
+        proxenos::auth::flow::CLIENT_ID,
+        Arc::new(proxenos::auth::tokens::SystemClock),
     ));
 
     // One authorizer for every path that authenticates: it reads the store per
     // request, so a switch or a login reaches the next request with nothing
     // rebuilt.
-    let authorizer: Arc<dyn codex_cc_proxy::auth::authorize::Authorizer> =
-        Arc::new(codex_cc_proxy::auth::authorize::AccountAuthorizer::new(
+    let authorizer: Arc<dyn proxenos::auth::authorize::Authorizer> =
+        Arc::new(proxenos::auth::authorize::AccountAuthorizer::new(
             Arc::clone(&credentials),
             Arc::clone(&tokens),
         ));
@@ -878,8 +881,8 @@ async fn run_with(args: RunArgs, capture: Capture) -> Result<()> {
     // account's kind belongs to, which is why the pair travels together.
     // Shared with the ingress, or a replacement would move what the socket
     // reports and not what routes turns.
-    let catalog = Arc::new(codex_cc_proxy::catalog::CatalogSource::new(
-        codex_cc_proxy::catalog::Catalog::fallback(),
+    let catalog = Arc::new(proxenos::catalog::CatalogSource::new(
+        proxenos::catalog::Catalog::fallback(),
         config.upstream.catalog.clone(),
         config.upstream.key.catalog.clone(),
         config.upstream.client_version.clone(),
@@ -921,32 +924,32 @@ async fn run_with(args: RunArgs, capture: Capture) -> Result<()> {
     // effort ceiling on a running daemon, and the ingress routes turns from the
     // same value — so a change moves what actually happens rather than only
     // what `status` reports.
-    let policy = Arc::new(codex_cc_proxy::policy::Policy::new(
-        codex_cc_proxy::policy::Snapshot::new(tiers.clone(), effort_ceiling),
+    let policy = Arc::new(proxenos::policy::Policy::new(
+        proxenos::policy::Snapshot::new(tiers.clone(), effort_ceiling),
     ));
 
     // One signal, shared: asking over the socket has to move this process, not
     // merely answer about it.
-    let shutdown = Arc::new(codex_cc_proxy::daemon::Shutdown::default());
+    let shutdown = Arc::new(proxenos::daemon::Shutdown::default());
 
     // One store, shared with the ingress: a switch that cleared a set of
     // conversations the ingress does not serve would clear nothing.
-    let sessions = Arc::new(codex_cc_proxy::session::SessionStore::new());
+    let sessions = Arc::new(proxenos::session::SessionStore::new());
 
-    let control_state = codex_cc_proxy::control::handler::ControlState {
+    let control_state = proxenos::control::handler::ControlState {
         port: addr.port(),
         policy: Arc::clone(&policy),
         catalog: Arc::clone(&catalog),
         credentials: Arc::clone(&credentials),
         capture: Arc::clone(&switches),
         usage: Arc::clone(&usage),
-        login: Arc::new(codex_cc_proxy::auth::daemon_login::LoginFlow::default()),
+        login: Arc::new(proxenos::auth::daemon_login::LoginFlow::default()),
         config: Arc::new(config.clone()),
         shutdown: Arc::clone(&shutdown),
         tokens: Some(Arc::clone(&tokens)),
         usage_endpoint: config.upstream.usage.clone(),
         sessions: Arc::clone(&sessions),
-        config_path: Some(codex_cc_proxy::config::config_path()),
+        config_path: Some(proxenos::config::config_path()),
     };
     let socket_path = control::default_path();
     tokio::spawn(async move {
@@ -967,15 +970,15 @@ async fn run_with(args: RunArgs, capture: Capture) -> Result<()> {
     let conduit_endpoint = config.upstream.endpoint.clone();
     let conduit_websocket = config.upstream.websocket.clone();
     let conduit_key = config.upstream.key.endpoint.clone();
-    let conduits: codex_cc_proxy::ingress::ConduitFactory = Arc::new(move |session_id| {
+    let conduits: proxenos::ingress::ConduitFactory = Arc::new(move |session_id| {
         // Which endpoint this conversation belongs to is decided by the
         // account serving turns when it starts. A switch drops every live
         // session (§3), so a conversation never outlives the kind it was
         // opened for.
-        let kind = codex_cc_proxy::auth::authorize::selected_kind(&conduit_credentials);
+        let kind = proxenos::auth::authorize::selected_kind(&conduit_credentials);
         let (endpoint, socket) = match kind {
-            codex_cc_proxy::auth::authorize::Kind::Key => (&conduit_key, None),
-            codex_cc_proxy::auth::authorize::Kind::Subscription => {
+            proxenos::auth::authorize::Kind::Key => (&conduit_key, None),
+            proxenos::auth::authorize::Kind::Subscription => {
                 (&conduit_endpoint, Some(&conduit_websocket))
             }
         };
@@ -988,12 +991,12 @@ async fn run_with(args: RunArgs, capture: Capture) -> Result<()> {
         );
         let websocket = websocket_enabled.then_some(socket).flatten().map(|socket| {
             Arc::new(
-                codex_cc_proxy::upstream::websocket::WebSocketTransport::new(socket)
+                proxenos::upstream::websocket::WebSocketTransport::new(socket)
                     .with_credentials(Arc::clone(&conduit_authorizer))
                     .with_compression(compression),
             )
         });
-        Arc::new(codex_cc_proxy::upstream::conduit::Conduit::new(
+        Arc::new(proxenos::upstream::conduit::Conduit::new(
             http, websocket, session_id,
         ))
     });
@@ -1019,8 +1022,8 @@ async fn run_with(args: RunArgs, capture: Capture) -> Result<()> {
         // §5.4 — empty streams are recorded whether or not capture was asked
         // for, because an empty stream is always a defect and is otherwise
         // invisible.
-        recorder: Some(codex_cc_proxy::recorder::Recorder::new(
-            codex_cc_proxy::recorder::Recorder::default_directory(),
+        recorder: Some(proxenos::recorder::Recorder::new(
+            proxenos::recorder::Recorder::default_directory(),
         )),
         capture: Arc::clone(&switches),
         usage: Arc::clone(&usage),
@@ -1043,7 +1046,7 @@ async fn run_with(args: RunArgs, capture: Capture) -> Result<()> {
 ///
 /// The name rather than the account id: a key account has no id, and the name
 /// is the string every account verb already takes.
-fn serving_account(store: &Arc<dyn codex_cc_proxy::auth::store::AccountStore>) -> Option<String> {
+fn serving_account(store: &Arc<dyn proxenos::auth::store::AccountStore>) -> Option<String> {
     store
         .accounts()
         .ok()?
@@ -1058,7 +1061,7 @@ fn serving_account(store: &Arc<dyn codex_cc_proxy::auth::store::AccountStore>) -
 /// function: two copies of this rule drift, and the copy that drifts sends the
 /// daemon looking for credentials somewhere the login never wrote them.
 fn credential_path() -> std::path::PathBuf {
-    codex_cc_proxy::config::config_dir().join("credentials.json")
+    proxenos::config::config_dir().join("credentials.json")
 }
 
 fn init_tracing() {

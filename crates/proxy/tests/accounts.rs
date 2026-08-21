@@ -78,16 +78,16 @@ impl Daemon {
         )
         .unwrap();
 
-        let process = std::process::Command::new(env!("CARGO_BIN_EXE_codex-cc-proxy"))
+        let process = std::process::Command::new(env!("CARGO_BIN_EXE_proxenos"))
             .args(["run", "--port", "0"])
-            .env("CODEX_CC_PROXY_HOME", &home)
+            .env("PROXENOS_HOME", &home)
             .env("TMPDIR", dir.path())
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .spawn()
             .expect("the daemon should start");
 
-        let socket = dir.path().join("codex-cc-proxy.sock");
+        let socket = dir.path().join("proxenos.sock");
         for _ in 0..200 {
             if socket.exists() {
                 break;
@@ -101,9 +101,9 @@ impl Daemon {
 
     /// One CLI verb, through the socket this daemon is serving.
     fn run(&self, args: &[&str]) -> String {
-        let output = std::process::Command::new(env!("CARGO_BIN_EXE_codex-cc-proxy"))
+        let output = std::process::Command::new(env!("CARGO_BIN_EXE_proxenos"))
             .args(args)
-            .env("CODEX_CC_PROXY_HOME", self.dir.path().join("home"))
+            .env("PROXENOS_HOME", self.dir.path().join("home"))
             .env("TMPDIR", self.dir.path())
             .output()
             .expect("the binary should run");
@@ -197,9 +197,9 @@ fn the_binary_lists_and_switches_accounts() {
     assert!(marked[0].contains("acct_one"), "{listed}");
 
     // And a name nobody holds is refused rather than silently ignored.
-    let output = std::process::Command::new(env!("CARGO_BIN_EXE_codex-cc-proxy"))
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_proxenos"))
         .args(["accounts", "--use", "nobody"])
-        .env("CODEX_CC_PROXY_HOME", daemon.dir.path().join("home"))
+        .env("PROXENOS_HOME", daemon.dir.path().join("home"))
         .env("TMPDIR", daemon.dir.path())
         .output()
         .unwrap();
@@ -262,9 +262,9 @@ fn the_binary_renames_an_account_without_touching_its_grant() {
     // The new name is what selects it now.
     daemon.run(&["accounts", "--use", "work"]);
 
-    let output = std::process::Command::new(env!("CARGO_BIN_EXE_codex-cc-proxy"))
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_proxenos"))
         .args(["accounts", "--use", "acct_legacy"])
-        .env("CODEX_CC_PROXY_HOME", daemon.dir.path().join("home"))
+        .env("PROXENOS_HOME", daemon.dir.path().join("home"))
         .env("TMPDIR", daemon.dir.path())
         .output()
         .unwrap();
@@ -284,9 +284,9 @@ fn the_binary_stores_a_key_from_stdin_and_serves_turns_as_it() {
     let daemon = Daemon::start(&grant("acct_legacy"));
     let home = daemon.dir.path().join("home");
 
-    let mut login = std::process::Command::new(env!("CARGO_BIN_EXE_codex-cc-proxy"))
+    let mut login = std::process::Command::new(env!("CARGO_BIN_EXE_proxenos"))
         .args(["login", "--key", "--as", "billing"])
-        .env("CODEX_CC_PROXY_HOME", &home)
+        .env("PROXENOS_HOME", &home)
         .env("TMPDIR", daemon.dir.path())
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
@@ -358,9 +358,9 @@ fn a_cli_login_tells_a_running_daemon_to_hand_over() {
     let daemon = Daemon::start(&grant("acct_legacy"));
     let home = daemon.dir.path().join("home");
 
-    let mut login = std::process::Command::new(env!("CARGO_BIN_EXE_codex-cc-proxy"))
+    let mut login = std::process::Command::new(env!("CARGO_BIN_EXE_proxenos"))
         .args(["login", "--key", "--as", "billing"])
-        .env("CODEX_CC_PROXY_HOME", &home)
+        .env("PROXENOS_HOME", &home)
         .env("TMPDIR", daemon.dir.path())
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
@@ -396,9 +396,9 @@ fn a_live_probe_run_without_a_credential_refuses_rather_than_reporting_failures(
     let home = dir.path().join("home");
     std::fs::create_dir_all(&home).unwrap();
 
-    let output = std::process::Command::new(env!("CARGO_BIN_EXE_codex-cc-proxy"))
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_proxenos"))
         .args(["doctor", "--live"])
-        .env("CODEX_CC_PROXY_HOME", &home)
+        .env("PROXENOS_HOME", &home)
         .env("TMPDIR", dir.path())
         .output()
         .expect("the binary should run");

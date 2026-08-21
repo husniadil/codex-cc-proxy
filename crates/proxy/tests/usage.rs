@@ -4,8 +4,8 @@
 
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::indexing_slicing)]
 
-use codex_cc_proxy::usage::Snapshot;
 use pretty_assertions::assert_eq;
+use proxenos::usage::Snapshot;
 use serde_json::json;
 
 /// A real snapshot, as the backend sends it: one long window, no second one.
@@ -170,7 +170,7 @@ fn a_reached_limit_is_reported_as_rejected() {
 fn a_recorded_quota_response_parses_into_the_same_snapshot_a_stream_produces() {
     let payload = std::fs::read_to_string("../../fixtures/upstream/quota-rest.json").unwrap();
 
-    let snapshot = codex_cc_proxy::usage::Snapshot::parse_rest(&payload)
+    let snapshot = proxenos::usage::Snapshot::parse_rest(&payload)
         .expect("the recorded response should parse");
 
     assert_eq!(snapshot.plan.as_deref(), Some("free"));
@@ -189,7 +189,7 @@ fn a_recorded_quota_response_parses_into_the_same_snapshot_a_stream_produces() {
 #[test]
 fn a_window_the_backend_did_not_report_is_absent_rather_than_zero() {
     let payload = std::fs::read_to_string("../../fixtures/upstream/quota-rest.json").unwrap();
-    let snapshot = codex_cc_proxy::usage::Snapshot::parse_rest(&payload).unwrap();
+    let snapshot = proxenos::usage::Snapshot::parse_rest(&payload).unwrap();
 
     assert!(
         snapshot
@@ -204,10 +204,10 @@ fn a_window_the_backend_did_not_report_is_absent_rather_than_zero() {
 /// empty snapshot — which would read as "quota known, nothing used".
 #[test]
 fn an_unrecognized_body_is_not_read_as_an_empty_quota() {
-    assert!(codex_cc_proxy::usage::Snapshot::parse_rest("{}").is_none());
-    assert!(codex_cc_proxy::usage::Snapshot::parse_rest("not json").is_none());
+    assert!(proxenos::usage::Snapshot::parse_rest("{}").is_none());
+    assert!(proxenos::usage::Snapshot::parse_rest("not json").is_none());
     assert!(
-        codex_cc_proxy::usage::Snapshot::parse_rest(r#"{"rate_limit":{}}"#).is_none(),
+        proxenos::usage::Snapshot::parse_rest(r#"{"rate_limit":{}}"#).is_none(),
         "a rate_limit with no window at all says nothing about quota"
     );
 }

@@ -13,9 +13,9 @@ use crate::probe;
 use crate::probe::Outcome;
 use crate::probe::Status;
 use crate::upstream::Transport;
-use codex_cc_proxy_core::fixture::Fixture;
-use codex_cc_proxy_core::responses::ResponsesRequest;
 use futures::StreamExt;
+use proxenos_core::fixture::Fixture;
+use proxenos_core::responses::ResponsesRequest;
 use serde_json::Value;
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -183,7 +183,7 @@ enum Backend {
     Live {
         transport: Arc<dyn Transport>,
         models: Arc<Vec<ModelMapping>>,
-        effort_ceiling: Option<codex_cc_proxy_core::responses::Effort>,
+        effort_ceiling: Option<proxenos_core::responses::Effort>,
     },
 }
 
@@ -207,7 +207,7 @@ pub async fn run_live(
     only: Option<&str>,
     transport: Arc<dyn Transport>,
     models: Arc<Vec<ModelMapping>>,
-    effort_ceiling: Option<codex_cc_proxy_core::responses::Effort>,
+    effort_ceiling: Option<proxenos_core::responses::Effort>,
 ) -> Result<Vec<Outcome>, ProxyError> {
     run_against(
         fixtures,

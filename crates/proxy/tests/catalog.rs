@@ -2,10 +2,10 @@
 
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::indexing_slicing)]
 
-use codex_cc_proxy::auth::authorize::Authorization;
-use codex_cc_proxy::auth::authorize::Kind;
-use codex_cc_proxy::catalog::Catalog;
 use pretty_assertions::assert_eq;
+use proxenos::auth::authorize::Authorization;
+use proxenos::auth::authorize::Kind;
+use proxenos::catalog::Catalog;
 
 /// The share the shipping configuration applies. Stated here rather than
 /// imported so that a change to the default has to be made deliberately in two
@@ -375,7 +375,7 @@ fn subscription_auth(token: &str) -> Authorization {
             ("authorization".to_owned(), format!("Bearer {token}")),
             (
                 "originator".to_owned(),
-                codex_cc_proxy::upstream::http::ORIGINATOR.to_owned(),
+                proxenos::upstream::http::ORIGINATOR.to_owned(),
             ),
         ],
     }
@@ -385,7 +385,7 @@ fn subscription_auth(token: &str) -> Authorization {
 async fn the_configured_client_version_is_the_one_sent() {
     let (endpoint, seen) = recording_catalog().await;
 
-    let catalog = codex_cc_proxy::catalog::fetch(
+    let catalog = proxenos::catalog::fetch(
         &reqwest::Client::new(),
         &endpoint,
         &subscription_auth("token"),
@@ -406,7 +406,7 @@ async fn the_configured_client_version_is_the_one_sent() {
 async fn a_fetched_catalog_carries_the_configured_share() {
     let (endpoint, _) = recording_catalog().await;
 
-    let catalog = codex_cc_proxy::catalog::fetch(
+    let catalog = proxenos::catalog::fetch(
         &reqwest::Client::new(),
         &endpoint,
         &subscription_auth("token"),
@@ -472,7 +472,7 @@ fn an_empty_catalog_explains_itself_rather_than_listing_nothing() {
 // catalog is allowed to overrule the first and never the second.
 // ---------------------------------------------------------------------------
 
-use codex_cc_proxy::config::ResolvedTier;
+use proxenos::config::ResolvedTier;
 
 fn tier(name: &'static str, model: &str, defaulted: bool) -> ResolvedTier {
     ResolvedTier {
@@ -554,7 +554,7 @@ async fn a_catalog_is_fetched_from_the_endpoint_its_credential_belongs_to() {
     let subscription = recording_catalog().await;
     let key = recording_catalog().await;
 
-    let source = codex_cc_proxy::catalog::CatalogSource::new(
+    let source = proxenos::catalog::CatalogSource::new(
         Catalog::fallback(),
         subscription.0.clone(),
         key.0.clone(),

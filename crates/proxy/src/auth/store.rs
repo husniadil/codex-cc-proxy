@@ -870,7 +870,7 @@ fn unusable(path: &Path, detail: &str) -> ProxyError {
     ProxyError::authentication(format!(
         "could not lock {path:?}: {detail}. Every write of the credential file \
          takes that lock, so this directory cannot hold credentials. Point \
-         `CODEX_CC_PROXY_HOME` at a directory on a local filesystem and log in \
+         `PROXENOS_HOME` at a directory on a local filesystem and log in \
          again."
     ))
 }

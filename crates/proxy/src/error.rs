@@ -9,8 +9,8 @@ use axum::http::StatusCode;
 use axum::http::header::HeaderMap;
 use axum::response::IntoResponse;
 use axum::response::Response;
-use codex_cc_proxy_core::anthropic::ErrorBody;
-use codex_cc_proxy_core::anthropic::ErrorKind;
+use proxenos_core::anthropic::ErrorBody;
+use proxenos_core::anthropic::ErrorKind;
 
 #[derive(Debug, Clone, thiserror::Error)]
 #[error("{message}")]

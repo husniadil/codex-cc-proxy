@@ -1,8 +1,8 @@
 #!/bin/sh
 #
-# Install codex-cc-proxy from a published release.
+# Install proxenos from a published release.
 #
-#   curl -fsSL https://raw.githubusercontent.com/husniadil/codex-cc-proxy/main/install.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/husniadil/proxenos/main/install.sh | sh
 #
 # The checksum step is not optional and there is no flag to skip it. A script
 # that fetches a binary over the network and runs it has exactly one defence,
@@ -15,13 +15,13 @@
 
 set -eu
 
-REPO="husniadil/codex-cc-proxy"
-BIN="codex-cc-proxy"
+REPO="husniadil/proxenos"
+BIN="proxenos"
 
-VERSION="${CODEX_CC_PROXY_VERSION:-latest}"
-BIN_DIR="${CODEX_CC_PROXY_BIN_DIR:-$HOME/.local/bin}"
-TARGET="${CODEX_CC_PROXY_TARGET:-}"
-DRY_RUN="${CODEX_CC_PROXY_DRY_RUN:-}"
+VERSION="${PROXENOS_VERSION:-latest}"
+BIN_DIR="${PROXENOS_BIN_DIR:-$HOME/.local/bin}"
+TARGET="${PROXENOS_TARGET:-}"
+DRY_RUN="${PROXENOS_DRY_RUN:-}"
 
 usage() {
 	cat <<EOF
@@ -33,7 +33,7 @@ Install $BIN.
   --dry-run         report what would happen; download and install nothing
   --help
 
-Each has an environment variable: CODEX_CC_PROXY_VERSION, _BIN_DIR, _TARGET,
+Each has an environment variable: PROXENOS_VERSION, _BIN_DIR, _TARGET,
 _DRY_RUN.
 EOF
 }
@@ -100,7 +100,7 @@ detect_target() {
 		;;
 	MINGW* | MSYS* | CYGWIN*)
 		die "Windows is released as a binary but not installed by this script.
-Download codex-cc-proxy-x86_64-pc-windows-msvc.tar.gz from
+Download proxenos-x86_64-pc-windows-msvc.tar.gz from
 https://github.com/$REPO/releases and extract it where you want it."
 		;;
 	*)
@@ -140,8 +140,8 @@ fetch() {
 # Where the archives are fetched from. Overridable for a mirror, and for the
 # one test that matters: proving a tampered archive is refused needs somewhere
 # to serve a tampered archive from.
-if [ -n "${CODEX_CC_PROXY_BASE_URL:-}" ]; then
-	BASE="$CODEX_CC_PROXY_BASE_URL"
+if [ -n "${PROXENOS_BASE_URL:-}" ]; then
+	BASE="$PROXENOS_BASE_URL"
 elif [ "$VERSION" = "latest" ]; then
 	BASE="https://github.com/$REPO/releases/latest/download"
 else

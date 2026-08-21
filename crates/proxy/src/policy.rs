@@ -23,7 +23,7 @@
 
 use crate::config::ResolvedTier;
 use crate::ingress::ModelMapping;
-use codex_cc_proxy_core::responses::Effort;
+use proxenos_core::responses::Effort;
 use std::sync::Arc;
 use std::sync::RwLock;
 

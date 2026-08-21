@@ -16,7 +16,7 @@ use tokio::io::BufReader;
 
 /// Where the socket lives by default.
 pub fn default_path() -> PathBuf {
-    std::env::temp_dir().join("codex-cc-proxy.sock")
+    std::env::temp_dir().join("proxenos.sock")
 }
 
 /// This binary's version. One file is both the daemon and the CLI, so the
@@ -155,7 +155,7 @@ pub async fn call(
 ) -> Result<serde_json::Value, ProxyError> {
     let stream = tokio::net::UnixStream::connect(path).await.map_err(|error| {
         ProxyError::invalid_request(format!(
-            "could not reach the daemon at {}: {error}. Is it running? Start it with `codex-cc-proxy run`.",
+            "could not reach the daemon at {}: {error}. Is it running? Start it with `proxenos run`.",
             path.display()
         ))
     })?;
@@ -252,11 +252,13 @@ pub async fn call(
 ) -> Result<serde_json::Value, ProxyError> {
     use tokio::net::windows::named_pipe::ClientOptions;
 
-    let client = ClientOptions::new().open(pipe_name(path)).map_err(|error| {
-        ProxyError::invalid_request(format!(
-            "could not reach the daemon: {error}. Is it running? Start it with `codex-cc-proxy run`."
-        ))
-    })?;
+    let client = ClientOptions::new()
+        .open(pipe_name(path))
+        .map_err(|error| {
+            ProxyError::invalid_request(format!(
+                "could not reach the daemon: {error}. Is it running? Start it with `proxenos run`."
+            ))
+        })?;
 
     let (reader, mut writer) = tokio::io::split(client);
     let mut body = serde_json::to_string(&Request::new(1, method, params)).unwrap_or_default();
@@ -303,6 +305,6 @@ fn pipe_name(path: &Path) -> String {
     let stem = path
         .file_name()
         .and_then(|name| name.to_str())
-        .unwrap_or("codex-cc-proxy");
+        .unwrap_or("proxenos");
     format!(r"\\.\pipe\{stem}")
 }

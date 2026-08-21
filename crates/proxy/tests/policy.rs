@@ -2,11 +2,11 @@
 
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::indexing_slicing)]
 
-use codex_cc_proxy::config::ResolvedTier;
-use codex_cc_proxy::policy::Policy;
-use codex_cc_proxy::policy::Snapshot;
-use codex_cc_proxy_core::responses::Effort;
 use pretty_assertions::assert_eq;
+use proxenos::config::ResolvedTier;
+use proxenos::policy::Policy;
+use proxenos::policy::Snapshot;
+use proxenos_core::responses::Effort;
 use std::sync::Arc;
 
 fn tier(name: &'static str, model: &str) -> ResolvedTier {

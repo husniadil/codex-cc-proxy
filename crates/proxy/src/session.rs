@@ -6,8 +6,8 @@
 //! incremental upload, so matching and delta computation cannot disagree.
 
 use crate::estimate::CalibratedEstimator;
-use codex_cc_proxy_core::responses::InputItem;
-use codex_cc_proxy_core::session::Baseline;
+use proxenos_core::responses::InputItem;
+use proxenos_core::session::Baseline;
 use std::collections::BTreeSet;
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -36,7 +36,7 @@ pub struct Session {
     pub conduit: tokio::sync::OnceCell<Arc<crate::upstream::conduit::Conduit>>,
     /// What the last turn sent and what came back, which is what a delta
     /// continues (§4.3).
-    pub last_request: Mutex<Option<codex_cc_proxy_core::responses::ResponsesRequest>>,
+    pub last_request: Mutex<Option<proxenos_core::responses::ResponsesRequest>>,
     pub last_response_id: Mutex<Option<String>>,
     pub estimator: CalibratedEstimator,
     /// Tools this conversation has seen discovered (§2.5).
@@ -88,7 +88,7 @@ impl Session {
     pub fn previous(
         &self,
     ) -> (
-        Option<codex_cc_proxy_core::responses::ResponsesRequest>,
+        Option<proxenos_core::responses::ResponsesRequest>,
         Option<String>,
     ) {
         (
@@ -100,7 +100,7 @@ impl Session {
         )
     }
 
-    pub fn remember_request(&self, request: &codex_cc_proxy_core::responses::ResponsesRequest) {
+    pub fn remember_request(&self, request: &proxenos_core::responses::ResponsesRequest) {
         if let Ok(mut held) = self.last_request.lock() {
             *held = Some(request.clone());
         }

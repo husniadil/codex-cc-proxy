@@ -2,8 +2,8 @@
 
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::indexing_slicing)]
 
-use codex_cc_proxy::statusline::merge;
 use pretty_assertions::assert_eq;
+use proxenos::statusline::merge;
 use serde_json::json;
 
 /// A payload shaped like the one the client hands a status-line script.

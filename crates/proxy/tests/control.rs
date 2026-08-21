@@ -5,18 +5,18 @@
 
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::indexing_slicing)]
 
-use codex_cc_proxy::auth::authorize::Authorizer;
-use codex_cc_proxy::auth::store::AccountStore;
-use codex_cc_proxy::auth::store::CredentialStore;
-use codex_cc_proxy::auth::store::Credentials;
-use codex_cc_proxy::auth::store::FileStore;
-use codex_cc_proxy::catalog::Catalog;
-use codex_cc_proxy::catalog::CatalogSource;
-use codex_cc_proxy::config::ResolvedTier;
-use codex_cc_proxy::control;
-use codex_cc_proxy::control::handler::ControlState;
-use codex_cc_proxy::control::protocol::METHODS;
 use pretty_assertions::assert_eq;
+use proxenos::auth::authorize::Authorizer;
+use proxenos::auth::store::AccountStore;
+use proxenos::auth::store::CredentialStore;
+use proxenos::auth::store::Credentials;
+use proxenos::auth::store::FileStore;
+use proxenos::catalog::Catalog;
+use proxenos::catalog::CatalogSource;
+use proxenos::config::ResolvedTier;
+use proxenos::control;
+use proxenos::control::handler::ControlState;
+use proxenos::control::protocol::METHODS;
 use serde_json::Value;
 use serde_json::json;
 use std::sync::Arc;
@@ -68,22 +68,22 @@ struct Harness {
     /// The same policy the ingress routes turns from. Asserting on this is the
     /// difference between testing that a method echoes a value back and testing
     /// that it moved anything.
-    policy: Arc<codex_cc_proxy::policy::Policy>,
+    policy: Arc<proxenos::policy::Policy>,
     /// The same store the ingress path writes a quota snapshot into.
-    usage: Arc<codex_cc_proxy::usage::UsageStore>,
+    usage: Arc<proxenos::usage::UsageStore>,
     /// The same switches the ingress path would read. Asserting on these is
     /// the difference between testing that a flag round-trips and testing that
     /// the method does anything.
-    switches: Arc<codex_cc_proxy::recorder::Switches>,
+    switches: Arc<proxenos::recorder::Switches>,
     /// The configuration this harness's daemon started from. Held so a
     /// test can switch it off and assert that nothing is left behind.
-    config: Arc<codex_cc_proxy::config::Config>,
+    config: Arc<proxenos::config::Config>,
     /// The same signal the daemon's own run loop waits on, so a test can assert
     /// a stop actually moved something rather than only answering.
-    shutdown: Arc<codex_cc_proxy::daemon::Shutdown>,
+    shutdown: Arc<proxenos::daemon::Shutdown>,
     /// The same conversations the ingress serves, so a test can assert a
     /// switch reached them rather than only reached the store.
-    sessions: Arc<codex_cc_proxy::session::SessionStore>,
+    sessions: Arc<proxenos::session::SessionStore>,
     _dir: tempfile::TempDir,
 }
 
@@ -92,25 +92,25 @@ impl Harness {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("control.sock");
         let store = Arc::new(FileStore::new(dir.path().join("credentials.json")));
-        let switches = Arc::new(codex_cc_proxy::recorder::Switches::default());
-        let usage = Arc::new(codex_cc_proxy::usage::UsageStore::default());
-        let policy = Arc::new(codex_cc_proxy::policy::Policy::new(
-            codex_cc_proxy::policy::Snapshot::new(tiers(), None),
+        let switches = Arc::new(proxenos::recorder::Switches::default());
+        let usage = Arc::new(proxenos::usage::UsageStore::default());
+        let policy = Arc::new(proxenos::policy::Policy::new(
+            proxenos::policy::Snapshot::new(tiers(), None),
         ));
         // The mapping matches this harness's catalog. A switch re-resolves the
         // mapping from configuration, so a default that names models the
         // catalog does not have would make every switch refuse itself.
-        let config = Arc::new(codex_cc_proxy::config::Config {
-            tiers: codex_cc_proxy::config::Tiers {
+        let config = Arc::new(proxenos::config::Config {
+            tiers: proxenos::config::Tiers {
                 opus: Some("gpt-5.6-terra".to_owned()),
                 sonnet: Some("gpt-5.6-terra".to_owned()),
                 haiku: Some("gpt-5.6-terra".to_owned()),
                 fable: Some("gpt-5.6-terra".to_owned()),
             },
-            ..codex_cc_proxy::config::Config::default()
+            ..proxenos::config::Config::default()
         });
-        let shutdown = Arc::new(codex_cc_proxy::daemon::Shutdown::default());
-        let sessions = Arc::new(codex_cc_proxy::session::SessionStore::new());
+        let shutdown = Arc::new(proxenos::daemon::Shutdown::default());
+        let sessions = Arc::new(proxenos::session::SessionStore::new());
 
         let state = ControlState {
             port: 8787,
@@ -126,7 +126,7 @@ impl Harness {
             credentials: Arc::clone(&store) as Arc<dyn AccountStore>,
             capture: Arc::clone(&switches),
             usage: Arc::clone(&usage),
-            login: Arc::new(codex_cc_proxy::auth::daemon_login::LoginFlow::default()),
+            login: Arc::new(proxenos::auth::daemon_login::LoginFlow::default()),
             config: Arc::clone(&config),
             shutdown: Arc::clone(&shutdown),
             // No credentials to ask with, and no endpoint that would answer:
@@ -168,7 +168,7 @@ impl Harness {
     }
 
     /// The same harness, answering on a socket whose daemon holds this grant.
-    async fn with_tokens(self, tokens: Arc<codex_cc_proxy::auth::tokens::TokenSource>) -> Self {
+    async fn with_tokens(self, tokens: Arc<proxenos::auth::tokens::TokenSource>) -> Self {
         let catalog = r#"{"data":[{"id":"gpt-5.6-terra","context_window":272000}]}"#;
         self.respawn_with(catalog, "gpt-5.6-terra", Some(tokens))
             .await
@@ -188,11 +188,11 @@ impl Harness {
 
     /// The same harness, publishing the caller's client policy — for the tests
     /// about what switching it off leaves behind.
-    async fn with_client(self, client: codex_cc_proxy::config::ClientConfig) -> Self {
+    async fn with_client(self, client: proxenos::config::ClientConfig) -> Self {
         let harness = Self {
-            config: Arc::new(codex_cc_proxy::config::Config {
+            config: Arc::new(proxenos::config::Config {
                 client,
-                ..codex_cc_proxy::config::Config::default()
+                ..proxenos::config::Config::default()
             }),
             ..self
         };
@@ -203,7 +203,7 @@ impl Harness {
 
     /// The same harness, whose daemon started from this configuration — for
     /// the tests about a mapping that belongs to one account.
-    async fn with_configuration(self, config: codex_cc_proxy::config::Config) -> Self {
+    async fn with_configuration(self, config: proxenos::config::Config) -> Self {
         let harness = Self {
             config: Arc::new(config),
             ..self
@@ -228,7 +228,7 @@ impl Harness {
             credentials: Arc::clone(&self.store) as Arc<dyn AccountStore>,
             capture: Arc::clone(&self.switches),
             usage: Arc::clone(&self.usage),
-            login: Arc::new(codex_cc_proxy::auth::daemon_login::LoginFlow::default()),
+            login: Arc::new(proxenos::auth::daemon_login::LoginFlow::default()),
             config: Arc::clone(&self.config),
             shutdown: Arc::clone(&self.shutdown),
             tokens: None,
@@ -253,11 +253,11 @@ impl Harness {
     /// fetched again. The daemon starts holding what it fetched for the
     /// account selected now, exactly as `run` does.
     async fn with_catalog_source(self, endpoint: &str) -> Self {
-        let tokens = Arc::new(codex_cc_proxy::auth::tokens::TokenSource::new(
+        let tokens = Arc::new(proxenos::auth::tokens::TokenSource::new(
             Arc::clone(&self.store) as Arc<dyn CredentialStore>,
             String::new(),
             "client-abc",
-            Arc::new(codex_cc_proxy::auth::tokens::SystemClock),
+            Arc::new(proxenos::auth::tokens::SystemClock),
         ));
         let catalog = Arc::new(CatalogSource::new(
             Catalog::fallback(),
@@ -266,7 +266,7 @@ impl Harness {
             "0.0.0",
             95.0,
         ));
-        let authorization = codex_cc_proxy::auth::authorize::AccountAuthorizer::new(
+        let authorization = proxenos::auth::authorize::AccountAuthorizer::new(
             Arc::clone(&self.store) as Arc<dyn AccountStore>,
             Arc::clone(&tokens),
         )
@@ -283,7 +283,7 @@ impl Harness {
             credentials: Arc::clone(&self.store) as Arc<dyn AccountStore>,
             capture: Arc::clone(&self.switches),
             usage: Arc::clone(&self.usage),
-            login: Arc::new(codex_cc_proxy::auth::daemon_login::LoginFlow::default()),
+            login: Arc::new(proxenos::auth::daemon_login::LoginFlow::default()),
             config: Arc::clone(&self.config),
             shutdown: Arc::clone(&self.shutdown),
             tokens: Some(tokens),
@@ -319,7 +319,7 @@ impl Harness {
         self,
         catalog: &str,
         model: &str,
-        tokens: Option<Arc<codex_cc_proxy::auth::tokens::TokenSource>>,
+        tokens: Option<Arc<proxenos::auth::tokens::TokenSource>>,
     ) -> Self {
         let tiers: Vec<ResolvedTier> = ["opus", "sonnet", "haiku", "fable"]
             .into_iter()
@@ -331,8 +331,8 @@ impl Harness {
             .collect();
 
         let path = self._dir.path().join("control-2.sock");
-        let policy = Arc::new(codex_cc_proxy::policy::Policy::new(
-            codex_cc_proxy::policy::Snapshot::new(tiers, None),
+        let policy = Arc::new(proxenos::policy::Policy::new(
+            proxenos::policy::Snapshot::new(tiers, None),
         ));
         let state = ControlState {
             port: 8787,
@@ -341,7 +341,7 @@ impl Harness {
             credentials: Arc::clone(&self.store) as Arc<dyn AccountStore>,
             capture: Arc::clone(&self.switches),
             usage: Arc::clone(&self.usage),
-            login: Arc::new(codex_cc_proxy::auth::daemon_login::LoginFlow::default()),
+            login: Arc::new(proxenos::auth::daemon_login::LoginFlow::default()),
             config: Arc::clone(&self.config),
             shutdown: Arc::clone(&self.shutdown),
             tokens,
@@ -368,7 +368,7 @@ impl Harness {
         }
     }
 
-    async fn call(&self, method: &str) -> Result<Value, codex_cc_proxy::error::ProxyError> {
+    async fn call(&self, method: &str) -> Result<Value, proxenos::error::ProxyError> {
         control::call(&self.path, method, None).await
     }
 
@@ -642,19 +642,19 @@ async fn an_unknown_window_is_reported_as_null() {
     let dir = tempfile::tempdir().unwrap();
     let state = ControlState {
         port: 1,
-        policy: Arc::new(codex_cc_proxy::policy::Policy::new(
-            codex_cc_proxy::policy::Snapshot::new(tiers(), None),
+        policy: Arc::new(proxenos::policy::Policy::new(
+            proxenos::policy::Snapshot::new(tiers(), None),
         )),
         catalog: Arc::new(CatalogSource::fixed(Catalog::fallback())),
         credentials: Arc::new(FileStore::new(dir.path().join("c.json"))),
-        capture: Arc::new(codex_cc_proxy::recorder::Switches::default()),
-        usage: Arc::new(codex_cc_proxy::usage::UsageStore::default()),
-        login: Arc::new(codex_cc_proxy::auth::daemon_login::LoginFlow::default()),
-        config: Arc::new(codex_cc_proxy::config::Config::default()),
-        shutdown: Arc::new(codex_cc_proxy::daemon::Shutdown::default()),
+        capture: Arc::new(proxenos::recorder::Switches::default()),
+        usage: Arc::new(proxenos::usage::UsageStore::default()),
+        login: Arc::new(proxenos::auth::daemon_login::LoginFlow::default()),
+        config: Arc::new(proxenos::config::Config::default()),
+        shutdown: Arc::new(proxenos::daemon::Shutdown::default()),
         tokens: None,
         usage_endpoint: String::new(),
-        sessions: Arc::new(codex_cc_proxy::session::SessionStore::new()),
+        sessions: Arc::new(proxenos::session::SessionStore::new()),
         config_path: None,
     };
 
@@ -792,19 +792,19 @@ async fn a_malformed_request_is_reported_without_closing_the_socket() {
     let dir = tempfile::tempdir().unwrap();
     let state = ControlState {
         port: 1,
-        policy: Arc::new(codex_cc_proxy::policy::Policy::new(
-            codex_cc_proxy::policy::Snapshot::new(tiers(), None),
+        policy: Arc::new(proxenos::policy::Policy::new(
+            proxenos::policy::Snapshot::new(tiers(), None),
         )),
         catalog: Arc::new(CatalogSource::fixed(Catalog::fallback())),
         credentials: Arc::new(FileStore::new(dir.path().join("c.json"))),
-        capture: Arc::new(codex_cc_proxy::recorder::Switches::default()),
-        usage: Arc::new(codex_cc_proxy::usage::UsageStore::default()),
-        login: Arc::new(codex_cc_proxy::auth::daemon_login::LoginFlow::default()),
-        config: Arc::new(codex_cc_proxy::config::Config::default()),
-        shutdown: Arc::new(codex_cc_proxy::daemon::Shutdown::default()),
+        capture: Arc::new(proxenos::recorder::Switches::default()),
+        usage: Arc::new(proxenos::usage::UsageStore::default()),
+        login: Arc::new(proxenos::auth::daemon_login::LoginFlow::default()),
+        config: Arc::new(proxenos::config::Config::default()),
+        shutdown: Arc::new(proxenos::daemon::Shutdown::default()),
         tokens: None,
         usage_endpoint: String::new(),
-        sessions: Arc::new(codex_cc_proxy::session::SessionStore::new()),
+        sessions: Arc::new(proxenos::session::SessionStore::new()),
         config_path: None,
     };
 
@@ -843,7 +843,7 @@ async fn the_socket_is_owner_only() {
 // Rendering. Presentation only — the daemon decides what is true.
 // ---------------------------------------------------------------------------
 
-use codex_cc_proxy::render;
+use proxenos::render;
 
 #[tokio::test]
 async fn env_renders_as_shell_exports() {
@@ -958,7 +958,7 @@ async fn shell_exports_name_what_they_cannot_carry() {
 async fn a_client_policy_switched_off_leaves_no_trace() {
     let harness = Harness::start()
         .await
-        .with_client(codex_cc_proxy::config::ClientConfig {
+        .with_client(proxenos::config::ClientConfig {
             deny_skills: Vec::new(),
             disable_connectors: false,
         })
@@ -1012,7 +1012,7 @@ async fn status_names_the_client_policy_and_the_key_that_sets_it() {
 async fn status_stays_quiet_when_nothing_is_denied() {
     let harness = Harness::start()
         .await
-        .with_client(codex_cc_proxy::config::ClientConfig {
+        .with_client(proxenos::config::ClientConfig {
             deny_skills: Vec::new(),
             disable_connectors: true,
         })
@@ -1121,19 +1121,19 @@ async fn status_says_when_the_catalog_was_unavailable() {
     let dir = tempfile::tempdir().unwrap();
     let state = ControlState {
         port: 8787,
-        policy: Arc::new(codex_cc_proxy::policy::Policy::new(
-            codex_cc_proxy::policy::Snapshot::new(tiers(), None),
+        policy: Arc::new(proxenos::policy::Policy::new(
+            proxenos::policy::Snapshot::new(tiers(), None),
         )),
         catalog: Arc::new(CatalogSource::fixed(Catalog::fallback())),
         credentials: Arc::new(FileStore::new(dir.path().join("c.json"))),
-        capture: Arc::new(codex_cc_proxy::recorder::Switches::default()),
-        usage: Arc::new(codex_cc_proxy::usage::UsageStore::default()),
-        login: Arc::new(codex_cc_proxy::auth::daemon_login::LoginFlow::default()),
-        config: Arc::new(codex_cc_proxy::config::Config::default()),
-        shutdown: Arc::new(codex_cc_proxy::daemon::Shutdown::default()),
+        capture: Arc::new(proxenos::recorder::Switches::default()),
+        usage: Arc::new(proxenos::usage::UsageStore::default()),
+        login: Arc::new(proxenos::auth::daemon_login::LoginFlow::default()),
+        config: Arc::new(proxenos::config::Config::default()),
+        shutdown: Arc::new(proxenos::daemon::Shutdown::default()),
         tokens: None,
         usage_endpoint: String::new(),
-        sessions: Arc::new(codex_cc_proxy::session::SessionStore::new()),
+        sessions: Arc::new(proxenos::session::SessionStore::new()),
         config_path: None,
     };
 
@@ -1154,19 +1154,19 @@ async fn models_prints_unknown_rather_than_a_number() {
     let dir = tempfile::tempdir().unwrap();
     let state = ControlState {
         port: 1,
-        policy: Arc::new(codex_cc_proxy::policy::Policy::new(
-            codex_cc_proxy::policy::Snapshot::new(tiers(), None),
+        policy: Arc::new(proxenos::policy::Policy::new(
+            proxenos::policy::Snapshot::new(tiers(), None),
         )),
         catalog: Arc::new(CatalogSource::fixed(Catalog::fallback())),
         credentials: Arc::new(FileStore::new(dir.path().join("c.json"))),
-        capture: Arc::new(codex_cc_proxy::recorder::Switches::default()),
-        usage: Arc::new(codex_cc_proxy::usage::UsageStore::default()),
-        login: Arc::new(codex_cc_proxy::auth::daemon_login::LoginFlow::default()),
-        config: Arc::new(codex_cc_proxy::config::Config::default()),
-        shutdown: Arc::new(codex_cc_proxy::daemon::Shutdown::default()),
+        capture: Arc::new(proxenos::recorder::Switches::default()),
+        usage: Arc::new(proxenos::usage::UsageStore::default()),
+        login: Arc::new(proxenos::auth::daemon_login::LoginFlow::default()),
+        config: Arc::new(proxenos::config::Config::default()),
+        shutdown: Arc::new(proxenos::daemon::Shutdown::default()),
         tokens: None,
         usage_endpoint: String::new(),
-        sessions: Arc::new(codex_cc_proxy::session::SessionStore::new()),
+        sessions: Arc::new(proxenos::session::SessionStore::new()),
         config_path: None,
     };
 
@@ -1227,19 +1227,19 @@ async fn env_states_no_window_when_the_catalog_is_unavailable() {
     let dir = tempfile::tempdir().unwrap();
     let state = ControlState {
         port: 8787,
-        policy: Arc::new(codex_cc_proxy::policy::Policy::new(
-            codex_cc_proxy::policy::Snapshot::new(tiers(), None),
+        policy: Arc::new(proxenos::policy::Policy::new(
+            proxenos::policy::Snapshot::new(tiers(), None),
         )),
         catalog: Arc::new(CatalogSource::fixed(Catalog::fallback())),
         credentials: Arc::new(FileStore::new(dir.path().join("c.json"))),
-        capture: Arc::new(codex_cc_proxy::recorder::Switches::default()),
-        usage: Arc::new(codex_cc_proxy::usage::UsageStore::default()),
-        login: Arc::new(codex_cc_proxy::auth::daemon_login::LoginFlow::default()),
-        config: Arc::new(codex_cc_proxy::config::Config::default()),
-        shutdown: Arc::new(codex_cc_proxy::daemon::Shutdown::default()),
+        capture: Arc::new(proxenos::recorder::Switches::default()),
+        usage: Arc::new(proxenos::usage::UsageStore::default()),
+        login: Arc::new(proxenos::auth::daemon_login::LoginFlow::default()),
+        config: Arc::new(proxenos::config::Config::default()),
+        shutdown: Arc::new(proxenos::daemon::Shutdown::default()),
         tokens: None,
         usage_endpoint: String::new(),
-        sessions: Arc::new(codex_cc_proxy::session::SessionStore::new()),
+        sessions: Arc::new(proxenos::session::SessionStore::new()),
         config_path: None,
     };
 
@@ -1282,7 +1282,7 @@ async fn a_plan_the_backend_reported_wins_over_the_one_in_the_grant() {
         })
         .unwrap();
 
-    let snapshot = codex_cc_proxy::usage::Snapshot::parse(
+    let snapshot = proxenos::usage::Snapshot::parse(
         &json!({
             "type": "codex.rate_limits",
             "plan_type": "plus",
@@ -1490,7 +1490,7 @@ async fn the_effort_ceiling_can_be_raised_without_a_restart() {
     assert_eq!(result["effort"], json!("high"));
     assert_eq!(
         harness.policy.get().effort_ceiling(),
-        Some(codex_cc_proxy_core::responses::Effort::High)
+        Some(proxenos_core::responses::Effort::High)
     );
     // And `status` says so. A capped turn succeeds, so without this nothing
     // anywhere would ever mention that every request is being capped.
@@ -1799,11 +1799,11 @@ async fn status_reports_a_grant_the_backend_refused() {
         })
         .unwrap();
 
-    let tokens = Arc::new(codex_cc_proxy::auth::tokens::TokenSource::new(
+    let tokens = Arc::new(proxenos::auth::tokens::TokenSource::new(
         Arc::clone(&harness.store) as Arc<dyn CredentialStore>,
         refusing_token_endpoint().await,
         "client-abc",
-        Arc::new(codex_cc_proxy::auth::tokens::SystemClock),
+        Arc::new(proxenos::auth::tokens::SystemClock),
     ));
 
     let harness = harness.with_tokens(Arc::clone(&tokens)).await;
@@ -1842,7 +1842,7 @@ async fn status_reports_a_grant_the_backend_refused() {
 async fn the_policy_half_is_present_and_empty_rather_than_absent() {
     let harness = Harness::start()
         .await
-        .with_client(codex_cc_proxy::config::ClientConfig {
+        .with_client(proxenos::config::ClientConfig {
             deny_skills: Vec::new(),
             disable_connectors: false,
         })
@@ -2142,7 +2142,7 @@ async fn selecting_an_account_drops_the_previous_accounts_quota() {
         .store
         .add(&grant("acct_two", "a-two"), None)
         .unwrap();
-    harness.usage.record(&codex_cc_proxy::usage::Snapshot {
+    harness.usage.record(&proxenos::usage::Snapshot {
         plan: Some("plus".to_owned()),
         ..Default::default()
     });
@@ -2282,11 +2282,11 @@ async fn switching_accounts_clears_a_refusal_that_belonged_to_the_old_grant() {
     // dead exactly as a real refusal would mark it. No network: the endpoint
     // is a loopback stub that answers every request with a dead-grant refusal.
     let server = RefusingTokens::start().await;
-    let tokens = Arc::new(codex_cc_proxy::auth::tokens::TokenSource::new(
+    let tokens = Arc::new(proxenos::auth::tokens::TokenSource::new(
         Arc::clone(&harness.store) as Arc<dyn CredentialStore>,
         server.url.clone(),
         "client-abc",
-        Arc::new(codex_cc_proxy::auth::tokens::SystemClock),
+        Arc::new(proxenos::auth::tokens::SystemClock),
     ));
     tokens
         .access_token()
@@ -2397,7 +2397,7 @@ async fn removing_an_idle_account_leaves_the_serving_grant_alone() {
         .store
         .add(&grant("acct_serving", "a-serving"), None)
         .unwrap();
-    harness.usage.record(&codex_cc_proxy::usage::Snapshot {
+    harness.usage.record(&proxenos::usage::Snapshot {
         plan: Some("plus".to_owned()),
         ..Default::default()
     });
@@ -2452,8 +2452,8 @@ async fn selecting_an_account_ends_conversations_bound_to_the_previous_one() {
         .add(&grant("acct_two", "a-two"), None)
         .unwrap();
 
-    let input = vec![codex_cc_proxy_core::responses::InputItem::Message {
-        role: codex_cc_proxy_core::responses::ItemRole::User,
+    let input = vec![proxenos_core::responses::InputItem::Message {
+        role: proxenos_core::responses::ItemRole::User,
         content: Vec::new(),
     }];
     let _session = harness.sessions.resolve(&input);
@@ -2523,14 +2523,14 @@ async fn the_catalog_says_when_it_was_fetched_for_another_account() {
 ///
 /// The stub answers a different model per account, which is the situation this
 /// exists for: two accounts with disjoint menus cannot share one mapping.
-fn mapping_per_account(accounts: &[&str]) -> codex_cc_proxy::config::Config {
-    let mut config = codex_cc_proxy::config::Config::default();
+fn mapping_per_account(accounts: &[&str]) -> proxenos::config::Config {
+    let mut config = proxenos::config::Config::default();
     for account in accounts {
         let model = format!("model-for-{account}");
         config.accounts.insert(
             (*account).to_owned(),
-            codex_cc_proxy::config::AccountConfig {
-                tiers: codex_cc_proxy::config::Tiers {
+            proxenos::config::AccountConfig {
+                tiers: proxenos::config::Tiers {
                     opus: Some(model.clone()),
                     sonnet: Some(model.clone()),
                     haiku: Some(model.clone()),
@@ -2932,12 +2932,12 @@ async fn a_thin_grant_is_not_rendered_as_a_key() {
 }
 
 /// A configuration whose named account maps a tier to `model`.
-fn mapping_for(account: &str, model: &str) -> codex_cc_proxy::config::Config {
-    let mut config = codex_cc_proxy::config::Config::default();
+fn mapping_for(account: &str, model: &str) -> proxenos::config::Config {
+    let mut config = proxenos::config::Config::default();
     // The shared table names a model this harness's catalog has, so what the
     // account does not override still validates — the assertion is about the
     // one tier it does.
-    config.tiers = codex_cc_proxy::config::Tiers {
+    config.tiers = proxenos::config::Tiers {
         opus: Some("gpt-5.6-terra".to_owned()),
         sonnet: Some("gpt-5.6-terra".to_owned()),
         haiku: Some("gpt-5.6-terra".to_owned()),
@@ -2945,10 +2945,10 @@ fn mapping_for(account: &str, model: &str) -> codex_cc_proxy::config::Config {
     };
     config.accounts.insert(
         account.to_owned(),
-        codex_cc_proxy::config::AccountConfig {
-            tiers: codex_cc_proxy::config::Tiers {
+        proxenos::config::AccountConfig {
+            tiers: proxenos::config::Tiers {
                 opus: Some(model.to_owned()),
-                ..codex_cc_proxy::config::Tiers::default()
+                ..proxenos::config::Tiers::default()
             },
             effort: Some("low".to_owned()),
         },
@@ -2997,7 +2997,7 @@ async fn selecting_an_account_puts_its_own_mapping_in_force() {
     );
     assert_eq!(
         harness.policy.get().effort_ceiling(),
-        Some(codex_cc_proxy_core::responses::Effort::Low),
+        Some(proxenos_core::responses::Effort::Low),
         "the selected account's ceiling did not reach what routes turns"
     );
 }
@@ -3483,7 +3483,7 @@ async fn removing_an_accounts_ceiling_leaves_the_shared_one_in_force() {
     );
     assert_eq!(
         harness.policy.get().effort_ceiling(),
-        Some(codex_cc_proxy_core::responses::Effort::Medium),
+        Some(proxenos_core::responses::Effort::Medium),
         "what routes turns disagreed with what a restart would produce"
     );
 }

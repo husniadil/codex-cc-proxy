@@ -6,8 +6,8 @@
 
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::indexing_slicing)]
 
-use codex_cc_proxy_core::translate::ResponseOptions;
-use codex_cc_proxy_core::translate::ResponseTranslator;
+use proxenos_core::translate::ResponseOptions;
+use proxenos_core::translate::ResponseTranslator;
 use serde_json::Value;
 use serde_json::json;
 

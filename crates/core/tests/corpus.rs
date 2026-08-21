@@ -11,14 +11,14 @@
     clippy::panic
 )]
 
-use codex_cc_proxy_core::anthropic::MessagesRequest;
-use codex_cc_proxy_core::fixture::Capability;
-use codex_cc_proxy_core::fixture::Fixture;
-use codex_cc_proxy_core::translate::ResponseOptions;
-use codex_cc_proxy_core::translate::ResponseTranslator;
-use codex_cc_proxy_core::translate::TranslateOptions;
-use codex_cc_proxy_core::translate::discovered_tool_names;
-use codex_cc_proxy_core::translate::translate_request;
+use proxenos_core::anthropic::MessagesRequest;
+use proxenos_core::fixture::Capability;
+use proxenos_core::fixture::Fixture;
+use proxenos_core::translate::ResponseOptions;
+use proxenos_core::translate::ResponseTranslator;
+use proxenos_core::translate::TranslateOptions;
+use proxenos_core::translate::discovered_tool_names;
+use proxenos_core::translate::translate_request;
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 
