@@ -502,6 +502,13 @@ same as an operator changing what this daemon is, and only the caller knows
 which it is doing. Without it the change lasts until the daemon stops, and every
 answer says which it was rather than leaving it to be discovered.
 
+**The account tables are re-read from disk when they are needed.** They are the
+one part of the configuration this daemon writes — `tiers.set` and `effort.set`
+persist into them, and a rename moves them — so resolving them from the snapshot
+taken at startup means a daemon that cannot see its own writes. Everything else
+is still read once at startup, because nothing else here writes it. A file that
+no longer parses keeps the snapshot: the daemon is already running on it.
+
 **A persisted change is written where the value is read from.** An account
 section shadows the shared table for the tiers it names and for the ceiling it
 states (§4), so a change written to the shared table while such a section exists
@@ -512,9 +519,26 @@ otherwise; the ceiling follows the same rule. `{"account": name}` writes that
 account's section regardless.
 
 A change aimed at an account that is not the one serving turns is **written and
-not applied**: the mapping in force belongs to the account being served. Without
-`persist` such a call would change nothing anywhere, and is refused rather than
-answered as though it had done something.
+not applied**: the mapping in force belongs to the account being served, and it
+is not validated against that account's catalog either, since a list fetched for
+one account makes no claim about another. Without `persist` such a call would
+change nothing anywhere, and is refused rather than answered as though it had
+done something. Both answers carry `account` — null for the shared table — and a
+`detail` that distinguishes written-and-applied from written-only.
+
+**`effort.set` with `null` removes an override, not every ceiling.** Under an
+account it clears that account's line, and the shared ceiling applies again; the
+answer and the running daemon both report the ceiling that results rather than
+the `null` that was asked for, because reporting no ceiling would be a figure
+that lasted until the next start.
+
+**A rename onto a name whose section is still in the file is refused.**
+Forgetting an account leaves its section behind, so a name can be free in the
+store and taken in the file; moving onto it would define one table twice, which
+TOML refuses, and the daemon would fail to start on a file the operator never
+edited. The store is renamed first and the file second, because the store is the
+half that can refuse — and a write that fails puts the name back rather than
+leaving an account and its section apart.
 
 A persisted change is a **text edit**, not a re-serialization. The file is a
 document whose comments explain why each key is what it is, and most of them

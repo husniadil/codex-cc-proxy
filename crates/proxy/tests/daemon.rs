@@ -658,3 +658,83 @@ fn an_unknown_key_in_an_account_section_is_refused() {
 
     assert!(error.contains("efort"), "{error}");
 }
+
+/// The shipped example states exactly the defaults it documents.
+///
+/// Two things make this load-bearing rather than tidy. The example calls itself
+/// "the defaults, shown so they can be changed", so a value that has drifted is
+/// a lie in the one document an operator reads first. And a persisted change
+/// made before any file exists is written *into* the example, so every key it
+/// states that no longer matches the compiled default would be pinned to the
+/// old value — silently changing tiers the operator never asked about, at the
+/// next start rather than now.
+///
+/// Compared as effective values, because the example states its tiers and a
+/// default `Tiers` leaves them unstated: the two shapes differ and the mappings
+/// must not.
+#[test]
+fn the_example_states_the_defaults_it_documents() {
+    let example: Config =
+        toml::from_str(codex_cc_proxy::config::EXAMPLE).expect("the example should parse");
+    let defaults = Config::default();
+
+    // Tier and model only. `defaulted` differs by construction and says so
+    // truthfully: the example states its mapping, a bare default does not.
+    let mapping = |config: &Config| {
+        config
+            .tiers
+            .resolve()
+            .unwrap()
+            .into_iter()
+            .map(|tier| (tier.tier, tier.model))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        mapping(&example),
+        mapping(&defaults),
+        "the example's tier mapping is not the compiled default"
+    );
+    assert_eq!(example.port, defaults.port);
+    assert_eq!(example.effort_ceiling().unwrap(), None);
+    assert_eq!(example.transport.websocket, defaults.transport.websocket);
+    assert_eq!(
+        example.transport.compression,
+        defaults.transport.compression
+    );
+    assert_eq!(
+        example.instructions.identity,
+        defaults.instructions.identity
+    );
+    assert_eq!(
+        example.instructions.working_budget,
+        defaults.instructions.working_budget
+    );
+    assert_eq!(example.instructions.append, defaults.instructions.append);
+    assert_eq!(example.client.deny_skills, defaults.client.deny_skills);
+    assert_eq!(
+        example.client.disable_connectors,
+        defaults.client.disable_connectors
+    );
+    assert_eq!(example.upstream.endpoint, defaults.upstream.endpoint);
+    assert_eq!(example.upstream.websocket, defaults.upstream.websocket);
+    assert_eq!(example.upstream.catalog, defaults.upstream.catalog);
+    assert_eq!(example.upstream.usage, defaults.upstream.usage);
+    assert_eq!(
+        example.upstream.key.endpoint,
+        defaults.upstream.key.endpoint
+    );
+    assert_eq!(example.upstream.key.catalog, defaults.upstream.key.catalog);
+    assert_eq!(
+        example.upstream.client_version,
+        defaults.upstream.client_version
+    );
+    assert_eq!(
+        example.upstream.effective_window_percent,
+        defaults.upstream.effective_window_percent
+    );
+    assert!(
+        example.accounts.is_empty(),
+        "the example must not ship an account section: it would be written into \
+         a first persisted change as though the operator had asked for it"
+    );
+}

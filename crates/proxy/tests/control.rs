@@ -3229,3 +3229,295 @@ async fn a_tier_set_for_another_account_without_persist_is_refused() {
 
     assert!(error.contains("persist"), "{error}");
 }
+
+/// A mapping written for another account is not validated against the serving
+/// account's catalog.
+///
+/// The list in force is one account's menu, and a mapping written for a
+/// different account makes no claim about it. Refusing here would refuse the
+/// case per-account mappings exist for: a model one plan has and the other
+/// does not.
+#[tokio::test]
+async fn a_tier_set_for_another_account_is_not_judged_by_this_ones_catalog() {
+    let harness = Harness::start().await;
+    harness
+        .store
+        .add(&grant("acct_one", "a-one"), Some("spare"))
+        .unwrap();
+    harness
+        .store
+        .add(&grant("acct_two", "a-two"), Some("work"))
+        .unwrap();
+
+    harness
+        .call_with(
+            "tiers.set",
+            json!({
+                "account": "spare",
+                "tiers": { "opus": "a-model-only-spare-has" },
+                "persist": true,
+            }),
+        )
+        .await
+        .unwrap();
+
+    let written: toml::Value =
+        toml::from_str(&std::fs::read_to_string(&harness.config_file).unwrap()).unwrap();
+    assert_eq!(
+        written["accounts"]["spare"]["tiers"]["opus"].as_str(),
+        Some("a-model-only-spare-has")
+    );
+}
+
+/// A mapping this daemon persisted is in force when that account is selected.
+///
+/// Write it, then switch to it, is the feature's own workflow. Resolving from a
+/// startup snapshot meant the section had been written, the switch reported
+/// success, and the shared table went into force instead — silently, until a
+/// restart.
+#[tokio::test]
+async fn a_mapping_persisted_here_is_what_a_switch_puts_in_force() {
+    let harness = Harness::start().await;
+    harness
+        .store
+        .add(&grant("acct_one", "a-one"), Some("spare"))
+        .unwrap();
+    harness
+        .store
+        .add(&grant("acct_two", "a-two"), Some("work"))
+        .unwrap();
+
+    std::fs::write(
+        &harness.config_file,
+        "[tiers]\n\
+         opus   = \"gpt-5.6-terra\"\n\
+         sonnet = \"gpt-5.6-terra\"\n\
+         haiku  = \"gpt-5.6-terra\"\n\
+         fable  = \"gpt-5.6-terra\"\n",
+    )
+    .unwrap();
+
+    harness
+        .call_with(
+            "tiers.set",
+            json!({
+                "account": "spare",
+                "tiers": { "opus": "gpt-5.4-mini" },
+                "persist": true,
+            }),
+        )
+        .await
+        .unwrap();
+    harness
+        .call_with("accounts.select", json!({ "account": "spare" }))
+        .await
+        .unwrap();
+
+    let opus = harness
+        .policy
+        .get()
+        .tiers()
+        .iter()
+        .find(|tier| tier.tier == "opus")
+        .unwrap()
+        .model
+        .clone();
+    assert_eq!(
+        opus, "gpt-5.4-mini",
+        "the section this daemon wrote was not what the switch resolved"
+    );
+}
+
+/// A change persisted after the daemon created a section goes into that
+/// section, not into the shared table it now shadows.
+#[tokio::test]
+async fn a_second_persisted_change_lands_where_the_first_one_put_the_section() {
+    let harness = Harness::start().await;
+    harness
+        .store
+        .add(&grant("acct_one", "a-one"), Some("work"))
+        .unwrap();
+
+    std::fs::write(
+        &harness.config_file,
+        "[tiers]\n\
+         opus   = \"gpt-5.6-terra\"\n\
+         sonnet = \"gpt-5.6-terra\"\n\
+         haiku  = \"gpt-5.6-terra\"\n\
+         fable  = \"gpt-5.6-terra\"\n",
+    )
+    .unwrap();
+
+    harness
+        .call_with(
+            "tiers.set",
+            json!({
+                "account": "work",
+                "tiers": { "opus": "gpt-5.4-mini" },
+                "persist": true,
+            }),
+        )
+        .await
+        .unwrap();
+    harness
+        .call_with(
+            "tiers.set",
+            json!({ "tiers": { "opus": "gpt-5.6-terra" }, "persist": true }),
+        )
+        .await
+        .unwrap();
+
+    let written: toml::Value =
+        toml::from_str(&std::fs::read_to_string(&harness.config_file).unwrap()).unwrap();
+    assert_eq!(
+        written["accounts"]["work"]["tiers"]["opus"].as_str(),
+        Some("gpt-5.6-terra"),
+        "the second change was written to a table the first one now shadows"
+    );
+}
+
+/// A rename the store refuses leaves the configuration file alone.
+///
+/// Writing the file first meant a refused rename still moved the section: the
+/// account already holding the new name inherited another account's mapping,
+/// and the other lost its own, with the error saying nothing about the file.
+#[tokio::test]
+async fn a_refused_rename_does_not_move_the_section() {
+    let harness = Harness::start().await;
+    harness
+        .store
+        .add(&grant("acct_one", "a-one"), Some("alpha"))
+        .unwrap();
+    harness
+        .store
+        .add(&grant("acct_two", "a-two"), Some("bravo"))
+        .unwrap();
+    let before = "[accounts.alpha.tiers]\nopus = \"gpt-5.6-terra\"\n";
+    std::fs::write(&harness.config_file, before).unwrap();
+
+    harness
+        .call_with(
+            "accounts.rename",
+            json!({ "account": "alpha", "name": "bravo" }),
+        )
+        .await
+        .unwrap_err();
+
+    assert_eq!(
+        std::fs::read_to_string(&harness.config_file).unwrap(),
+        before,
+        "a refused rename rewrote the configuration file"
+    );
+}
+
+/// A rename onto a name whose section is still in the file is refused.
+///
+/// Forgetting an account leaves its section behind, so a name can be free in
+/// the store and taken in the file. Moving onto it would define one table
+/// twice, which TOML refuses — and the daemon would fail to start on a file the
+/// operator never edited.
+#[tokio::test]
+async fn a_rename_onto_an_occupied_section_is_refused() {
+    let harness = Harness::start().await;
+    harness
+        .store
+        .add(&grant("acct_one", "a-one"), Some("alpha"))
+        .unwrap();
+    std::fs::write(
+        &harness.config_file,
+        "[accounts.alpha.tiers]\nopus = \"gpt-5.6-terra\"\n\n\
+         [accounts.bravo.tiers]\nopus = \"gpt-5.4-mini\"\n",
+    )
+    .unwrap();
+
+    let error = harness
+        .call_with(
+            "accounts.rename",
+            json!({ "account": "alpha", "name": "bravo" }),
+        )
+        .await
+        .unwrap_err();
+
+    assert!(error.contains("bravo"), "{error}");
+    let names: Vec<String> = harness
+        .store
+        .accounts()
+        .unwrap()
+        .into_iter()
+        .map(|account| account.name)
+        .collect();
+    assert_eq!(
+        names,
+        vec!["alpha".to_owned()],
+        "a refused rename must leave the store where it was"
+    );
+}
+
+/// Removing an account's ceiling reports the shared one, which is what applies.
+///
+/// `null` under an account section removes that account's override rather than
+/// removing every ceiling. Reporting "no ceiling" would be a figure that lasted
+/// until the next start and then quietly came back.
+#[tokio::test]
+async fn removing_an_accounts_ceiling_leaves_the_shared_one_in_force() {
+    let harness = Harness::start().await;
+    harness
+        .store
+        .add(&grant("acct_one", "a-one"), Some("work"))
+        .unwrap();
+    std::fs::write(
+        &harness.config_file,
+        "effort = \"medium\"\n\n[accounts.work]\neffort = \"high\"\n",
+    )
+    .unwrap();
+
+    let answer = harness
+        .call_with("effort.set", json!({ "effort": null, "persist": true }))
+        .await
+        .unwrap();
+
+    assert_eq!(
+        answer["effort"],
+        json!("medium"),
+        "the shared ceiling is what applies once the override is gone"
+    );
+    assert_eq!(
+        harness.policy.get().effort_ceiling(),
+        Some(codex_cc_proxy_core::responses::Effort::Medium),
+        "what routes turns disagreed with what a restart would produce"
+    );
+}
+
+/// A change written for an account that is not serving turns does not report
+/// itself as in effect.
+#[tokio::test]
+async fn a_change_for_another_account_does_not_claim_to_be_in_effect() {
+    let harness = Harness::start().await;
+    harness
+        .store
+        .add(&grant("acct_one", "a-one"), Some("spare"))
+        .unwrap();
+    harness
+        .store
+        .add(&grant("acct_two", "a-two"), Some("work"))
+        .unwrap();
+
+    let answer = harness
+        .call_with(
+            "tiers.set",
+            json!({
+                "account": "spare",
+                "tiers": { "opus": "gpt-5.4-mini" },
+                "persist": true,
+            }),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(answer["account"], json!("spare"));
+    assert!(
+        !answer["detail"].as_str().unwrap().contains("in effect now"),
+        "nothing here changed, and the answer said it had: {}",
+        answer["detail"]
+    );
+}

@@ -180,3 +180,38 @@ fn removing_a_ceiling_from_a_file_that_never_had_one_adds_nothing_under_a_table(
         "a commented key was written under [tiers]:\n{written}"
     );
 }
+
+/// A quoted account header is the same table as a bare one, and is edited
+/// rather than duplicated.
+///
+/// TOML allows both spellings for one table, so appending a second is a table
+/// defined twice — a file that no longer parses, from an edit that reported
+/// success.
+#[test]
+fn a_quoted_account_header_is_the_same_table() {
+    let document = "[accounts.\"spare\".tiers]\nopus = \"old\"\n";
+
+    let written = edit::set_tier(document, Some("spare"), "opus", "new").unwrap();
+
+    let parsed: toml::Value = toml::from_str(&written).unwrap();
+    assert_eq!(
+        parsed["accounts"]["spare"]["tiers"]["opus"].as_str(),
+        Some("new")
+    );
+    assert_eq!(
+        written.matches("tiers]").count(),
+        1,
+        "a second table was appended: {written}"
+    );
+}
+
+/// The same, for the account's own table.
+#[test]
+fn a_quoted_account_header_is_the_same_table_for_the_ceiling() {
+    let document = "[accounts.\"spare\"]\neffort = \"high\"\n";
+
+    let written = edit::set_effort(document, Some("spare"), Some("low")).unwrap();
+
+    let parsed: toml::Value = toml::from_str(&written).unwrap();
+    assert_eq!(parsed["accounts"]["spare"]["effort"].as_str(), Some("low"));
+}

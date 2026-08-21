@@ -28,8 +28,11 @@ in [`docs/api.md`](docs/api.md) §6.
   serving account shadows it would be in force now and gone at the next start.
   `tiers.set` and `effort.set` also take `{"account": name}`, which writes that
   account's section; aimed at an account that is not serving, the change is
-  written and not applied, and without `persist` it is refused rather than
-  answered as though it had done something.
+  written and not applied, not validated against the serving account's catalog,
+  and without `persist` refused rather than answered as though it had done
+  something. `effort.set` with `null` under an account removes that account's
+  override and reports the shared ceiling that applies again, rather than
+  reporting no ceiling and letting one come back at the next start.
 
 ### Changed
 

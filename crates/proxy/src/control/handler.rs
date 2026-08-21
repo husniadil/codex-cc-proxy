@@ -506,12 +506,21 @@ fn set_tiers(state: &ControlState, params: Option<&Value>) -> Result<Value, Prox
         entry.defaulted = false;
     }
 
-    state.catalog.current().validate(
-        &tiers
-            .iter()
-            .map(|tier| tier.model.clone())
-            .collect::<Vec<_>>(),
-    )?;
+    let (target, applies_now) = write_target(state, params)?;
+
+    // Only against a catalog that can speak for the account being changed. The
+    // list in force is the serving account's menu (§7.0), and a mapping written
+    // for another account is not a claim about it — refusing `gpt-5.5` for a
+    // spare account because the account serving turns is not offered it is the
+    // exact case per-account mappings exist for.
+    if applies_now {
+        state.catalog.current().validate(
+            &tiers
+                .iter()
+                .map(|tier| tier.model.clone())
+                .collect::<Vec<_>>(),
+        )?;
+    }
 
     // Persisting is asked for, never assumed. A front-end changing a mapping to
     // try something is not the same as an operator changing what this daemon is,
@@ -525,7 +534,6 @@ fn set_tiers(state: &ControlState, params: Option<&Value>) -> Result<Value, Prox
     // was, so the error the caller gets is the whole story; applying first
     // would leave it running a policy nobody chose, reported as a failure, and
     // gone at the next restart.
-    let (target, applies_now) = write_target(state, params)?;
     if !applies_now && !persist {
         return Err(ProxyError::invalid_request(
             "that account is not the one serving turns, so this would change nothing \
@@ -566,10 +574,20 @@ fn set_tiers(state: &ControlState, params: Option<&Value>) -> Result<Value, Prox
         // would find the old mapping back after a restart and have no way to
         // know why.
         "persisted": persisted,
-        "detail": if persisted {
-            "in effect now, and written to the configuration file"
-        } else {
-            "in effect until the daemon stops; the configuration file is unchanged"
+        // Whose mapping this was. Null is the shared table, which is what a
+        // caller naming no account changed.
+        "account": target,
+        // Three answers, not two. A change written for an account that is not
+        // serving turns is deliberately not applied here, and calling that "in
+        // effect now" tells a front-end a mapping is live for an account this
+        // daemon is not making requests as.
+        "detail": match (persisted, applies_now) {
+            (true, true) => "in effect now, and written to the configuration file",
+            (true, false) => {
+                "written to the configuration file; that account is not serving turns, \
+                 so nothing here changed"
+            }
+            (false, _) => "in effect until the daemon stops; the configuration file is unchanged",
         },
     }))
 }
@@ -609,6 +627,39 @@ fn write_target(
     Ok((Some(named.to_owned()), applies_now))
 }
 
+/// The configuration as it is on disk, falling back to what this daemon started
+/// from.
+///
+/// The account tables are the one part this daemon **writes** — `tiers.set` and
+/// `effort.set` persist into them and a rename moves them — so resolving them
+/// from a startup snapshot means a daemon that cannot see its own writes. The
+/// two failures that produced are both silent: a mapping persisted for an
+/// account and then ignored when that account is selected, and a later change
+/// written to the shared table because the section this daemon just created is
+/// not in the snapshot that decides where to write.
+///
+/// The rest of the configuration is still read once at startup. Nothing else
+/// here is written by the daemon, so nothing else can disagree with itself.
+///
+/// A file that no longer parses keeps the snapshot: the daemon is already
+/// running on it, and refusing a switch over a file the operator has half
+/// edited would be a worse answer than using what is in force.
+fn configuration(state: &ControlState) -> Arc<crate::config::Config> {
+    let Some(path) = state.config_path.as_ref() else {
+        return Arc::clone(&state.config);
+    };
+    let Ok(document) = std::fs::read_to_string(path) else {
+        return Arc::clone(&state.config);
+    };
+    match toml::from_str::<crate::config::Config>(&document) {
+        Ok(config) => Arc::new(config),
+        Err(error) => {
+            tracing::warn!(%error, "configuration on disk does not parse; using the one this daemon started with");
+            Arc::clone(&state.config)
+        }
+    }
+}
+
 /// The serving account, where its own section already states the thing about to
 /// be written — which is what decides where that value is read from.
 fn shadowing_account(
@@ -616,14 +667,14 @@ fn shadowing_account(
     states_it: impl Fn(&crate::config::Tiers) -> bool,
 ) -> Option<String> {
     let serving = serving_name(state)?;
-    let section = state.config.accounts.get(&serving)?;
+    let section = configuration(state).accounts.get(&serving).cloned()?;
     states_it(&section.tiers).then_some(serving)
 }
 
 /// The same, for the ceiling.
 fn shadowing_effort(state: &ControlState) -> Option<String> {
     let serving = serving_name(state)?;
-    let section = state.config.accounts.get(&serving)?;
+    let section = configuration(state).accounts.get(&serving).cloned()?;
     section.effort.is_some().then_some(serving)
 }
 
@@ -734,7 +785,7 @@ fn set_effort(state: &ControlState, params: Option<&Value>) -> Result<Value, Pro
         // Written where the value is read from, exactly as a tier is: an
         // account section stating `effort` replaces the shared line for that
         // account (§4).
-        let under = target.or_else(|| shadowing_effort(state));
+        let under = target.clone().or_else(|| shadowing_effort(state));
         write_config(state, |document| {
             crate::config::edit::set_effort(document, under.as_deref(), effort.as_deref())
         })?
@@ -742,17 +793,37 @@ fn set_effort(state: &ControlState, params: Option<&Value>) -> Result<Value, Pro
         false
     };
 
+    // What is in force after this, which is not always what was asked for. A
+    // `null` written under an account removes that account's override, and the
+    // shared ceiling applies again (§4) — reporting "no ceiling" there would be
+    // a figure that lasts until the next start and then quietly comes back.
+    let effective = if persisted {
+        configuration(state).effort_ceiling_for(serving_name(state).as_deref())?
+    } else {
+        ceiling
+    };
+
     if applies_now {
-        state.policy.set_effort_ceiling(ceiling);
+        state.policy.set_effort_ceiling(effective);
     }
 
     Ok(json!({
-        "effort": requested.clone(),
+        "effort": effective
+            .and_then(|effort| serde_json::to_value(effort).ok())
+            .unwrap_or(Value::Null),
         "persisted": persisted,
-        "detail": if persisted {
-            "in effect now, and written to the configuration file"
-        } else {
-            "in effect until the daemon stops; the configuration file is unchanged"
+        "account": target,
+        // Three answers, not two. A change written for an account that is not
+        // serving turns is deliberately not applied here, and calling that "in
+        // effect now" tells a front-end a mapping is live for an account this
+        // daemon is not making requests as.
+        "detail": match (persisted, applies_now) {
+            (true, true) => "in effect now, and written to the configuration file",
+            (true, false) => {
+                "written to the configuration file; that account is not serving turns, \
+                 so nothing here changed"
+            }
+            (false, _) => "in effect until the daemon stops; the configuration file is unchanged",
         },
     }))
 }
@@ -828,14 +899,23 @@ fn rename_account(state: &ControlState, params: Option<&Value>) -> Result<Value,
         ));
     };
 
-    // The configuration first, then the store. An account section is keyed by
-    // the name (§4), so a rename that moved the store and failed here would
-    // leave the account with no mapping and the mapping with no account —
-    // silently, since a section naming nobody is not an error. The other
-    // order leaves an orphan section, which costs nothing and is visible.
-    let moved = move_account_section(state, from, to)?;
-
+    // The store first, because it is the half that can refuse: an unknown name,
+    // or one already taken (`auth/store.rs`). Writing the file first meant a
+    // refused rename still moved the section, so the account that already held
+    // the new name silently inherited another account's mapping and the other
+    // lost its own.
+    //
+    // The file is what must not be left behind, so a write that fails puts the
+    // name back rather than leaving the account and its section apart.
     state.credentials.rename(from, to)?;
+    let moved = match move_account_section(state, from, to) {
+        Ok(moved) => moved,
+        Err(error) => {
+            let _ = state.credentials.rename(to, from);
+            return Err(error);
+        }
+    };
+
     Ok(json!({
         "renamed": from,
         "name": to,
@@ -855,10 +935,20 @@ fn move_account_section(state: &ControlState, from: &str, to: &str) -> Result<bo
     let Some(path) = state.config_path.as_ref() else {
         return Ok(false);
     };
-    let Ok(document) = std::fs::read_to_string(path) else {
-        return Ok(false);
+    let document = match std::fs::read_to_string(path) {
+        Ok(document) => document,
+        // No file is nothing to move. Anything else is a file this could not
+        // read, and treating the two alike renames the account and leaves its
+        // section under the old name while reporting that nothing moved.
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => {
+            return Err(ProxyError::invalid_request(format!(
+                "could not read {}: {error}",
+                path.display()
+            )));
+        }
     };
-    let Some(moved) = crate::config::edit::rename_account(&document, from, to) else {
+    let Some(moved) = crate::config::edit::rename_account(&document, from, to)? else {
         return Ok(false);
     };
 
@@ -947,8 +1037,9 @@ async fn select_account(state: &ControlState, params: Option<&Value>) -> Result<
 /// switch goes ahead and `catalog_stale` says the list is not this account's,
 /// which is the honest report and the documented one.
 fn put_mapping_in_force(state: &ControlState, account: &str) -> Result<(), ProxyError> {
-    let tiers = state.config.tiers_for(Some(account)).resolve()?;
-    let ceiling = state.config.effort_ceiling_for(Some(account))?;
+    let config = configuration(state);
+    let tiers = config.tiers_for(Some(account)).resolve()?;
+    let ceiling = config.effort_ceiling_for(Some(account))?;
 
     let catalog = state.catalog.current();
     if !catalog.is_stale_for(serving_account(state).as_deref()) {

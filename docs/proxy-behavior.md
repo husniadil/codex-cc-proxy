@@ -738,7 +738,14 @@ account carries no id to be named by.
 **A change is persisted where the value is read from.** An account section
 shadows the shared table for what it names, so writing a change to the shared
 table while such a section exists would leave it in force on the running daemon
-and gone at the next start. `api.md` §3 carries how each method chooses.
+and gone at the next start. The account tables are therefore read from disk when
+they are needed rather than from the snapshot taken at startup: they are the one
+part of the configuration the daemon writes, and a daemon that cannot see its
+own writes gets this wrong in both directions — a mapping persisted for an
+account and then ignored when that account is selected, and a later change
+written to the shared table because the section it just created is not in the
+snapshot that decides where to write. `api.md` §3 carries how each method
+chooses.
 
 **A switch re-resolves the mapping and can be refused by it.** Selecting an
 account resolves that account's tiers and ceiling and validates them against

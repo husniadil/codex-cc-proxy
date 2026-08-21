@@ -45,7 +45,9 @@ pub fn set_tier(
 
     let mut lines: Vec<String> = document.lines().map(str::to_owned).collect();
 
-    let table = lines.iter().position(|line| line.trim() == header);
+    let table = lines
+        .iter()
+        .position(|line| opens_table(line, account, ".tiers"));
 
     let Some(start) = table else {
         // No table at all. Appending one at the end is safe in a way appending
@@ -116,12 +118,7 @@ pub fn set_effort(
     // the special case: it is a bare key, and a bare key belongs to the table
     // above it.
     if let Some(account) = account {
-        return set_in_table(
-            document,
-            &format!("[accounts.{}]", key(account)),
-            "effort",
-            effort,
-        );
+        return set_in_table(document, account, "effort", effort);
     }
 
     let mut lines: Vec<String> = document.lines().map(str::to_owned).collect();
@@ -206,10 +203,25 @@ fn with_trailing_newline(mut text: String) -> String {
 /// Only the header lines change. The body of each table, and every comment in
 /// and around it, survives byte for byte: what an operator wrote about why a
 /// tier is what it is stays true after the account it belongs to is renamed.
-pub fn rename_account(document: &str, from: &str, to: &str) -> Option<String> {
+pub fn rename_account(document: &str, from: &str, to: &str) -> Result<Option<String>, ProxyError> {
     let mut lines: Vec<String> = document.lines().map(str::to_owned).collect();
-    let mut moved = false;
 
+    // A section under the destination name blocks this. Forgetting an account
+    // leaves its section behind, so the name can be free in the store and taken
+    // in the file — and moving onto it would define one table twice, which TOML
+    // refuses. The daemon would then fail to start on a file the operator never
+    // edited, with a parse error as the only clue.
+    if let Some(occupied) = lines.iter().find(|line| account_header(line, to).is_some()) {
+        return Err(ProxyError::invalid_request(format!(
+            "the configuration file already has `{}` for `{to}`, left behind by an \
+             account of that name. Remove it or merge it into `[accounts.{}]` before \
+             renaming.",
+            occupied.trim(),
+            key(from)
+        )));
+    }
+
+    let mut moved = false;
     for line in &mut lines {
         let Some(rest) = account_header(line, from) else {
             continue;
@@ -218,7 +230,7 @@ pub fn rename_account(document: &str, from: &str, to: &str) -> Option<String> {
         moved = true;
     }
 
-    moved.then(|| with_trailing_newline(lines.join("\n")))
+    Ok(moved.then(|| with_trailing_newline(lines.join("\n"))))
 }
 
 /// The remainder of a header line that opens a table belonging to this
@@ -255,17 +267,21 @@ fn key(name: &str) -> String {
 /// header ends whatever table preceded it.
 fn set_in_table(
     document: &str,
-    header: &str,
+    account: &str,
     name: &str,
     value: Option<&str>,
 ) -> Result<String, ProxyError> {
+    let header = format!("[accounts.{}]", key(account));
     let mut lines: Vec<String> = document.lines().map(str::to_owned).collect();
     let line = match value {
         Some(value) => format!("{name} = \"{value}\""),
         None => format!("# {name} = \"low\""),
     };
 
-    let Some(start) = lines.iter().position(|line| line.trim() == header) else {
+    let Some(start) = lines
+        .iter()
+        .position(|line| opens_table(line, Some(account), ""))
+    else {
         let mut written = document.trim_end().to_owned();
         written.push_str(&format!("\n\n{header}\n{line}\n"));
         return Ok(written);
@@ -304,4 +320,31 @@ fn set_in_table(
     }
 
     Ok(with_trailing_newline(lines.join("\n")))
+}
+
+/// Whether this line opens the table this edit belongs to.
+///
+/// `suffix` is what follows the account name: `""` for the account's own table,
+/// `".tiers"` for the one below it. With no account it is the shared table of
+/// that name.
+///
+/// Both spellings of an account name are recognized, because TOML allows a bare
+/// key and a quoted one for the same table. Matching only the bare one meant an
+/// operator who wrote `[accounts."spare"]` got a second table appended, and a
+/// table defined twice is a file that no longer parses.
+fn opens_table(line: &str, account: Option<&str>, suffix: &str) -> bool {
+    let trimmed = line.trim();
+    let Some(account) = account else {
+        return trimmed == format!("[{}]", suffix.trim_start_matches('.'));
+    };
+    let Some(rest) = trimmed.strip_prefix("[accounts.") else {
+        return false;
+    };
+    let Some(rest) = rest
+        .strip_prefix(&format!("\"{account}\""))
+        .or_else(|| rest.strip_prefix(account))
+    else {
+        return false;
+    };
+    rest == format!("{suffix}]")
 }
