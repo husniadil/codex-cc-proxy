@@ -530,6 +530,18 @@ pub fn environment(state: &ControlState) -> Vec<(String, String)> {
         .any(|tier| !relaying(tier));
     let relayed = state.policy.get().tiers().iter().any(&relaying);
 
+    // The client disables deferred tool loading the moment its base URL is
+    // not a first-party host — it cannot know this proxy forwards
+    // `tool_reference` blocks verbatim. `ENABLE_TOOL_SEARCH=true` is the
+    // client's own documented override, and it holds only where every turn is
+    // relayed: the translating path cannot carry `defer_loading`, so a
+    // mapping with any translated tier keeps the client's default. Measured:
+    // an MCP set costing ~101k tokens loaded up front defers to zero, and
+    // the turns succeed through the relay.
+    if relayed && !translating {
+        variables.push(("ENABLE_TOOL_SEARCH".to_owned(), "true".to_owned()));
+    }
+
     // §7.2 — the real window, where the catalog knows it.
     //
     // The client cannot recognize these model ids, so it assumes 200,000 and

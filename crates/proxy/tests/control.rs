@@ -1144,6 +1144,54 @@ async fn models_for_a_relay_account_lists_the_second_providers_models() {
     );
 }
 
+/// An all-relay launch forces the client's tool search on.
+///
+/// The client disables deferred tool loading the moment its base URL is not a
+/// first-party host — it cannot know this proxy forwards `tool_reference`
+/// blocks verbatim, so it assumes not. Measured: an MCP set that costs ~101k
+/// tokens loaded up front defers to zero with `ENABLE_TOOL_SEARCH=true`, and
+/// the turns succeed through the relay. Only for an all-relay launch: the
+/// translating path cannot carry `defer_loading`, so a mapping with any
+/// translated tier must leave the client's own default in place.
+#[tokio::test]
+async fn an_all_relay_launch_forces_tool_search_on() {
+    let harness = Harness::start().await;
+
+    // The codex-serving default: not forced.
+    let before = harness.call("env").await.unwrap();
+    assert!(
+        !render::variables(&before)
+            .iter()
+            .any(|(name, _)| name == "ENABLE_TOOL_SEARCH"),
+        "{before}"
+    );
+
+    harness
+        .store
+        .add_key("relay", "relay-key-value", Provider::Anthropic)
+        .unwrap();
+    harness
+        .call_with(
+            "tiers.set",
+            json!({ "tiers": {
+                "opus": "claude-opus-5",
+                "sonnet": "claude-sonnet-5",
+                "haiku": "claude-haiku-4-5",
+                "fable": "claude-fable-5",
+            }}),
+        )
+        .await
+        .unwrap();
+
+    let result = harness.call("env").await.unwrap();
+    assert!(
+        render::variables(&result)
+            .iter()
+            .any(|(name, value)| name == "ENABLE_TOOL_SEARCH" && value == "true"),
+        "{result}"
+    );
+}
+
 /// The status catalog line for a relay-serving daemon says what the list is —
 /// curated — rather than reporting a validation that was never owed. The
 /// first provider's catalog has nothing to say about these ids (§9.1).
