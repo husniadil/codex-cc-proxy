@@ -90,9 +90,11 @@ split across several `data:` lines parses as one payload.
 
 ## 4. Fixture corpus
 
-The evidence base the rest is tested against, built without spending quota.
+The evidence base the rest is tested against. Three of its four sources cost
+nothing; the fourth is a short fixed list of exchanges, because the shape of a
+real answer cannot be derived from anything cheaper.
 
-Three sources, in descending order of authority:
+Four sources, in descending order of authority:
 
 1. **The upstream's own protocol definitions.** Its typed event set is the
    authoritative statement of what the backend can emit, and its test harness
@@ -104,12 +106,19 @@ Three sources, in descending order of authority:
    declarations, `defer_loading` stubs, `tool_reference` results, attachment
    blocks, `output_config`, the search sub-request — is observable this way for
    free.
-3. **Hand-authored edge cases**, marked as such, for shapes neither source
+3. **Surface captures.** `record surface` captures the second provider's own
+   Messages endpoint — the surface this proxy claims to expose — as a short
+   fixed list of exchanges. It is the only source that can say what a real
+   answer's field set is, and it is the only one that spends quota, which is
+   why the list is fixed and short rather than driven by a session. These live
+   under `fixtures/surface/` and are not replayed through translation: they are
+   the shape the emitted surface is measured against.
+4. **Hand-authored edge cases**, marked as such, for shapes neither source
    covers.
 
 **Done when** the corpus replays as tests without hand-editing, covers at least
 one exchange per capability in `proxy-behavior.md` §1, every fixture records
-which of the three sources it came from, and a capture parses as a fixture with
+which of the four sources it came from, and a capture parses as a fixture with
 no hand-editing at all.
 
 `record ingress` needs the ingress server, so it arrives in phase 5 and its
@@ -118,6 +127,12 @@ step nobody but the operator can take, and it needs no credentials.
 
 A fixture's provenance is part of the fixture. A derived one and a captured one
 carry different weight, and a reader must not have to guess which is which.
+
+A surface capture is silent about a shape it does not contain, and a skip reads
+exactly like a pass. So the shapes no captured exchange reaches are named in the
+conformance test rather than left to be inferred: extended thinking and the
+server tools each need a turn of their own, and neither has a symptom that
+justifies the quota today.
 
 ---
 
@@ -568,6 +583,7 @@ alongside what they cost to learn.
 | ~~What header delta does the Messages passthrough need?~~ | **Answered, live: none beyond what §9.2 already does.** The Messages endpoint accepted an `sk-ant-oat01-` bearer relayed as `Authorization: Bearer` — repeated 200 generations, streaming included — and `oauth-2025-04-20` is **not** required there: probed with and without, identical success, so the likely-refused hypothesis below was wrong (that beta belongs to the subscription *usage* endpoint). What the endpoint does require is the client's own identity shape — its beta list, `x-app`, its system prompt — which the client always sends and the relay forwards verbatim; a bare minimal request without it is refused upstream as a 429-shaped gate. One real delta surfaced later from a native capture: the client posts `/v1/messages?beta=true`, and the query string is now relayed as sent (§9.2). The paragraph below records what the captures showed on the way. The relay replaces `authorization` with the account credential, drops any `x-api-key` the caller brought, and passes every other client header through as sent (`proxy-behavior.md` §9.2). **Still open, unchanged:** what the real endpoint accepts — in particular whether the subscription-grant path needs the OAuth beta token that appears in no capture, which is why the relay carries keys and not grants at this slice. Method: one live turn against the real endpoint with a stored key, then one with a grant if a grant can be obtained at all (the row below). The client's side is recorded. Ingress capture now keeps headers, and a live client (`claude-cli/2.1.238`, `-p` mode) sent: `authorization: Bearer <token>` — the token variable becomes a bearer header, and no `x-api-key` — plus `anthropic-version: 2023-06-01`, `anthropic-beta: claude-code-20250219,interleaved-thinking-2025-05-14,thinking-token-count-2026-05-13,context-management-2025-06-27,prompt-caching-scope-2026-01-05,mid-conversation-system-2026-04-07,advisor-tool-2026-03-01,effort-2025-11-24`, `anthropic-dangerous-direct-browser-access: true`, `x-app: cli`, `x-claude-code-session-id`, the `x-stainless-*` client telemetry, and ordinary transport headers. The interactive client was captured too and differs only in the `user-agent` suffix (`(external, cli)` vs `(external, sdk-cli)`) — and in one state-dependent entry: without `CLAUDE_CODE_DISABLE_1M_CONTEXT`, `context-1m-2025-08-07` joins the beta list, so the flag governs a wire header as well as the window assumption (§7.2). **Acted on:** the launch surface now exports that flag only where at least one tier still translates — a mapping served entirely by the relay omits it, so the account's own entitlement decides, and it also states no window variables at all, since the client knows those ids natively. A split mapping keeps the flag and still states no window; §7.2 carries the reasoning for both. Notably absent in every capture: `anthropic-beta: oauth-2025-04-20`, which is verified live against the subscription *usage* endpoint and was hypothesized to be needed for Messages too. The client never sends it, and the live probes settled why: Messages does not want it. The hypothesis was tested rather than implemented, and no relay change was ever made for it. |
 | ~~Does the relay's routing survive a client that sends a tier name?~~ | **Answered, by measurement and then by redesign.** Measured first: a real client launched through `exec` against a relay account sends final ids (and follows a `--model` override), never a tier word. Then §9.1 changed the fallthrough itself: an id no mapping names — a tier word included — now follows the account that would authenticate it, so with a relay account serving it is relayed and the provider's own `not_found_error` names the id, and with a translating account serving it translates as before. The silent credential-kind mismatch this row worried about no longer exists on any path. |
 | ~~How is a grant for the second provider obtained?~~ | **Answered: `setup-token`, no new mechanism.** `claude setup-token` mints a subscription-backed OAuth token (`sk-ant-oat01-…`) valid about a year, consumed as a plain `Authorization: Bearer`. That is exactly what the existing key path stores: `login --key --provider anthropic --as NAME` takes any string (no format guard, `store.rs`), and the relay presents a key as a bearer (§9.2) — the right shape for an OAuth token. So the subscription path needs no capture, no refresh, no client id, no keyring, no background job: run `setup-token` once, pipe the token into `login --key`, and the relay spends it. The one-year lifetime removes the management that made every alternative unattractive, which is what changed the earlier "no setup-token" call — it was rejected as ongoing hassle, and the output has none. **Since confirmed live:** the Messages endpoint accepts the `sk-ant-oat01-` bearer as relayed, no extra beta header — the header-delta row above. A *pool* of subscriptions here would still need credential-swapping and is a separate question. Fallback if a token is ever needed without `setup-token`: the proxy holds no copy and never refreshes; a stored account is a reference to the harness's own credential storage (macOS keychain item `Claude Code-credentials` via `security`, or `~/.claude/.credentials.json`), read live per turn and kept fresh by an operator-side scheduled `claude`, the harness staying the sole refresher. |
+| ~~What does the real Messages surface actually answer with?~~ | **Answered.** Five live exchanges through `record surface`, kept as `fixtures/surface/`: a plain generation, a streaming text turn, a streaming tool call, a refusal, and a sizing call. Every conformance claim before this was derived from documentation and from captures of the *client* side — nothing here had ever seen a real answer, and neither existing capture mode could produce one (`record upstream` is wired into the translating path, and a relayed turn streams back untouched with nothing recording it). What the captures settle: the streaming vocabulary is `message_start`, `content_block_start`, `ping`, `content_block_delta`, `content_block_stop`, `message_delta`, `message_stop`; a refusal carries `{type, error{type, message}, request_id}`; sizing answers `{input_tokens}`, which is exactly what §5 emits. The real surface carries fields this proxy does not — `stop_details` on a message, `caller` on a tool-use block, and `service_tier`, `inference_geo` and a nested `cache_creation` in usage — and none is a defect: a client tolerates an absent field, because the real endpoint's own answers vary. The check is therefore a subset in one direction, and it is what fails on drift. **Not reached by any capture, and named rather than inferred:** the thinking and server-tool block kinds. Each needs a turn of its own and neither has a symptom that justifies the quota today. |
 
 Before a question was answered, the corresponding claim in `proxy-behavior.md`
 was **derived from the upstream's own protocol definitions, not confirmed

@@ -1,0 +1,253 @@
+{
+  "name": "streaming-tool-call",
+  "provenance": "captured",
+  "note": "A streaming turn that forces a tool call. This is the fixture the SSE event vocabulary is measured against: the event names the real endpoint emits, and the field set of each one, including the input_json_delta path a tool call takes. The code 4HXR9T is passed through the tool arguments, so the stream is an answer to this request.",
+  "endpoint": "/v1/messages",
+  "request": {
+    "max_tokens": 128,
+    "messages": [
+      {
+        "content": "Record the code 4HXR9T.",
+        "role": "user"
+      }
+    ],
+    "model": "claude-haiku-4-5-20251001",
+    "stream": true,
+    "tool_choice": {
+      "name": "record_code",
+      "type": "tool"
+    },
+    "tools": [
+      {
+        "description": "Record a verification code.",
+        "input_schema": {
+          "properties": {
+            "code": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "code"
+          ],
+          "type": "object"
+        },
+        "name": "record_code"
+      }
+    ]
+  },
+  "status": 200,
+  "headers": [
+    [
+      "date",
+      "Fri, 21 Aug 2026 16:45:54 GMT"
+    ],
+    [
+      "content-type",
+      "text/event-stream; charset=utf-8"
+    ],
+    [
+      "cache-control",
+      "no-cache"
+    ],
+    [
+      "anthropic-ratelimit-unified-status",
+      "allowed_warning"
+    ],
+    [
+      "anthropic-ratelimit-unified-5h-status",
+      "allowed"
+    ],
+    [
+      "anthropic-ratelimit-unified-5h-reset",
+      "1787338800"
+    ],
+    [
+      "anthropic-ratelimit-unified-5h-utilization",
+      "0.44"
+    ],
+    [
+      "anthropic-ratelimit-unified-7d-status",
+      "allowed_warning"
+    ],
+    [
+      "anthropic-ratelimit-unified-7d-reset",
+      "1787371200"
+    ],
+    [
+      "anthropic-ratelimit-unified-7d-utilization",
+      "0.98"
+    ],
+    [
+      "anthropic-ratelimit-unified-7d-surpassed-threshold",
+      "0.75"
+    ],
+    [
+      "anthropic-ratelimit-unified-overage-status",
+      "allowed"
+    ],
+    [
+      "anthropic-ratelimit-unified-overage-reset",
+      "1788220800"
+    ],
+    [
+      "anthropic-ratelimit-unified-overage-utilization",
+      "0.0"
+    ],
+    [
+      "anthropic-ratelimit-unified-representative-claim",
+      "seven_day"
+    ],
+    [
+      "anthropic-ratelimit-unified-fallback-percentage",
+      "0.5"
+    ],
+    [
+      "anthropic-ratelimit-unified-reset",
+      "1787371200"
+    ],
+    [
+      "anthropic-ratelimit-unified-upgrade-paths",
+      "overage"
+    ],
+    [
+      "request-id",
+      "req_011CeGERWJWYxbhQxwFZ5u8D"
+    ],
+    [
+      "strict-transport-security",
+      "max-age=31536000; includeSubDomains; preload"
+    ],
+    [
+      "anthropic-organization-id",
+      "(withheld)"
+    ],
+    [
+      "anthropic-workspace-id",
+      "(withheld)"
+    ],
+    [
+      "traceresponse",
+      "00-9bbf45f9ec3e092767ca03e881dda32c-50ff1bef8b157621-01"
+    ],
+    [
+      "server",
+      "cloudflare"
+    ],
+    [
+      "content-security-policy",
+      "default-src 'none'; frame-ancestors 'none'"
+    ],
+    [
+      "vary",
+      "Accept-Encoding"
+    ],
+    [
+      "cf-cache-status",
+      "DYNAMIC"
+    ],
+    [
+      "x-robots-tag",
+      "none"
+    ],
+    [
+      "cf-ray",
+      "a2eb1c590ca7eba0-SIN"
+    ]
+  ],
+  "events": [
+    {
+      "message": {
+        "content": [],
+        "id": "msg_011CeGERWqm1roBWUFPEWVNb",
+        "model": "claude-haiku-4-5-20251001",
+        "role": "assistant",
+        "stop_details": null,
+        "stop_reason": null,
+        "stop_sequence": null,
+        "type": "message",
+        "usage": {
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 0,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "cache_creation_input_tokens": 0,
+          "cache_read_input_tokens": 0,
+          "inference_geo": "not_available",
+          "input_tokens": 663,
+          "output_tokens": 12,
+          "service_tier": "standard"
+        }
+      },
+      "type": "message_start"
+    },
+    {
+      "content_block": {
+        "caller": {
+          "type": "direct"
+        },
+        "id": "toolu_017sSSSEq8bVrSfUJ4wkb17k",
+        "input": {},
+        "name": "record_code",
+        "type": "tool_use"
+      },
+      "index": 0,
+      "type": "content_block_start"
+    },
+    {
+      "type": "ping"
+    },
+    {
+      "delta": {
+        "partial_json": "",
+        "type": "input_json_delta"
+      },
+      "index": 0,
+      "type": "content_block_delta"
+    },
+    {
+      "delta": {
+        "partial_json": "{\"code\":",
+        "type": "input_json_delta"
+      },
+      "index": 0,
+      "type": "content_block_delta"
+    },
+    {
+      "delta": {
+        "partial_json": " \"4H",
+        "type": "input_json_delta"
+      },
+      "index": 0,
+      "type": "content_block_delta"
+    },
+    {
+      "delta": {
+        "partial_json": "XR9T\"}",
+        "type": "input_json_delta"
+      },
+      "index": 0,
+      "type": "content_block_delta"
+    },
+    {
+      "index": 0,
+      "type": "content_block_stop"
+    },
+    {
+      "delta": {
+        "stop_details": null,
+        "stop_reason": "tool_use",
+        "stop_sequence": null
+      },
+      "type": "message_delta",
+      "usage": {
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 663,
+        "output_tokens": 38
+      }
+    },
+    {
+      "type": "message_stop"
+    }
+  ]
+}

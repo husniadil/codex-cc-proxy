@@ -369,13 +369,33 @@ costs anything:
   daemon started this way is captured, not only the failing ones — a fixture is
   made from an exchange that worked.
 
+- **surface** captures the second provider's Messages endpoint itself: a short
+  fixed list of exchanges — a plain generation, a streaming text turn, a
+  streaming tool call, a refusal, and a sizing call — made against the real
+  endpoint and written as conformance fixtures under `fixtures/surface/`. It
+  makes the calls rather than waiting for a client to make them, because what
+  is wanted is a handful of known shapes rather than whatever a session happens
+  to send, and it needs no daemon at all. It goes out through the same relay
+  code a §9 turn takes, so what is captured is what the shipping path would
+  receive. `--account` is required and must name an account on the second
+  provider: spending the wrong subscription is not recoverable, and the
+  selected account is usually the other one. `--only <name>` captures one
+  exchange, because a capture on disk is quota already spent. Response headers
+  are scrubbed by name before anything is written — `authorization`,
+  `x-api-key`, `cookie`, `proxy-authorization`, `set-cookie`, and the
+  organization and workspace ids, the last two because a fixture is committed
+  and they say whose account paid for it.
+
 Both halves are needed to replay one. The request cannot be inferred from the
 stream, which is why the capture holds the client's request rather than the
 translated one: a capture of the translated request could not be replayed
 through the translation it had already been through.
 
-Both write to the same fixture format, so a test replays either without knowing
-which mode produced it.
+Ingress and upstream write to the same fixture format, so a test replays either
+without knowing which mode produced it. Surface captures are a format of their
+own: they hold a status, a scrubbed header set, and either a body or a list of
+SSE payloads, because what they record is an endpoint's answer rather than an
+exchange to be replayed through translation.
 
 Either mode runs a daemon, so both take the daemon's port control: `--port`, or
 `PROXENOS_PORT`, overriding the configured value — the same pair `run`

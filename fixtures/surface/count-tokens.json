@@ -1,0 +1,69 @@
+{
+  "name": "count-tokens",
+  "provenance": "captured",
+  "note": "The sizing endpoint's real response. This proxy answers sizing locally from its estimator (docs/api.md \u00a75) and never relays it, so no turn through the daemon can ever show what the real one returns \u2014 only a direct call can.",
+  "endpoint": "/v1/messages/count_tokens",
+  "request": {
+    "messages": [
+      {
+        "content": "How many tokens is this?",
+        "role": "user"
+      }
+    ],
+    "model": "claude-haiku-4-5-20251001"
+  },
+  "status": 200,
+  "headers": [
+    [
+      "date",
+      "Fri, 21 Aug 2026 16:45:55 GMT"
+    ],
+    [
+      "content-type",
+      "application/json"
+    ],
+    [
+      "request-id",
+      "req_011CeGERcLeietkg18gEMdGE"
+    ],
+    [
+      "anthropic-organization-id",
+      "(withheld)"
+    ],
+    [
+      "anthropic-workspace-id",
+      "(withheld)"
+    ],
+    [
+      "vary",
+      "Accept-Encoding"
+    ],
+    [
+      "content-security-policy",
+      "default-src 'none'; frame-ancestors 'none'"
+    ],
+    [
+      "server",
+      "cloudflare"
+    ],
+    [
+      "server-timing",
+      "x-originResponse;dur=82"
+    ],
+    [
+      "cf-cache-status",
+      "DYNAMIC"
+    ],
+    [
+      "x-robots-tag",
+      "none"
+    ],
+    [
+      "cf-ray",
+      "a2eb1c61fd759c5f-SIN"
+    ]
+  ],
+  "body": {
+    "input_tokens": 13
+  }
+}

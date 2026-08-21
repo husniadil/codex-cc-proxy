@@ -4,6 +4,7 @@
 
 mod cli;
 
+use anyhow::Context;
 use anyhow::Result;
 use anyhow::bail;
 use clap::Parser;
@@ -779,7 +780,78 @@ async fn record(args: cli::RecordArgs) -> Result<()> {
             )
             .await
         }
+        cli::RecordMode::Surface { account, out, only } => {
+            surface(&account, out, only.as_deref()).await
+        }
     }
+}
+
+/// Capture the real Messages surface.
+///
+/// Out through `Relay`, the same code a relayed turn takes, so what lands in a
+/// fixture is what the shipping path would receive rather than what a
+/// purpose-built client would.
+async fn surface(account: &str, out: Option<std::path::PathBuf>, only: Option<&str>) -> Result<()> {
+    let store: Arc<dyn proxenos::auth::store::AccountStore> =
+        Arc::new(proxenos::auth::store::FileStore::new(credential_path()));
+
+    // Refused here rather than at the endpoint. A credential stored for one
+    // provider spent against the other's host is a key leaking somewhere it
+    // was never stored for, and the endpoint's own refusal would arrive after
+    // it had already been sent.
+    let named = store
+        .accounts()?
+        .into_iter()
+        .find(|stored| stored.name == account)
+        .with_context(|| format!("no account named `{account}` is stored"))?;
+    if named.provider != proxenos::auth::store::Provider::Anthropic.as_str() {
+        anyhow::bail!(
+            "`{account}` is stored for {}, and this captures the Messages surface of              anthropic; name an anthropic account (`proxenos accounts` lists them)",
+            named.provider
+        );
+    }
+
+    let tokens = Arc::new(proxenos::auth::tokens::TokenSource::new(
+        Arc::clone(&store) as Arc<dyn proxenos::auth::store::CredentialStore>,
+        proxenos::auth::flow::token_endpoint(),
+        proxenos::auth::flow::CLIENT_ID,
+        Arc::new(proxenos::auth::tokens::SystemClock),
+    ));
+    let authorizer: Arc<dyn proxenos::auth::authorize::Authorizer> = Arc::new(
+        proxenos::auth::authorize::AccountAuthorizer::new(Arc::clone(&store), tokens),
+    );
+
+    let endpoint = Config::load()?.upstream.anthropic.endpoint;
+    let messages = proxenos::upstream::relay::Relay::new(
+        endpoint.clone(),
+        Arc::clone(&store),
+        Arc::clone(&authorizer),
+    );
+    let sizing = proxenos::upstream::relay::Relay::new(
+        format!("{endpoint}/count_tokens"),
+        Arc::clone(&store),
+        Arc::clone(&authorizer),
+    );
+
+    let directory = out.unwrap_or_else(|| std::path::PathBuf::from("fixtures/surface"));
+
+    // Says so before it starts, because the cost is not recoverable afterwards.
+    let exchanges = match only {
+        Some(_) => 1,
+        None => proxenos::surface::PLANS.len(),
+    };
+    tracing::warn!(
+        exchanges,
+        account,
+        "capturing the Messages surface: one live turn per exchange, spent on this account"
+    );
+
+    let written =
+        proxenos::surface::capture_some(&messages, &sizing, account, &directory, only).await?;
+    for path in &written {
+        println!("{}", path.display());
+    }
+    Ok(())
 }
 
 /// What a run captures, beyond the empty streams §5.4 always records.

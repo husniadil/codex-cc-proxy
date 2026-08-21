@@ -4,6 +4,36 @@ All notable changes to this project are recorded here. This project follows
 [semantic versioning](https://semver.org). The semver-bound surfaces are listed
 in [`docs/api.md`](docs/api.md) §6.
 
+## [Unreleased]
+
+### Added
+
+- **`record surface` captures the real Messages surface.** The proxy's whole
+  product is an Anthropic Messages surface, and until now nothing here had ever
+  seen one: every conformance claim was derived from documentation and from
+  captures of the *client* side. Neither existing capture mode could produce an
+  answer from the real endpoint — `record upstream` is wired into the
+  translating path, where the events belong to the other provider, and a
+  relayed turn (`proxy-behavior.md` §9) streams back untouched with nothing
+  recording it. The new mode makes a short fixed list of calls itself, through
+  the same relay code a §9 turn takes, and writes each as a fixture under
+  `fixtures/surface/`. `--account` is required and must name an account on the
+  second provider; `--only <name>` captures one exchange, because a capture on
+  disk is quota already spent. Response headers are scrubbed by name before
+  anything is written, including the organization and workspace ids — a fixture
+  is committed, and those say whose account paid for it.
+
+- **The emitted surface is held to the measured one.** A conformance test
+  replays the corpus through the shipping translator and compares what it emits
+  against the captured answers at the level of shape: which SSE events exist,
+  which fields each carries, and which keys an error envelope has. Content is
+  never compared — a token count that moved is not a defect. The rule is a
+  subset in one direction: a field the real surface carries and this proxy omits
+  is one a client already tolerates being absent, while a field this proxy emits
+  that a real answer never carries is something the client was never built to
+  receive. Shapes no capture reaches are named rather than skipped silently,
+  because a skip reads exactly like a pass.
+
 ## [0.7.0]
 
 The operator surface catches up with the second provider: a guided login

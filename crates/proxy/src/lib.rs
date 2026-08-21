@@ -21,5 +21,6 @@ pub mod recorder;
 pub mod render;
 pub mod session;
 pub mod statusline;
+pub mod surface;
 pub mod upstream;
 pub mod usage;

@@ -207,6 +207,30 @@ pub enum RecordMode {
         #[arg(long, env = "PROXENOS_PORT")]
         port: Option<u16>,
     },
+    /// Capture the real Messages surface: a short fixed set of exchanges made
+    /// against the second provider's endpoint, written as conformance
+    /// fixtures.
+    ///
+    /// No daemon and no client. The other two modes wait for a client to send
+    /// something; this one makes the calls, because what is wanted is a
+    /// handful of known shapes rather than whatever a session happens to send.
+    /// It spends one turn per exchange.
+    Surface {
+        /// The stored account to spend, which must be on the second provider.
+        /// Named rather than defaulted: spending the wrong subscription is not
+        /// recoverable, and the selected account is usually the other one.
+        #[arg(long)]
+        account: String,
+        /// Where the fixtures go. Defaults to `fixtures/surface` under the
+        /// working directory, which is where the suite reads them from.
+        #[arg(long)]
+        out: Option<std::path::PathBuf>,
+        /// Capture one named exchange instead of all of them. A capture on
+        /// disk is quota already spent, and adding a shape to the corpus is
+        /// not a reason to pay for the ones already there.
+        #[arg(long)]
+        only: Option<String>,
+    },
 }
 
 #[cfg(test)]
@@ -455,6 +479,23 @@ mod tests {
             cli.command,
             Command::Record(RecordArgs {
                 mode: RecordMode::Ingress { .. }
+            })
+        ));
+    }
+
+    /// The account is required rather than defaulted. Spending the wrong
+    /// subscription is not recoverable, and the selected account is usually
+    /// the other provider's.
+    #[test]
+    fn surface_capture_will_not_run_without_being_told_which_account_pays() {
+        assert!(Cli::try_parse_from(["proxenos", "record", "surface"]).is_err());
+
+        let cli = Cli::try_parse_from(["proxenos", "record", "surface", "--account", "personal"])
+            .unwrap();
+        assert!(matches!(
+            cli.command,
+            Command::Record(RecordArgs {
+                mode: RecordMode::Surface { only: None, .. }
             })
         ));
     }
