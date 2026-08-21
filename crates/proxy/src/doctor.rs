@@ -354,6 +354,7 @@ async fn run_one(probe: &probe::Probe, fixture: &Fixture, backend: &Backend) -> 
             working_budget: false,
         }),
         sessions: Arc::new(crate::session::SessionStore::new()),
+        relay: None,
     };
 
     let Ok(listener) = tokio::net::TcpListener::bind("127.0.0.1:0").await else {

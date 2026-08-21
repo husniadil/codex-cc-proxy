@@ -313,6 +313,33 @@ pub struct UpstreamConfig {
     /// discovers.
     #[serde(default)]
     pub key: KeyEndpoints,
+    /// §9 — where a relayed turn goes.
+    #[serde(default)]
+    pub anthropic: AnthropicEndpoints,
+}
+
+/// The second provider's endpoints.
+///
+/// One entry, because the relay does one thing: it speaks the surface this
+/// proxy already exposes, so there is no catalog to translate and no socket
+/// protocol to speak. A model list for it would be a separate decision.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct AnthropicEndpoints {
+    #[serde(default = "default_anthropic_endpoint")]
+    pub endpoint: String,
+}
+
+impl Default for AnthropicEndpoints {
+    fn default() -> Self {
+        Self {
+            endpoint: default_anthropic_endpoint(),
+        }
+    }
+}
+
+fn default_anthropic_endpoint() -> String {
+    "https://api.anthropic.com/v1/messages".to_owned()
 }
 
 /// The endpoints an API key is spent against.
@@ -383,6 +410,7 @@ impl Default for UpstreamConfig {
             websocket: default_websocket(),
             catalog: default_catalog(),
             key: KeyEndpoints::default(),
+            anthropic: AnthropicEndpoints::default(),
             usage: default_usage(),
         }
     }

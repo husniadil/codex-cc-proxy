@@ -10,6 +10,7 @@ pub mod compression;
 pub mod conduit;
 pub mod http;
 pub mod pool;
+pub mod relay;
 pub mod websocket;
 
 use crate::error::ProxyError;

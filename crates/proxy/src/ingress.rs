@@ -69,6 +69,13 @@ pub struct AppState {
     /// Per-conversation state: calibration, discovered tools, and the baseline
     /// the incremental path will use.
     pub sessions: Arc<crate::session::SessionStore>,
+    /// §9 — where a turn belonging to the second provider goes.
+    ///
+    /// `None` in a daemon configured for one provider, which is every daemon
+    /// until an account for the other is stored. Absent rather than a
+    /// transport that refuses, because the routing decision is made before
+    /// there is a request to refuse.
+    pub relay: Option<Arc<crate::upstream::relay::Relay>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -149,23 +156,52 @@ async fn count_tokens(
     Json(serde_json::json!({ "input_tokens": estimate })).into_response()
 }
 
+/// Just enough of a request to route it.
+///
+/// The relay forwards the body it was given, so nothing on that path may
+/// re-serialize it — which means the routing decision has to be made from the
+/// raw bytes, before the request is parsed into anything.
+#[derive(serde::Deserialize)]
+struct Routed {
+    model: String,
+}
+
 async fn messages(
     State(state): State<AppState>,
-    // Read for the ingress capture only; routing never depends on a header.
+    // Read for the ingress capture, and relayed as sent on the §9 path.
+    // Routing never depends on a header.
     headers: axum::http::HeaderMap,
-    body: Result<Json<MessagesRequest>, axum::extract::rejection::JsonRejection>,
+    body: axum::body::Bytes,
 ) -> Response {
-    let Json(request) = match body {
+    // One snapshot for the whole turn. Taken before anything is translated, so
+    // a mapping set mid-turn cannot move the model this request is already
+    // being prepared for.
+    let policy = state.policy.get();
+
+    // §9.1 — routed before it is parsed. A body that does not even carry a
+    // model falls through to the parse below, which is what states what is
+    // wrong with it.
+    if let Some(relay) = &state.relay
+        && let Ok(routed) = serde_json::from_slice::<Routed>(&body)
+    {
+        match relay.account_for(&routed.model, policy.models()) {
+            Ok(Some(account)) => {
+                return match relay.forward(&account, &headers, body).await {
+                    Ok(response) => response,
+                    Err(error) => error.into_response(),
+                };
+            }
+            Ok(None) => {}
+            Err(error) => return error.into_response(),
+        }
+    }
+
+    let Json(request) = match Json::<MessagesRequest>::from_bytes(&body) {
         Ok(body) => body,
         Err(rejection) => {
             return ProxyError::invalid_request(rejection.body_text()).into_response();
         }
     };
-
-    // One snapshot for the whole turn. Taken before anything is translated, so
-    // a mapping set mid-turn cannot move the model this request is already
-    // being prepared for.
-    let policy = state.policy.get();
 
     let routed = policy
         .models()

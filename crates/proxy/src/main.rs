@@ -1055,6 +1055,15 @@ async fn run_with(args: RunArgs, capture: Capture) -> Result<()> {
         usage: Arc::clone(&usage),
         instructions: Arc::new(config.instructions.clone()),
         sessions,
+        // §9 — always built, never conditional on what the store holds today.
+        // Whether a turn takes this path is decided per request from the
+        // mapping and the account behind it, so an account stored while the
+        // daemon runs is routed by the next turn rather than the next start.
+        relay: Some(Arc::new(proxenos::upstream::relay::Relay::new(
+            &config.upstream.anthropic.endpoint,
+            Arc::clone(&credentials),
+            Arc::clone(&authorizer),
+        ))),
     };
 
     // Whichever comes first: the listener stopping on its own, or a stop asked

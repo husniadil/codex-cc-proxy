@@ -143,6 +143,7 @@ async fn daemon(store: Arc<FileStore>, tiers: Vec<ResolvedTier>) -> (String, See
             working_budget: false,
         }),
         sessions: Arc::new(proxenos::session::SessionStore::new()),
+        relay: None,
     };
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

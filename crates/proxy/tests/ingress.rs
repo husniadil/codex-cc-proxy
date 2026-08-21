@@ -91,6 +91,7 @@ impl Harness {
                 working_budget: false,
             }),
             sessions: Arc::new(proxenos::session::SessionStore::new()),
+            relay: None,
         };
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -878,6 +879,7 @@ async fn the_configured_instructions_reach_the_backend() {
             working_budget: false,
         }),
         sessions: Arc::new(proxenos::session::SessionStore::new()),
+        relay: None,
     };
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -952,6 +954,7 @@ async fn the_working_budget_reaches_upstream_on_a_default_configuration() {
         // The shipped default, not a hand-built one.
         instructions: Arc::new(proxenos::config::InstructionsConfig::default()),
         sessions: Arc::new(proxenos::session::SessionStore::new()),
+        relay: None,
     };
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -1516,6 +1519,7 @@ async fn ingress_sends_through_a_conduit_and_uploads_incrementally() {
             working_budget: false,
         }),
         sessions: Arc::new(proxenos::session::SessionStore::new()),
+        relay: None,
     };
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -1643,6 +1647,7 @@ async fn a_second_turn_uploads_the_new_items_and_not_nothing() {
             working_budget: false,
         }),
         sessions: Arc::new(proxenos::session::SessionStore::new()),
+        relay: None,
     };
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -1835,6 +1840,7 @@ async fn a_reasoning_turn_does_not_end_the_session() {
             working_budget: false,
         }),
         sessions: Arc::new(proxenos::session::SessionStore::new()),
+        relay: None,
     };
     let sessions = Arc::clone(&state.sessions);
 
@@ -1960,6 +1966,7 @@ async fn a_failed_turn_does_not_advance_the_baseline() {
             working_budget: false,
         }),
         sessions: Arc::new(proxenos::session::SessionStore::new()),
+        relay: None,
     };
     let sessions = Arc::clone(&state.sessions);
 
@@ -2071,6 +2078,7 @@ async fn a_request_larger_than_the_window_is_refused() {
             working_budget: false,
         }),
         sessions: Arc::new(proxenos::session::SessionStore::new()),
+        relay: None,
     };
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -2147,6 +2155,7 @@ async fn an_unknown_window_does_not_refuse_anything() {
             working_budget: false,
         }),
         sessions: Arc::new(proxenos::session::SessionStore::new()),
+        relay: None,
     };
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -2221,6 +2230,7 @@ async fn effort_is_capped_by_what_the_model_supports() {
             working_budget: false,
         }),
         sessions: Arc::new(proxenos::session::SessionStore::new()),
+        relay: None,
     };
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -2288,6 +2298,7 @@ async fn an_unlisted_model_does_not_cap_effort() {
             working_budget: false,
         }),
         sessions: Arc::new(proxenos::session::SessionStore::new()),
+        relay: None,
     };
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -2626,6 +2637,7 @@ async fn every_turn_of_a_conversation_carries_one_session_id() {
         usage: Arc::new(proxenos::usage::UsageStore::default()),
         instructions: Arc::new(proxenos::config::InstructionsConfig::default()),
         sessions: Arc::new(proxenos::session::SessionStore::new()),
+        relay: None,
     };
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
