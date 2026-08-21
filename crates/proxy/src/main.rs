@@ -296,7 +296,7 @@ async fn accounts(args: cli::AccountsArgs) -> Result<()> {
     if let Some(name) = args.forget {
         let result = control::call(
             &control::default_path(),
-            "disconnect",
+            "accounts.forget",
             Some(serde_json::json!({ "account": name })),
         )
         .await?;

@@ -180,7 +180,7 @@ pub fn renamed_account(result: &Value) -> String {
 /// The second half matters: forgetting the account that was serving hands over
 /// to another one, and an operator who is not told has to go and look.
 pub fn forgotten_account(result: &Value) -> String {
-    let forgotten = field(result, "disconnected")
+    let forgotten = field(result, "forgotten")
         .and_then(Value::as_str)
         .unwrap_or("nothing");
     match field(result, "serving").and_then(Value::as_str) {

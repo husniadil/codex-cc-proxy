@@ -85,7 +85,7 @@ pub async fn dispatch(
             "settings": state.client.settings(),
         })),
         "usage" => Ok(usage(state)),
-        "disconnect" => disconnect(state, params).await,
+        "accounts.forget" => forget_account(state, params).await,
         "accounts" => accounts(state),
         "accounts.select" => select_account(state, params).await,
         "accounts.rename" => rename_account(state, params),
@@ -793,13 +793,13 @@ fn authorizer(state: &ControlState) -> Option<crate::auth::authorize::AccountAut
     })
 }
 
-/// `disconnect` — forget one account.
+/// `accounts.forget` — forget one account.
 ///
 /// With nothing named it clears the account serving turns, which is what a
 /// caller that knows of only one means by it. The rest stay usable, and the
 /// answer says which one went: a front-end that could not tell would have to
 /// guess what it just did.
-async fn disconnect(state: &ControlState, params: Option<&Value>) -> Result<Value, ProxyError> {
+async fn forget_account(state: &ControlState, params: Option<&Value>) -> Result<Value, ProxyError> {
     let named = params
         .and_then(|params| params.get("account"))
         .and_then(Value::as_str);
@@ -817,7 +817,7 @@ async fn disconnect(state: &ControlState, params: Option<&Value>) -> Result<Valu
             Some(name.to_owned())
         }
         None => {
-            // Clearing what is already gone is not an error: `disconnect` has
+            // Clearing what is already gone is not an error: forgetting has
             // always been safe to run twice.
             state.credentials.clear()?;
             serving.clone()
@@ -840,7 +840,7 @@ async fn disconnect(state: &ControlState, params: Option<&Value>) -> Result<Valu
     }
 
     Ok(json!({
-        "disconnected": cleared,
+        "forgotten": cleared,
         // Who serves turns now. Forgetting the account that was serving hands
         // over to another, and a caller that has to ask a second question to
         // learn which is a caller that will report the wrong one.

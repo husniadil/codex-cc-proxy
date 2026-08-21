@@ -503,9 +503,9 @@ async fn status_names_a_tier_mapped_onto_a_withheld_model() {
     assert_eq!(status["unlisted_tiers"], json!([]));
 }
 
-/// `disconnect` clears credentials, and is safe to run twice.
+/// `accounts.forget` clears credentials, and is safe to run twice.
 #[tokio::test]
-async fn disconnect_clears_credentials() {
+async fn forgetting_clears_credentials() {
     let harness = Harness::start().await;
     harness
         .store
@@ -518,10 +518,10 @@ async fn disconnect_clears_credentials() {
         })
         .unwrap();
 
-    harness.call("disconnect").await.unwrap();
+    harness.call("accounts.forget").await.unwrap();
     assert!(harness.store.load().unwrap().is_none());
 
-    harness.call("disconnect").await.unwrap();
+    harness.call("accounts.forget").await.unwrap();
 }
 
 /// §2.1 — all four tier variables, plus the context floor. `WebFetch` runs on
@@ -2183,9 +2183,9 @@ async fn status_names_the_serving_account_and_the_others() {
     assert_eq!(accounts[1]["selected"], json!(true));
 }
 
-/// `disconnect` names the account it cleared and leaves the rest usable.
+/// `accounts.forget` names the account it cleared and leaves the rest usable.
 #[tokio::test]
-async fn disconnect_names_the_account_it_cleared_and_leaves_the_rest() {
+async fn forgetting_names_the_account_it_cleared_and_leaves_the_rest() {
     let harness = Harness::start().await;
     harness
         .store
@@ -2197,8 +2197,8 @@ async fn disconnect_names_the_account_it_cleared_and_leaves_the_rest() {
         .unwrap();
 
     // With nothing named, the account serving turns is the one that goes.
-    let answer = harness.call("disconnect").await.unwrap();
-    assert_eq!(answer["disconnected"], json!("acct_two"));
+    let answer = harness.call("accounts.forget").await.unwrap();
+    assert_eq!(answer["forgotten"], json!("acct_two"));
     // Who serves turns now, so a caller does not have to ask again.
     assert_eq!(answer["serving"], json!("acct_one"));
     assert_eq!(
@@ -2213,19 +2213,19 @@ async fn disconnect_names_the_account_it_cleared_and_leaves_the_rest() {
         .add(&grant("acct_two", "a-two"), None)
         .unwrap();
     let answer = harness
-        .call_with("disconnect", json!({ "account": "acct_one" }))
+        .call_with("accounts.forget", json!({ "account": "acct_one" }))
         .await
         .unwrap();
-    assert_eq!(answer["disconnected"], json!("acct_one"));
+    assert_eq!(answer["forgotten"], json!("acct_one"));
     let listed = harness.call("accounts").await.unwrap();
     assert_eq!(listed["accounts"].as_array().unwrap().len(), 1);
     assert_eq!(listed["accounts"][0]["name"], json!("acct_two"));
 
     // Clearing the last one empties the store, and doing it again is safe.
-    let answer = harness.call("disconnect").await.unwrap();
+    let answer = harness.call("accounts.forget").await.unwrap();
     assert_eq!(answer["serving"], Value::Null, "nothing is left to serve");
     assert!(harness.store.load().unwrap().is_none());
-    harness.call("disconnect").await.unwrap();
+    harness.call("accounts.forget").await.unwrap();
 }
 
 /// A refusal is about a grant. Switching accounts replaces the grant, so the
@@ -2344,8 +2344,8 @@ async fn the_rendered_account_list_marks_the_one_serving_turns() {
     assert!(rendered.contains("acct_one@example.test"), "{rendered}");
 
     // An empty store says what to do about it rather than printing nothing.
-    harness.call("disconnect").await.unwrap();
-    harness.call("disconnect").await.unwrap();
+    harness.call("accounts.forget").await.unwrap();
+    harness.call("accounts.forget").await.unwrap();
     let rendered = render::accounts(&harness.call("accounts").await.unwrap());
     assert!(rendered.contains("login"), "{rendered}");
 }
@@ -2374,7 +2374,7 @@ async fn removing_an_idle_account_leaves_the_serving_grant_alone() {
     });
 
     harness
-        .call_with("disconnect", json!({ "account": "acct_spare" }))
+        .call_with("accounts.forget", json!({ "account": "acct_spare" }))
         .await
         .unwrap();
 
@@ -2681,9 +2681,9 @@ async fn forgetting_the_serving_account_refetches_the_catalog() {
         .unwrap();
     let harness = harness.with_catalog_source(&catalogs.url).await;
 
-    let answer = harness.call("disconnect").await.unwrap();
+    let answer = harness.call("accounts.forget").await.unwrap();
 
-    assert_eq!(answer["disconnected"], json!("acct_two"));
+    assert_eq!(answer["forgotten"], json!("acct_two"));
     assert_eq!(answer["catalog_refreshed"], json!(true));
     assert_eq!(
         harness.call("models").await.unwrap()["models"][0]["id"],

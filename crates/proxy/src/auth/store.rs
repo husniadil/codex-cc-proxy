@@ -668,7 +668,7 @@ impl CredentialStore for FileStore {
 
     /// Forget the account serving turns, leaving the rest usable.
     ///
-    /// Clearing what is already gone is not an error: `disconnect` must be
+    /// Clearing what is already gone is not an error: `accounts.forget` must be
     /// safe to run twice.
     fn clear(&self) -> Result<(), ProxyError> {
         self.update(|file| {

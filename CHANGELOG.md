@@ -8,6 +8,17 @@ in [`docs/api.md`](docs/api.md) §6.
 
 ### Changed
 
+- **`disconnect` is now `accounts.forget` on the control socket, and its answer
+  says `forgotten` rather than `disconnected`.** The old name shipped in v0.1,
+  when there was one account and disconnecting from it was the whole idea. With
+  a store of several, forgetting one is an account operation, and every other
+  account operation is `accounts.<verb>`. This is a breaking change to a
+  semver-bound surface, made rather than deferred because nothing outside this
+  project's own CLI has ever spoken the socket, and the CLI and the daemon are
+  one binary — the rename lands on both at once. `api.md` §6 now states when
+  that stops being true. Nothing in the CLI changes: `accounts --forget NAME`
+  is what it always was.
+
 - **A credential directory that cannot lock says what to do about it.** Every
   write takes a lock beside the credential file, and a filesystem that cannot
   take one — a home on a network mount being the case that exists — now fails

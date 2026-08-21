@@ -459,7 +459,7 @@ A Unix domain socket, or a named pipe on Windows, carrying JSON-RPC:
 | Method | Returns | v0.1 |
 |---|---|---|
 | `status` | connection state, whether the grant has been **refused**, plan and which source reported it, the tier mapping and the effort ceiling, any mapped model the catalog withholds, whether the catalog was authoritative, the client policy in effect, and the build and `instance` serving the socket | yes |
-| `disconnect` | forgets one account — the selected one, or `{"account": name}` — and answers with the name it cleared and the one serving turns afterwards; the rest stay usable, and an idle account's removal leaves the serving grant's quota alone | yes |
+| `accounts.forget` | forgets one account — the selected one, or `{"account": name}` — and answers with the name it cleared and the one serving turns afterwards; the rest stay usable, and an idle account's removal leaves the serving grant's quota alone | no — was `disconnect` |
 | `accounts` | every stored account, what kind of credential each holds, and which one serves turns; no tokens | no — v0.3 |
 | `accounts.select` | `{"account": name}`, the account every following turn is made as, and whether the catalog was refetched for it | no — v0.3 |
 | `accounts.rename` | `{"account": from, "name": to}`, the name this daemon calls an account by; the grant and the account id are untouched | no — v0.3 |
@@ -476,14 +476,15 @@ A Unix domain socket, or a named pipe on Windows, carrying JSON-RPC:
 | `effort.set` | the effort ceiling, or `null` to remove it; in effect until the daemon stops | yes |
 | `doctor` | probe results | no — `doctor` runs in the CLI, which is where `--live` can be given credentials without a daemon already holding them |
 
-**`disconnect` keeps its name.** Every other account verb is `accounts.<verb>`,
-and by that pattern forgetting one would be `accounts.forget`. The name shipped
-in v0.1 when there was one account to disconnect from, and §6 binds it for the
-rest of this major version, so renaming is not on offer and adding the tidier
-name would leave two methods doing one thing for as long as the other has to
-stay. One name that does not match the pattern costs a reader a moment; two
-names for one operation costs every caller a decision about which to use. This
-is settled rather than pending.
+**`disconnect` is gone and `accounts.forget` replaces it**, and the answer's
+`disconnected` field is `forgotten`. The old name shipped in v0.1, when there
+was one account and disconnecting from it was the whole idea; with a store of
+several, forgetting one is an account operation and every other account
+operation is `accounts.<verb>`. Keeping it would have left one method outside
+the pattern, and adding the new name beside it would have left two methods
+doing one thing for as long as the other had to stay. Renamed rather than
+either, because nothing but this project's own CLI has ever called the socket
+— see §6 on what that permits and when it stops.
 
 `auth.dead` is the one that is easy to miss: a refused grant leaves `connected`
 true, because the credential file is still there and still readable, while every
@@ -520,7 +521,7 @@ mapping rather than a front-end, since it is the side holding the catalog.
 the ingress authenticates through, so the next turn is made as the account
 named rather than the one this socket merely reports. The quota snapshot goes
 with it, because it belongs to the account that earned it, and the next turn
-supplies one for whoever is serving now; `disconnect` drops it too when the
+supplies one for whoever is serving now; `accounts.forget` drops it too when the
 account it forgets is the one that was serving, and only then, since forgetting
 an idle account changes nothing about the grant being spent.
 
@@ -536,7 +537,7 @@ that was refused, so it ends when the stored grant is no longer that token and
 returns if it comes back.
 
 **A catalog belongs to the account it was fetched for** (`proxy-behavior.md`
-§7.0). `accounts.select` and a `disconnect` that hands over to another account
+§7.0). `accounts.select` and an `accounts.forget` that hands over to another account
 fetch it again as whoever serves now, and their answers carry
 `catalog_refreshed` — a fetch that failed keeps the previous list in force, and
 everything downstream of it still describes that account. A CLI `login` calls
@@ -791,6 +792,16 @@ pending work.
 The CLI verb set, the control-socket method names, the configuration keys, and
 the error-type vocabulary are semver-bound. A shipped name is never repurposed or
 removed within a major version; only new ones are added.
+
+**Before 1.0 that rule has one deliberate exception, and it closes on its own.**
+Semantic versioning does not bind a zero major, and nothing outside this
+project's own CLI has ever spoken the socket — the CLI and the daemon are one
+binary, so a rename lands on both at once. A name that turns out wrong is
+therefore renamed on a minor bump, said in the changelog, and gone rather than
+left beside its replacement. `accounts.forget` arrived that way. The exception
+ends when a second caller exists, which is what v0.4.0 is, and it ends whether
+or not 1.0 has been reached: the moment something else has to be upgraded in
+step, only additions are safe.
 
 **An unknown method reaches the caller as an unknown method.** The error code
 survives the round trip rather than being flattened into one kind, because
