@@ -913,6 +913,7 @@ async fn the_env_payload_carries_the_client_policy_beside_the_variables() {
         json!({
             "permissions": { "deny": ["Skill(claude-api)"] },
             "disableClaudeAiConnectors": true,
+            "remoteControlAtStartup": false,
         })
     );
 }
@@ -1005,6 +1006,7 @@ async fn a_client_policy_switched_off_leaves_no_trace() {
         .with_client(proxenos::config::ClientConfig {
             deny_skills: Some(Vec::new()),
             disable_connectors: false,
+            disable_remote_control: false,
         })
         .await;
     let result = harness.call("env").await.unwrap();
@@ -1067,7 +1069,7 @@ async fn an_all_relay_launch_carries_no_skill_deny_by_default() {
     let result = harness.call("env").await.unwrap();
     assert_eq!(
         result["settings"],
-        json!({ "disableClaudeAiConnectors": true }),
+        json!({ "disableClaudeAiConnectors": true, "remoteControlAtStartup": false }),
         "{result}"
     );
 
@@ -1190,6 +1192,7 @@ async fn status_stays_quiet_when_nothing_is_denied() {
         .with_client(proxenos::config::ClientConfig {
             deny_skills: Some(Vec::new()),
             disable_connectors: true,
+            disable_remote_control: true,
         })
         .await;
     let result = harness.call("status").await.unwrap();
@@ -2186,6 +2189,7 @@ async fn the_policy_half_is_present_and_empty_rather_than_absent() {
         .with_client(proxenos::config::ClientConfig {
             deny_skills: Some(Vec::new()),
             disable_connectors: false,
+            disable_remote_control: false,
         })
         .await;
     let result = harness.call("env").await.unwrap();

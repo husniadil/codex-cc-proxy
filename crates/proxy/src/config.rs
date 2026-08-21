@@ -183,6 +183,11 @@ working_budget = true
 # which here is always.
 disable_connectors = true
 
+# Keep the client from starting its remote-control session at startup
+# (`remoteControlAtStartup: false` in the client's settings). A session
+# launched through a local proxy is a local decision.
+disable_remote_control = true
+
 # Every key here has a default that is correct today and will not always be.
 # They are configurable so a pinned binary can be repointed rather than rebuilt.
 [upstream]
@@ -574,6 +579,11 @@ pub struct ClientConfig {
     /// is set, which is always, here.
     #[serde(default = "default_disable_connectors")]
     pub disable_connectors: bool,
+    /// Keep the client from starting its remote-control session — a session
+    /// launched through a local proxy is a local decision, not one to hand to
+    /// a remote controller at startup.
+    #[serde(default = "default_disable_remote_control")]
+    pub disable_remote_control: bool,
 }
 
 fn default_deny_skills() -> Vec<String> {
@@ -584,11 +594,16 @@ fn default_disable_connectors() -> bool {
     true
 }
 
+fn default_disable_remote_control() -> bool {
+    true
+}
+
 impl Default for ClientConfig {
     fn default() -> Self {
         Self {
             deny_skills: None,
             disable_connectors: default_disable_connectors(),
+            disable_remote_control: default_disable_remote_control(),
         }
     }
 }
@@ -644,6 +659,13 @@ impl ClientConfig {
             document.insert(
                 "disableClaudeAiConnectors".to_owned(),
                 serde_json::Value::Bool(true),
+            );
+        }
+
+        if self.disable_remote_control {
+            document.insert(
+                "remoteControlAtStartup".to_owned(),
+                serde_json::Value::Bool(false),
             );
         }
 

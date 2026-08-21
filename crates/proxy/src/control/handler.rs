@@ -292,6 +292,7 @@ fn status(state: &ControlState) -> Value {
             // force, and an all-relay mapping has no default deny in force.
             "deny_skills": state.config.client.effective_deny_skills(any_tier_translates(state)),
             "disable_connectors": state.config.client.disable_connectors,
+            "disable_remote_control": state.config.client.disable_remote_control,
         },
         "recording": state.capture.any(),
     })

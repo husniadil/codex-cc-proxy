@@ -775,8 +775,9 @@ working_budget = true
 append         = "..."
 
 [client]
-deny_skills        = ["claude-api"]
-disable_connectors = true
+deny_skills            = ["claude-api"]
+disable_connectors     = true
+disable_remote_control = true
 
 [upstream]
 client_version           = "2.0.0"
@@ -879,6 +880,9 @@ connector notice the client prints whenever an auth token is set, which here is
 always, and the export (`ENABLE_CLAUDEAI_MCP_SERVERS=false`) is the client's
 documented opt-out for the claude.ai-hosted servers themselves — the half that
 still reaches a client launched from `proxenos env` alone.
+`disable_remote_control` writes `remoteControlAtStartup: false`, keeping the
+client from starting its remote-control session at launch: a session started
+through a local proxy is a local decision.
 
 `effort` caps reasoning effort on every request, whatever the client asks for —
 one of `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, `ultra`

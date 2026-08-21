@@ -620,11 +620,13 @@ fn the_client_policy_ships_on_and_can_be_switched_off() {
         vec!["claude-api".to_owned()]
     );
     assert!(on.client.disable_connectors);
+    assert!(on.client.disable_remote_control);
     assert_eq!(
         serde_json::Value::Object(on.client.settings(true)),
         serde_json::json!({
             "permissions": { "deny": ["Skill(claude-api)"] },
             "disableClaudeAiConnectors": true,
+            "remoteControlAtStartup": false,
         })
     );
 
@@ -633,6 +635,7 @@ fn the_client_policy_ships_on_and_can_be_switched_off() {
         [client]
         deny_skills = []
         disable_connectors = false
+        disable_remote_control = false
         "#,
     )
     .unwrap();
@@ -683,6 +686,7 @@ fn each_half_of_the_client_policy_stands_alone() {
         r#"
         [client]
         disable_connectors = false
+        disable_remote_control = false
         "#,
     )
     .unwrap();
@@ -695,6 +699,7 @@ fn each_half_of_the_client_policy_stands_alone() {
         r#"
         [client]
         deny_skills = []
+        disable_remote_control = false
         "#,
     )
     .unwrap();
