@@ -4,31 +4,13 @@ All notable changes to this project are recorded here. This project follows
 [semantic versioning](https://semver.org). The semver-bound surfaces are listed
 in [`docs/api.md`](docs/api.md) §6.
 
-## [Unreleased]
+## [0.7.0]
 
-### Changed
-
-- **Operator-facing output names a provider, never an ordinal.** `status`
-  printed "built-in list for the second provider" and `usage` explained a
-  missing figure with "this provider" — this project's internal word for a
-  role, in front of a reader who has `codex` and `anthropic` in every
-  `accounts` listing. The `routing` and `catalog` lines of `status`, the
-  curated note on `models`, and every per-account reason in `usage` now carry
-  the stored provider id. `models` reports that id as `provider` alongside
-  `curated` so the name comes from the payload rather than from the renderer's
-  assumption.
-- **The `status` auth line names the provider on every connected row.** It used
-  to name one only where it was not `codex`, so an oauth account on the
-  provider this proxy started with rendered as an address and nothing else —
-  the same gap the `accounts` listing just closed.
-
-- **Every `accounts` row names its provider.** The listing named one only where
-  it was not `codex`, so a store holding both providers printed three rows whose
-  provider had to be inferred from the one row that had it. It is a column every
-  row fills now, whatever the credential kind, alongside the address or `key`
-  that already told two rows apart. A payload that carries no provider at all —
-  a daemon older than providers — still prints none, because filling that in
-  would be inventing it.
+The operator surface catches up with the second provider: a guided login
+for the subscription token, per-account quota read off the turns the relay
+already makes, a doctor that probes the relay and states its own coverage,
+an honest `status` for a relaying account, and guards for the isolation
+holes and silent overwrites that live use surfaced.
 
 ### Added
 
@@ -52,7 +34,69 @@ in [`docs/api.md`](docs/api.md) §6.
   mode, and its row is marked as proxy-answered under `--live` alongside
   `count-tokens`.
 
+- **`doctor` now says what a run did not touch.** A failed row prints the
+  probe's rationale — what breaks silently without it — while passing rows stay
+  one line. Under `--live` the `count-tokens` row is marked as answered by the
+  proxy: the live header says the backend answered and was billed, which is true
+  of every other row and false of that one. And one line under the matrix names
+  the account the run spent and the paths it left alone, so eight green rows
+  cannot be read as coverage of the WebSocket transport or the relay when
+  neither ran.
+
+- **A probe for the relay path (§9).** `doctor` built its own state with no
+  relay at all, so nothing in the suite drove the branch that forwards a turn
+  instead of translating it — the one path whose entire claim is that the bytes
+  are not touched. The new probe's marker sits inside a field the proxy has no
+  type for, so a body round-tripped through its own types fails it. Replay-only:
+  driving it live needs the account serving turns switched to the second
+  provider for the length of the run, which is not wired.
+
+- **`proxenos usage` now reports the second provider's accounts too.** That
+  provider states rate-limit headroom in `anthropic-ratelimit-unified-*` headers
+  on the response to every turn, and for a subscription credential it is the
+  only place one is stated — its usage endpoint refuses that credential for want
+  of a scope, so there is nothing for `usage.refresh` to ask. The headers are
+  read off each relayed response and filed under the account that made the turn,
+  which costs nothing: the figure rides a turn already being made, and no path
+  here polls. A plan name is absent rather than guessed, and an account that has
+  relayed no turn yet says a turn supplies its figure instead of claiming the
+  provider reports none.
+
+- **`proxenos login --setup-token`: a guided way to store a subscription
+  token.** The same stored credential `--key --provider anthropic` produces,
+  reached without the pipe-and-ctrl-d workflow it required. It says where the
+  token comes from (`claude setup-token`), reads it from a hidden prompt where
+  stdin is a terminal, asks what to call the account when `--as` did not, and
+  refuses anything not beginning with `sk-ant-oat` before the store is
+  touched — with no override flag, because a credential of the wrong kind
+  stores cleanly and fails later naming the account rather than the paste. A
+  non-terminal stdin still reads the token from the pipe, so scripted use does
+  not regress.
+
 ### Changed
+
+- **Operator-facing output names a provider, never an ordinal.** `status`
+  printed "built-in list for the second provider" and `usage` explained a
+  missing figure with "this provider" — this project's internal word for a
+  role, in front of a reader who has `codex` and `anthropic` in every
+  `accounts` listing. The `routing` and `catalog` lines of `status`, the
+  curated note on `models`, and every per-account reason in `usage` now carry
+  the stored provider id. `models` reports that id as `provider` alongside
+  `curated` so the name comes from the payload rather than from the renderer's
+  assumption.
+
+- **The `status` auth line names the provider on every connected row.** It used
+  to name one only where it was not `codex`, so an oauth account on the
+  provider this proxy started with rendered as an address and nothing else —
+  the same gap the `accounts` listing just closed.
+
+- **Every `accounts` row names its provider.** The listing named one only where
+  it was not `codex`, so a store holding both providers printed three rows whose
+  provider had to be inferred from the one row that had it. It is a column every
+  row fills now, whatever the credential kind, alongside the address or `key`
+  that already told two rows apart. A payload that carries no provider at all —
+  a daemon older than providers — still prints none, because filling that in
+  would be inventing it.
 
 - **A key re-store that would change an account's provider is refused.** A key
   stored over a key was a silent replace, including across providers, so
@@ -98,47 +142,6 @@ in [`docs/api.md`](docs/api.md) §6.
   nothing outside this repository's own CLI speaks the socket — `docs/api.md`
   §6 now names the nineteen methods that are bound from v0.7.0 on, which is
   when that freedom ends.
-
-### Added
-
-- **`doctor` now says what a run did not touch.** A failed row prints the
-  probe's rationale — what breaks silently without it — while passing rows stay
-  one line. Under `--live` the `count-tokens` row is marked as answered by the
-  proxy: the live header says the backend answered and was billed, which is true
-  of every other row and false of that one. And one line under the matrix names
-  the account the run spent and the paths it left alone, so eight green rows
-  cannot be read as coverage of the WebSocket transport or the relay when
-  neither ran.
-
-- **A probe for the relay path (§9).** `doctor` built its own state with no
-  relay at all, so nothing in the suite drove the branch that forwards a turn
-  instead of translating it — the one path whose entire claim is that the bytes
-  are not touched. The new probe's marker sits inside a field the proxy has no
-  type for, so a body round-tripped through its own types fails it. Replay-only:
-  driving it live needs the account serving turns switched to the second
-  provider for the length of the run, which is not wired.
-
-- **`proxenos usage` now reports the second provider's accounts too.** That
-  provider states rate-limit headroom in `anthropic-ratelimit-unified-*` headers
-  on the response to every turn, and for a subscription credential it is the
-  only place one is stated — its usage endpoint refuses that credential for want
-  of a scope, so there is nothing for `usage.refresh` to ask. The headers are
-  read off each relayed response and filed under the account that made the turn,
-  which costs nothing: the figure rides a turn already being made, and no path
-  here polls. A plan name is absent rather than guessed, and an account that has
-  relayed no turn yet says a turn supplies its figure instead of claiming the
-  provider reports none.
-
-- **`proxenos login --setup-token`: a guided way to store a subscription
-  token.** The same stored credential `--key --provider anthropic` produces,
-  reached without the pipe-and-ctrl-d workflow it required. It says where the
-  token comes from (`claude setup-token`), reads it from a hidden prompt where
-  stdin is a terminal, asks what to call the account when `--as` did not, and
-  refuses anything not beginning with `sk-ant-oat` before the store is
-  touched — with no override flag, because a credential of the wrong kind
-  stores cleanly and fails later naming the account rather than the paste. A
-  non-terminal stdin still reads the token from the pipe, so scripted use does
-  not regress.
 
 ## [0.6.0]
 
