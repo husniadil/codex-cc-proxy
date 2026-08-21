@@ -75,6 +75,15 @@ pub struct AppState {
 pub struct ModelMapping {
     pub requested: String,
     pub upstream: String,
+    /// The account this tier's turns authenticate as, where the entry pinned
+    /// one (`proxy-behavior.md` §7.1). `None` is the serving account, which is
+    /// what every unpinned tier has always meant.
+    ///
+    /// Carried here rather than looked up beside the mapping because this
+    /// table is the only thing a turn resolves against: an account left out of
+    /// it reaches the transport as no account at all, and the turn is served
+    /// by whoever happens to be selected.
+    pub account: Option<String>,
 }
 
 pub fn router(state: AppState) -> Router {

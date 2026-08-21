@@ -114,6 +114,7 @@ fn live_models() -> Result<Arc<Vec<ModelMapping>>> {
         .map(|tier| ModelMapping {
             requested: tier.tier.to_owned(),
             upstream: tier.model.clone(),
+            account: None,
         })
         .collect();
 
@@ -127,6 +128,7 @@ fn live_models() -> Result<Arc<Vec<ModelMapping>>> {
             models.push(ModelMapping {
                 requested: requested.to_owned(),
                 upstream,
+                account: None,
             });
         }
     }

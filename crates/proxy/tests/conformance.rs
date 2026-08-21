@@ -321,6 +321,7 @@ async fn a_live_run_uses_the_transport_and_labels_itself() {
         std::sync::Arc::new(vec![proxenos::ingress::ModelMapping {
             requested: "claude-sonnet-5".to_owned(),
             upstream: "gpt-5.6-terra".to_owned(),
+            account: None,
         }]),
         None,
     )
@@ -364,6 +365,7 @@ async fn a_live_run_honours_the_configured_effort_ceiling() {
         std::sync::Arc::new(vec![proxenos::ingress::ModelMapping {
             requested: "claude-sonnet-5".to_owned(),
             upstream: "gpt-5.6-terra".to_owned(),
+            account: None,
         }]),
         Some(proxenos_core::responses::Effort::Low),
     )

@@ -92,3 +92,33 @@ fn a_concurrent_set_never_reverts_the_field_it_did_not_touch() {
         );
     }
 }
+
+/// §7.1 — the routing table carries the pinned account beside the ids.
+///
+/// A turn resolves its model against this table and nothing else, so an
+/// account named by a tier entry has to arrive with the pair. Dropped here, a
+/// pinned tier reaches the transport indistinguishable from an unpinned one
+/// and is served as the wrong account, spending quota nobody asked it to
+/// spend.
+#[test]
+fn the_routing_table_carries_the_pinned_account() {
+    let pinned = ResolvedTier {
+        defaulted: false,
+        account: Some("spare".to_owned()),
+        tier: "haiku",
+        model: "cheap".to_owned(),
+    };
+    let policy = Policy::new(Snapshot::new(
+        vec![tier("opus", "a"), pinned],
+        None,
+        proxenos::config::CrossAccountTiers::Permitted,
+    ));
+
+    let snapshot = policy.get();
+    let routed: Vec<(&str, Option<&str>)> = snapshot
+        .models()
+        .iter()
+        .map(|mapping| (mapping.requested.as_str(), mapping.account.as_deref()))
+        .collect();
+    assert_eq!(routed, vec![("opus", None), ("haiku", Some("spare"))]);
+}

@@ -308,6 +308,7 @@ async fn run_one(probe: &probe::Probe, fixture: &Fixture, backend: &Backend) -> 
             Arc::new(vec![ModelMapping {
                 requested: "claude-sonnet-5".to_owned(),
                 upstream: "gpt-5.6-terra".to_owned(),
+                account: None,
             }]),
             None,
         ),

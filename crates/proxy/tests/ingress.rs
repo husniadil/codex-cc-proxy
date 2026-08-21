@@ -72,6 +72,7 @@ impl Harness {
                     vec![ModelMapping {
                         requested: "claude-sonnet-5".to_owned(),
                         upstream: "gpt-5.6-terra".to_owned(),
+                        account: None,
                     }],
                     None,
                 ),
@@ -856,6 +857,7 @@ async fn the_configured_instructions_reach_the_backend() {
                 vec![ModelMapping {
                     requested: "claude-sonnet-5".to_owned(),
                     upstream: "gpt-5.6-terra".to_owned(),
+                    account: None,
                 }],
                 None,
             ),
@@ -934,6 +936,7 @@ async fn the_working_budget_reaches_upstream_on_a_default_configuration() {
                 vec![ModelMapping {
                     requested: "claude-sonnet-5".to_owned(),
                     upstream: "gpt-5.6-terra".to_owned(),
+                    account: None,
                 }],
                 None,
             ),
@@ -1494,6 +1497,7 @@ async fn ingress_sends_through_a_conduit_and_uploads_incrementally() {
                 vec![ModelMapping {
                     requested: "claude-sonnet-5".to_owned(),
                     upstream: "gpt-5.6-terra".to_owned(),
+                    account: None,
                 }],
                 None,
             ),
@@ -1620,6 +1624,7 @@ async fn a_second_turn_uploads_the_new_items_and_not_nothing() {
                 vec![ModelMapping {
                     requested: "claude-sonnet-5".to_owned(),
                     upstream: "gpt-5.6-terra".to_owned(),
+                    account: None,
                 }],
                 None,
             ),
@@ -1811,6 +1816,7 @@ async fn a_reasoning_turn_does_not_end_the_session() {
                 vec![ModelMapping {
                     requested: "claude-sonnet-5".to_owned(),
                     upstream: "gpt-5.6-terra".to_owned(),
+                    account: None,
                 }],
                 None,
             ),
@@ -1935,6 +1941,7 @@ async fn a_failed_turn_does_not_advance_the_baseline() {
                 vec![ModelMapping {
                     requested: "claude-sonnet-5".to_owned(),
                     upstream: "gpt-5.6-terra".to_owned(),
+                    account: None,
                 }],
                 None,
             ),
@@ -2047,6 +2054,7 @@ async fn a_request_larger_than_the_window_is_refused() {
                 vec![ModelMapping {
                     requested: "claude-sonnet-5".to_owned(),
                     upstream: "gpt-5.6-terra".to_owned(),
+                    account: None,
                 }],
                 None,
             ),
@@ -2119,6 +2127,7 @@ async fn an_unknown_window_does_not_refuse_anything() {
                 vec![ModelMapping {
                     requested: "claude-sonnet-5".to_owned(),
                     upstream: "gpt-5.6-terra".to_owned(),
+                    account: None,
                 }],
                 None,
             ),
@@ -2195,6 +2204,7 @@ async fn effort_is_capped_by_what_the_model_supports() {
                 vec![ModelMapping {
                     requested: "sonnet".to_owned(),
                     upstream: "modest-model".to_owned(),
+                    account: None,
                 }],
                 None,
             ),
@@ -2259,6 +2269,7 @@ async fn an_unlisted_model_does_not_cap_effort() {
                 vec![ModelMapping {
                     requested: "sonnet".to_owned(),
                     upstream: "gpt-5.6-terra".to_owned(),
+                    account: None,
                 }],
                 None,
             ),
@@ -2600,6 +2611,7 @@ async fn every_turn_of_a_conversation_carries_one_session_id() {
                 vec![ModelMapping {
                     requested: "claude-sonnet-5".to_owned(),
                     upstream: "gpt-5.6-terra".to_owned(),
+                    account: None,
                 }],
                 None,
             ),
