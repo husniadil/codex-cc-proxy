@@ -25,11 +25,16 @@ use crate::error::ProxyError;
 /// value will be read from — an account section shadows the shared table for
 /// the tiers it names (§4), so writing the shared one there would leave the
 /// change applied on a running daemon and gone at the next start.
+///
+/// `pin` is a different account entirely: the one the tier's *turns* are served
+/// as. It writes the table form — `haiku = { account = "…", model = "…" }` —
+/// replacing whatever form the line had, so the file never carries both.
 pub fn set_tier(
     document: &str,
     account: Option<&str>,
     tier: &str,
     model: &str,
+    pin: Option<&str>,
 ) -> Result<String, ProxyError> {
     if !crate::config::TIER_NAMES.contains(&tier) {
         return Err(ProxyError::invalid_request(format!(
@@ -37,6 +42,11 @@ pub fn set_tier(
             crate::config::TIER_NAMES.join(", ")
         )));
     }
+
+    let rendered = match pin {
+        Some(pin) => format!("{{ account = \"{pin}\", model = \"{model}\" }}"),
+        None => format!("\"{model}\""),
+    };
 
     let header = match account {
         Some(account) => format!("[accounts.{}.tiers]", key(account)),
@@ -53,7 +63,7 @@ pub fn set_tier(
         // No table at all. Appending one at the end is safe in a way appending
         // a bare key never is: a table header ends whatever table preceded it.
         let mut written = document.trim_end().to_owned();
-        written.push_str(&format!("\n\n{header}\n{tier} = \"{model}\"\n"));
+        written.push_str(&format!("\n\n{header}\n{tier} = {rendered}\n"));
         return Ok(written);
     };
 
@@ -79,7 +89,7 @@ pub fn set_tier(
                 .get(index)
                 .map_or_else(|| " ".to_owned(), |line: &String| alignment(line, tier));
             if let Some(line) = lines.get_mut(index) {
-                *line = format!("{tier}{padding}= \"{model}\"");
+                *line = format!("{tier}{padding}= {rendered}");
             }
         }
         None => {
@@ -89,7 +99,7 @@ pub fn set_tier(
                 .iter()
                 .rposition(|line| !line.trim().is_empty())
                 .map_or(start + 1, |offset| start + 1 + offset + 1);
-            lines.insert(insert, format!("{tier} = \"{model}\""));
+            lines.insert(insert, format!("{tier} = {rendered}"));
         }
     }
 

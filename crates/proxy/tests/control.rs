@@ -1630,6 +1630,99 @@ async fn login_arms_a_callback_joins_a_second_caller_and_releases_on_cancel() {
     harness.call("login.cancel").await.unwrap();
 }
 
+/// `tiers.set` takes the same two forms the file does: a model id, or
+/// `{ account, model }` pinning the tier to another account. The pinned form is
+/// the write-time half of the consent gate — the roadmap's rule refuses it at
+/// the daemon's start AND here, so a front-end cannot write what a restart will
+/// then refuse to load.
+#[tokio::test]
+async fn a_cross_account_tier_set_without_consent_is_refused() {
+    let harness = Harness::start().await;
+
+    let error = harness
+        .call_with(
+            "tiers.set",
+            json!({ "tiers": { "haiku": { "account": "spare", "model": "gpt-5.4-mini" } } }),
+        )
+        .await
+        .unwrap_err();
+
+    assert!(
+        error.contains("cross_account_tiers"),
+        "the refusal names the consent key: {error}"
+    );
+    // And nothing moved.
+    assert_eq!(
+        harness
+            .policy
+            .get()
+            .tiers()
+            .iter()
+            .find(|tier| tier.tier == "haiku")
+            .and_then(|tier| tier.account.clone()),
+        None
+    );
+}
+
+/// With consent, a pinned tier moves routing and is reported with its pin. The
+/// pinned model is deliberately one this harness's catalog does not have: a
+/// catalog is one account's menu, so it cannot speak for the account the pin
+/// names, and validating against it would refuse the exact case pins exist for.
+#[tokio::test]
+async fn a_cross_account_tier_set_with_consent_pins_the_tier() {
+    let harness = Harness::start()
+        .await
+        .with_configuration(proxenos::config::Config {
+            cross_account_tiers: true,
+            tiers: proxenos::config::Tiers {
+                opus: Some("gpt-5.6-terra".into()),
+                sonnet: Some("gpt-5.6-terra".into()),
+                haiku: Some("gpt-5.6-terra".into()),
+                fable: Some("gpt-5.6-terra".into()),
+            },
+            ..proxenos::config::Config::default()
+        })
+        .await;
+
+    let result = harness
+        .call_with(
+            "tiers.set",
+            json!({ "tiers": { "haiku": { "account": "spare", "model": "claude-haiku-4-5" } } }),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(
+        result["tiers"]["haiku"],
+        json!({ "account": "spare", "model": "claude-haiku-4-5" }),
+        "a pinned tier is reported with its pin"
+    );
+    assert_eq!(
+        result["tiers"]["opus"],
+        json!("gpt-5.6-terra"),
+        "a bare tier keeps its shape"
+    );
+
+    let routed = harness.policy.get();
+    let haiku = routed
+        .tiers()
+        .iter()
+        .find(|tier| tier.tier == "haiku")
+        .unwrap()
+        .clone();
+    assert_eq!(haiku.model, "claude-haiku-4-5");
+    assert_eq!(haiku.account.as_deref(), Some("spare"));
+
+    // The status rendering names the pin — a pinned tier printed as its model
+    // alone would hide which account it spends.
+    let status = harness.call("status").await.unwrap();
+    let rendered = render::status(&status);
+    assert!(
+        rendered.contains("claude-haiku-4-5 (as spare)"),
+        "{rendered}"
+    );
+}
+
 /// A change asks to be persisted; it is never persisted by default.
 ///
 /// A front-end changing a mapping to try something is not the same as an

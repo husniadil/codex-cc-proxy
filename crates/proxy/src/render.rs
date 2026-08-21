@@ -314,11 +314,20 @@ pub fn status(result: &Value) -> String {
     }
 
     if let Some(tiers) = field(result, "tiers").and_then(Value::as_object) {
-        for (tier, model) in tiers {
-            lines.push(format!(
-                "{tier:<10} {}",
-                model.as_str().unwrap_or("unmapped")
-            ));
+        for (tier, value) in tiers {
+            // A pinned tier arrives as `{ account, model }` — the same two
+            // shapes the configuration takes — and is printed with its pin,
+            // because which account a tier spends is the whole point of one.
+            let rendered = match (value.as_str(), value.as_object()) {
+                (Some(model), _) => model.to_owned(),
+                (None, Some(pinned)) => format!(
+                    "{} (as {})",
+                    pinned.get("model").and_then(Value::as_str).unwrap_or("?"),
+                    pinned.get("account").and_then(Value::as_str).unwrap_or("?")
+                ),
+                _ => "unmapped".to_owned(),
+            };
+            lines.push(format!("{tier:<10} {rendered}"));
         }
     }
 

@@ -314,7 +314,13 @@ fn mapped_models(state: &ControlState) -> Vec<String> {
 fn tier_map(state: &ControlState) -> Value {
     let mut map = serde_json::Map::new();
     for tier in state.policy.get().tiers().iter() {
-        map.insert(tier.tier.to_owned(), Value::from(tier.model.clone()));
+        // The same two shapes the configuration takes: a string for the
+        // serving account, an object where the tier pins another one.
+        let value = match &tier.account {
+            Some(account) => json!({ "account": account, "model": tier.model }),
+            None => Value::from(tier.model.clone()),
+        };
+        map.insert(tier.tier.to_owned(), value);
     }
     Value::Object(map)
 }
@@ -492,15 +498,50 @@ fn set_tiers(state: &ControlState, params: Option<&Value>) -> Result<Value, Prox
 
     let mut tiers = state.policy.get().tiers().to_vec();
 
-    for (name, model) in requested {
-        let model = model.as_str().ok_or_else(|| {
-            ProxyError::invalid_request(format!("the model for `{name}` must be a string"))
-        })?;
+    // Each value in the same two forms the configuration file takes: a model
+    // id, or `{ account, model }` pinning the tier to another account.
+    let mut changes: Vec<(&String, String, Option<String>)> = Vec::new();
+    for (name, value) in requested {
+        let (model, pin) = match value {
+            Value::String(model) => (model.clone(), None),
+            Value::Object(pinned) => {
+                let field = |field: &str| {
+                    pinned.get(field).and_then(Value::as_str).ok_or_else(|| {
+                        ProxyError::invalid_request(format!(
+                            "a pinned tier is {{\"account\": …, \"model\": …}}; \
+                             `{name}` is missing `{field}`"
+                        ))
+                    })
+                };
+                (
+                    field("model")?.to_owned(),
+                    Some(field("account")?.to_owned()),
+                )
+            }
+            _ => {
+                return Err(ProxyError::invalid_request(format!(
+                    "the value for `{name}` must be a model id, or \
+                     {{\"account\": …, \"model\": …}}"
+                )));
+            }
+        };
+
         // A blank is a mistake rather than a preference — the same rule the
         // configuration applies, for the same reason.
-        if model.trim().is_empty() {
+        if model.trim().is_empty() || pin.as_deref().is_some_and(|pin| pin.trim().is_empty()) {
             return Err(ProxyError::invalid_request(format!(
                 "the model for `{name}` is blank; a tier cannot be unset, only pointed elsewhere"
+            )));
+        }
+
+        // The write-time half of the consent gate. The startup half refuses
+        // the file; this refuses the socket, so a front-end cannot write what
+        // a restart would then refuse to load.
+        if pin.is_some() && !state.config.cross_account_tiers {
+            return Err(ProxyError::invalid_request(format!(
+                "pinning `{name}` to another account routes this client's traffic across \
+                 accounts. That is a decision the operator owns: set \
+                 `cross_account_tiers = true` in config.toml to permit it."
             )));
         }
 
@@ -514,10 +555,12 @@ fn set_tiers(state: &ControlState, params: Option<&Value>) -> Result<Value, Prox
                 ))
             })?;
 
-        entry.model = model.to_owned();
+        entry.model = model.clone();
+        entry.account = pin.clone();
         // Set by the operator, so the catalog may never overrule it — the same
         // meaning `defaulted` carries when the mapping comes from the file.
         entry.defaulted = false;
+        changes.push((name, model, pin));
     }
 
     let (target, applies_now) = write_target(state, params)?;
@@ -526,11 +569,14 @@ fn set_tiers(state: &ControlState, params: Option<&Value>) -> Result<Value, Prox
     // list in force is the serving account's menu (§7.0), and a mapping written
     // for another account is not a claim about it — refusing `gpt-5.5` for a
     // spare account because the account serving turns is not offered it is the
-    // exact case per-account mappings exist for.
+    // exact case per-account mappings exist for. A pinned tier is that case in
+    // one entry: its model belongs to the pinned account's menu, so it is
+    // excluded here rather than refused over somebody else's list.
     if applies_now {
         state.catalog.current().validate(
             &tiers
                 .iter()
+                .filter(|tier| tier.account.is_none())
                 .map(|tier| tier.model.clone())
                 .collect::<Vec<_>>(),
         )?;
@@ -558,10 +604,7 @@ fn set_tiers(state: &ControlState, params: Option<&Value>) -> Result<Value, Prox
     let persisted = if persist {
         write_config(state, |document| {
             let mut document = document.to_owned();
-            for (name, model) in requested {
-                // Every value was checked to be a non-blank string above, so
-                // this cannot be reached with anything else.
-                let model = model.as_str().unwrap_or_default();
+            for (name, model, pin) in &changes {
                 // Written where the value is read from. An account section
                 // shadows the shared table for the tiers it names (§4), so a
                 // change written to the shared one would be in force on this
@@ -570,7 +613,13 @@ fn set_tiers(state: &ControlState, params: Option<&Value>) -> Result<Value, Prox
                 let under = target
                     .clone()
                     .or_else(|| shadowing_account(state, |tiers| tier_named(tiers, name)));
-                document = crate::config::edit::set_tier(&document, under.as_deref(), name, model)?;
+                document = crate::config::edit::set_tier(
+                    &document,
+                    under.as_deref(),
+                    name,
+                    model,
+                    pin.as_deref(),
+                )?;
             }
             Ok(document)
         })?
