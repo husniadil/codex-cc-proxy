@@ -1105,17 +1105,33 @@ async fn models_for_a_relay_account_lists_the_second_providers_models() {
         })
         .collect();
 
-    assert_eq!(windows.len(), 10, "{result}");
-    assert_eq!(windows["claude-fable-5"], Some(1_000_000));
-    assert_eq!(windows["claude-opus-5"], Some(1_000_000));
-    assert_eq!(windows["claude-sonnet-5"], Some(1_000_000));
-    assert_eq!(windows["claude-opus-4-8"], Some(1_000_000));
-    assert_eq!(windows["claude-opus-4-7"], Some(1_000_000));
-    assert_eq!(windows["claude-opus-4-6"], Some(200_000));
-    assert_eq!(windows["claude-opus-4-5"], Some(200_000));
-    assert_eq!(windows["claude-sonnet-4-6"], Some(200_000));
-    assert_eq!(windows["claude-sonnet-4-5"], Some(200_000));
-    assert_eq!(windows["claude-haiku-4-5"], Some(200_000));
+    // The million-token window belongs to the `[1m]`-suffixed id — the
+    // client's own long-context selector, relayed verbatim — and the plain id
+    // stays at the standard window.
+    assert_eq!(windows.len(), 15, "{result}");
+    for plain in [
+        "claude-fable-5",
+        "claude-opus-5",
+        "claude-sonnet-5",
+        "claude-opus-4-8",
+        "claude-opus-4-7",
+        "claude-opus-4-6",
+        "claude-opus-4-5",
+        "claude-sonnet-4-6",
+        "claude-sonnet-4-5",
+        "claude-haiku-4-5",
+    ] {
+        assert_eq!(windows[plain], Some(200_000), "{plain}");
+    }
+    for long in [
+        "claude-fable-5[1m]",
+        "claude-opus-5[1m]",
+        "claude-sonnet-5[1m]",
+        "claude-opus-4-8[1m]",
+        "claude-opus-4-7[1m]",
+    ] {
+        assert_eq!(windows[long], Some(1_000_000), "{long}");
+    }
     assert_eq!(result["curated"], json!(true));
 
     let rendered = render::models(&result);

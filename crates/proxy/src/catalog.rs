@@ -171,12 +171,21 @@ impl Catalog {
     /// why nothing validates a mapping against it: it is a menu for reading,
     /// never a list to refuse by.
     pub fn relay() -> Self {
+        // The million-token window belongs to the `[1m]`-suffixed id: that
+        // suffix is the client's own long-context selector, sent in the body
+        // as part of the model id and relayed verbatim. The plain id is the
+        // standard window on either path.
         let models = [
-            ("claude-fable-5", 1_000_000_u64),
-            ("claude-opus-5", 1_000_000),
-            ("claude-sonnet-5", 1_000_000),
-            ("claude-opus-4-8", 1_000_000),
-            ("claude-opus-4-7", 1_000_000),
+            ("claude-fable-5", 200_000_u64),
+            ("claude-fable-5[1m]", 1_000_000),
+            ("claude-opus-5", 200_000),
+            ("claude-opus-5[1m]", 1_000_000),
+            ("claude-sonnet-5", 200_000),
+            ("claude-sonnet-5[1m]", 1_000_000),
+            ("claude-opus-4-8", 200_000),
+            ("claude-opus-4-8[1m]", 1_000_000),
+            ("claude-opus-4-7", 200_000),
+            ("claude-opus-4-7[1m]", 1_000_000),
             ("claude-opus-4-6", 200_000),
             ("claude-opus-4-5", 200_000),
             ("claude-sonnet-4-6", 200_000),
