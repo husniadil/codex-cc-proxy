@@ -92,14 +92,14 @@ proxenos env        environment for Claude Code, as shell exports
 proxenos settings   the same configuration, as one settings document
 proxenos exec       run a command with that configuration applied
 proxenos stop       ask the running daemon to stop
-proxenos doctor     probe live backend capabilities
+proxenos doctor     probe backend capabilities (--live answers from the real one)
 proxenos usage      what quota is left
 proxenos statusline wrap a status-line script, adding that quota
 proxenos record     capture exchanges as fixtures
 ```
 
-Every verb except `run` and `login` operates through the control socket (§3)
-against a running daemon.
+Every verb except `run`, `login`, and `doctor` operates through the control
+socket (§3) against a running daemon.
 
 `login` **adds** an account and selects it; it never replaces the one already
 stored (`proxy-behavior.md` §8.1). `--key` stores a key read from **stdin**
