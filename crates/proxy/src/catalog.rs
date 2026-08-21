@@ -160,6 +160,51 @@ impl Catalog {
         }
     }
 
+    /// The second provider's models, curated (`docs/api.md` §3).
+    ///
+    /// Used when the account serving turns relays (§9.1): the first provider's
+    /// catalog is not these models' menu, and the second provider's own list
+    /// endpoint names ids but states no windows — so the windows here come
+    /// from its published model documentation rather than from a fetch.
+    /// Curated goes stale silently, the same way `fallback` does, which is why
+    /// every answer built on this list says curated rather than fetched, and
+    /// why nothing validates a mapping against it: it is a menu for reading,
+    /// never a list to refuse by.
+    pub fn relay() -> Self {
+        let models = [
+            ("claude-fable-5", 1_000_000_u64),
+            ("claude-opus-5", 1_000_000),
+            ("claude-sonnet-5", 1_000_000),
+            ("claude-opus-4-8", 1_000_000),
+            ("claude-opus-4-7", 1_000_000),
+            ("claude-opus-4-6", 200_000),
+            ("claude-opus-4-5", 200_000),
+            ("claude-sonnet-4-6", 200_000),
+            ("claude-sonnet-4-5", 200_000),
+            ("claude-haiku-4-5", 200_000),
+        ]
+        .into_iter()
+        .map(|(id, window)| {
+            (
+                id.to_owned(),
+                Model {
+                    id: id.to_owned(),
+                    context_window: Some(window),
+                    effective_percent: None,
+                    visible: true,
+                    efforts: Vec::new(),
+                },
+            )
+        })
+        .collect();
+
+        Self {
+            models,
+            authoritative: false,
+            fetched_for: None,
+        }
+    }
+
     /// Read a catalog, applying `default_percent` to every entry that stated no
     /// share of its own.
     ///

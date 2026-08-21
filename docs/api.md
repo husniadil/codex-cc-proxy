@@ -652,6 +652,14 @@ toward anyway.
 that was refused, so it ends when the stored grant is no longer that token and
 returns if it comes back.
 
+**An account on the second provider answers from a curated list.** The fetched
+catalog was never these models' menu (`proxy-behavior.md` §9.1), and the second
+provider's own list endpoint names ids but states no windows — so `models` for
+a relay-serving daemon answers from a list built into the binary, windows
+included, and says `curated: true` rather than presenting it as a fetch. It is
+a menu for reading, never a list to refuse by: no mapping is validated against
+it, and `status` reports the catalog as curated instead of unvalidated.
+
 **A catalog belongs to the account it was fetched for** (`proxy-behavior.md`
 §7.0). `accounts.select` and an `accounts.forget` that hands over to another account
 fetch it again as whoever serves now, and their answers carry

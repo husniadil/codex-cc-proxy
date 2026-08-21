@@ -333,8 +333,14 @@ pub fn status(result: &Value) -> String {
 
     // Whether the mapping was checked against the backend's own catalog. A
     // reader who cannot tell would take an unvalidated mapping for a validated
-    // one.
-    if field(result, "catalog_authoritative").and_then(Value::as_bool) == Some(false) {
+    // one. A relay-serving daemon's list is the curated one instead: that
+    // catalog was never these models' menu, so "not validated" would report a
+    // check that was never owed.
+    if field(result, "catalog_curated").and_then(Value::as_bool) == Some(true) {
+        lines.push(
+            "catalog    built-in list for the second provider — curated, not fetched".to_owned(),
+        );
+    } else if field(result, "catalog_authoritative").and_then(Value::as_bool) == Some(false) {
         lines.push("catalog    unavailable — the tier mapping has not been validated".to_owned());
     }
 
@@ -412,7 +418,11 @@ pub fn status(result: &Value) -> String {
 pub fn models(result: &Value) -> String {
     let mut lines = Vec::new();
 
-    if field(result, "authoritative").and_then(Value::as_bool) == Some(false) {
+    if field(result, "curated").and_then(Value::as_bool) == Some(true) {
+        lines.push(
+            "(the second provider's list is built in; windows are curated, not fetched)".to_owned(),
+        );
+    } else if field(result, "authoritative").and_then(Value::as_bool) == Some(false) {
         lines.push("(the catalog could not be fetched; this is the fallback list)".to_owned());
     }
 

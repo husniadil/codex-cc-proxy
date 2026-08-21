@@ -1077,6 +1077,72 @@ async fn an_all_relay_launch_carries_no_skill_deny_by_default() {
     assert_eq!(status["client"]["deny_skills"], json!([]));
 }
 
+/// `models` for a serving account on the second provider answers from the
+/// built-in second-provider list, windows included.
+///
+/// That provider's list endpoint names ids but states no windows, so the
+/// windows here are curated from its published documentation rather than
+/// fetched — and the payload says `curated`, so no renderer presents the list
+/// as a fetch that failed.
+#[tokio::test]
+async fn models_for_a_relay_account_lists_the_second_providers_models() {
+    let harness = Harness::start().await;
+    harness
+        .store
+        .add_key("relay", "relay-key-value", Provider::Anthropic)
+        .unwrap();
+
+    let result = harness.call("models").await.unwrap();
+    let windows: std::collections::BTreeMap<&str, Option<u64>> = result["models"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|model| {
+            (
+                model["id"].as_str().unwrap(),
+                model["context_window"].as_u64(),
+            )
+        })
+        .collect();
+
+    assert_eq!(windows.len(), 10, "{result}");
+    assert_eq!(windows["claude-fable-5"], Some(1_000_000));
+    assert_eq!(windows["claude-opus-5"], Some(1_000_000));
+    assert_eq!(windows["claude-sonnet-5"], Some(1_000_000));
+    assert_eq!(windows["claude-opus-4-8"], Some(1_000_000));
+    assert_eq!(windows["claude-opus-4-7"], Some(1_000_000));
+    assert_eq!(windows["claude-opus-4-6"], Some(200_000));
+    assert_eq!(windows["claude-opus-4-5"], Some(200_000));
+    assert_eq!(windows["claude-sonnet-4-6"], Some(200_000));
+    assert_eq!(windows["claude-sonnet-4-5"], Some(200_000));
+    assert_eq!(windows["claude-haiku-4-5"], Some(200_000));
+    assert_eq!(result["curated"], json!(true));
+
+    let rendered = render::models(&result);
+    assert!(rendered.contains("claude-opus-4-7"), "{rendered}");
+    assert!(
+        !rendered.contains("fallback list"),
+        "curated is not a failed fetch: {rendered}"
+    );
+}
+
+/// The status catalog line for a relay-serving daemon says what the list is —
+/// curated — rather than reporting a validation that was never owed. The
+/// first provider's catalog has nothing to say about these ids (§9.1).
+#[tokio::test]
+async fn status_for_a_relay_account_reports_a_curated_catalog() {
+    let harness = Harness::start().await;
+    harness
+        .store
+        .add_key("relay", "relay-key-value", Provider::Anthropic)
+        .unwrap();
+
+    let result = harness.call("status").await.unwrap();
+    let rendered = render::status(&result);
+    assert!(!rendered.contains("has not been validated"), "{rendered}");
+    assert!(rendered.contains("curated"), "{rendered}");
+}
+
 /// The client refuses a denied skill with "Skill execution blocked by
 /// permission rules" and names nobody. This is where the person holding that
 /// message finds out what blocked it and which key to change.

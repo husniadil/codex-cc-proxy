@@ -264,6 +264,10 @@ fn status(state: &ControlState) -> Value {
         // that cannot tell would report an unvalidated mapping as a validated
         // one.
         "catalog_authoritative": catalog.authoritative,
+        // §9.1 — the fetched catalog is not a relay-serving daemon's menu at
+        // all; its list is the curated one, and the renderer says that
+        // instead of reporting a validation that was never owed.
+        "catalog_curated": serving_account_relays(state),
         // Whether the list describes the account now serving turns. A switch
         // asks for it again, but best effort: a failed fetch keeps the list
         // already in force rather than withdrawing models the account has, so
@@ -294,6 +298,31 @@ fn status(state: &ControlState) -> Value {
 }
 
 fn models(state: &ControlState) -> Value {
+    // §9.1 — an account on the second provider is not on the fetched
+    // catalog's menu at all. Its list is the curated one, and the payload
+    // says curated so no renderer presents it as a fetch that failed.
+    if serving_account_relays(state) {
+        let catalog = crate::catalog::Catalog::relay();
+        let entries: Vec<Value> = catalog
+            .selectable()
+            .iter()
+            .map(|model| {
+                json!({
+                    "id": model.id,
+                    "context_window": model.context_window,
+                    "effective_window": model.effective_window(),
+                })
+            })
+            .collect();
+
+        return json!({
+            "models": entries,
+            "authoritative": false,
+            "curated": true,
+            "stale": false,
+        });
+    }
+
     let catalog = state.catalog.current();
     let entries: Vec<Value> = catalog
         .selectable()
@@ -1048,6 +1077,12 @@ async fn login(state: &ControlState, params: Option<&Value>) -> Result<Value, Pr
 }
 
 /// The account id of the account serving turns, where there is one.
+/// Whether the account serving turns is on the second provider (§9.1) — the
+/// account an unpinned tier's turns are relayed as.
+fn serving_account_relays(state: &ControlState) -> bool {
+    crate::upstream::relay::relays(&state.credentials.accounts().unwrap_or_default(), None)
+}
+
 fn serving_account(state: &ControlState) -> Option<String> {
     state
         .credentials
