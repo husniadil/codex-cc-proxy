@@ -472,10 +472,15 @@ transport belongs to the provider rather than to the session, because this path
 is HTTP with SSE and nothing else. `proxy-behavior.md` §9 is the rule set, and
 what was §9 (Testing) is §10.
 
+The cross-account consent key landed ahead of this slice and is not part of it:
+`cross_account_tiers` refuses at both points the rule names — the daemon at
+startup and `tiers.set` at write time — and `cross_account_tiers.set` grants it
+over the socket.
+
 What has not landed: a grant for this provider (§L has no method for obtaining
 one yet, so the relay carries keys), the per-launch switch surface in `env` and
-`exec`, the cross-account consent key, and per-account quota. Capability probes
-do not run against this path yet, and neither does ingress capture.
+`exec`, and per-account quota. Capability probes do not run against this path
+yet, and neither does ingress capture.
 
 ### v0.7.0
 
