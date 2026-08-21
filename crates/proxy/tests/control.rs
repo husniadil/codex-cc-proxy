@@ -1144,26 +1144,26 @@ async fn models_for_a_relay_account_lists_the_second_providers_models() {
     );
 }
 
-/// An all-relay launch forces the client's tool search on.
+/// Every launch forces the client's tool search on.
 ///
 /// The client disables deferred tool loading the moment its base URL is not a
-/// first-party host — it cannot know this proxy forwards `tool_reference`
-/// blocks verbatim, so it assumes not. Measured: an MCP set that costs ~101k
-/// tokens loaded up front defers to zero with `ENABLE_TOOL_SEARCH=true`, and
-/// the turns succeed through the relay. Only for an all-relay launch: the
-/// translating path cannot carry `defer_loading`, so a mapping with any
-/// translated tier must leave the client's own default in place.
+/// first-party host — it cannot know what stands behind the proxy, so it
+/// assumes not. Both paths carry the contract: the relay forwards
+/// `defer_loading` and `tool_reference` verbatim to a backend that runs the
+/// search itself, and the translating path carries client-driven discovery
+/// (`proxy-behavior.md` §2.5). Measured on both, live: an MCP set costing
+/// ~101k tokens loaded up front defers to zero and the turns succeed.
 #[tokio::test]
-async fn an_all_relay_launch_forces_tool_search_on() {
+async fn every_launch_forces_tool_search_on() {
     let harness = Harness::start().await;
 
-    // The codex-serving default: not forced.
-    let before = harness.call("env").await.unwrap();
+    // The translating default.
+    let translated = harness.call("env").await.unwrap();
     assert!(
-        !render::variables(&before)
+        render::variables(&translated)
             .iter()
-            .any(|(name, _)| name == "ENABLE_TOOL_SEARCH"),
-        "{before}"
+            .any(|(name, value)| name == "ENABLE_TOOL_SEARCH" && value == "true"),
+        "{translated}"
     );
 
     harness
@@ -1183,12 +1183,13 @@ async fn an_all_relay_launch_forces_tool_search_on() {
         .await
         .unwrap();
 
-    let result = harness.call("env").await.unwrap();
+    // And the relayed one.
+    let relayed = harness.call("env").await.unwrap();
     assert!(
-        render::variables(&result)
+        render::variables(&relayed)
             .iter()
             .any(|(name, value)| name == "ENABLE_TOOL_SEARCH" && value == "true"),
-        "{result}"
+        "{relayed}"
     );
 }
 

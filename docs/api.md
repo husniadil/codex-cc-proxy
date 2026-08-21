@@ -325,14 +325,14 @@ one served entirely by that provider omits `CLAUDE_CODE_DISABLE_1M_CONTEXT` too
 what it knows with a figure this catalog cannot supply (`proxy-behavior.md`
 §7.2). The tier variables are unchanged: they still carry the final ids.
 
-**A mapping served entirely by the second provider adds
-`ENABLE_TOOL_SEARCH=true`.** The client disables deferred tool loading the
-moment its base URL is not a first-party host — it cannot know this proxy
-forwards `tool_reference` blocks verbatim — and that variable is the client's
-own documented override. Measured: an MCP set costing ~101k tokens loaded up
-front defers to zero, and the turns succeed through the relay. A mapping with
-any translated tier leaves the client's default in place, because the
-translating path cannot carry `defer_loading`.
+**Every launch adds `ENABLE_TOOL_SEARCH=true`.** The client disables deferred
+tool loading the moment its base URL is not a first-party host — it cannot
+know what stands behind the proxy — and that variable is the client's own
+documented override. Both paths carry the contract it needs: the relay
+forwards `defer_loading` and `tool_reference` verbatim to a backend that runs
+the search itself, and the translating path carries client-driven discovery
+(`proxy-behavior.md` §2.5). Measured on both, live: an MCP set costing ~101k
+tokens loaded up front defers to zero and the turns succeed.
 
 All four tier variables are always emitted. `WebFetch` runs on the haiku tier, so
 an unmapped haiku breaks it in a way that looks unrelated to tier mapping.
