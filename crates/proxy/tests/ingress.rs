@@ -1108,6 +1108,93 @@ async fn ingress_capture_records_the_untranslated_request() {
     assert_eq!(body["provenance"], json!("captured"));
 }
 
+/// The headers ride the ingress capture, because they are half of a §L answer:
+/// what a client actually sends is the recordable half of the Messages
+/// passthrough's header delta, and a capture that drops them cannot answer it.
+///
+/// Credential-bearing values are redacted by name, not by inspection — the
+/// capture keeps the header's presence, which is the datum, and never its
+/// secret, which is a credential in a file that is not the credential store.
+#[tokio::test]
+async fn ingress_capture_records_the_headers_with_credentials_redacted() {
+    let dir = tempfile::tempdir().unwrap();
+    let recorder = proxenos::recorder::Recorder::new(dir.path());
+
+    let harness = Harness::start_with(
+        Behavior::Events(vec![
+            json!({ "type": "response.created", "response": { "id": "resp_1" } }),
+            json!({ "type": "response.output_text.delta", "delta": "hi" }),
+            completed(),
+        ]),
+        Some(recorder),
+    )
+    .await;
+
+    let response = harness
+        .client
+        .post(format!("{}/v1/messages", harness.base))
+        .header("x-api-key", "sk-ant-a-real-looking-secret")
+        .header("authorization", "Bearer also-a-secret")
+        .header("anthropic-version", "2023-06-01")
+        .header("anthropic-beta", "oauth-2025-04-20")
+        .header("user-agent", "claude-cli/2.0.0")
+        .json(&json!({
+            "model": "claude-sonnet-5",
+            "max_tokens": 512,
+            "messages": [{ "role": "user", "content": "hello" }],
+        }))
+        .send()
+        .await
+        .expect("the request should reach the proxy");
+    let _ = response.text().await.unwrap();
+
+    let capture = std::fs::read_dir(dir.path())
+        .unwrap()
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .find(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with("ingress-"))
+        })
+        .expect("the request should have been captured");
+
+    let raw = std::fs::read_to_string(&capture).unwrap();
+    let body: Value = serde_json::from_str(&raw).unwrap();
+
+    let headers: Vec<(String, String)> = body["headers"]
+        .as_array()
+        .expect("the capture should carry the headers")
+        .iter()
+        .map(|entry| {
+            (
+                entry[0].as_str().unwrap().to_owned(),
+                entry[1].as_str().unwrap().to_owned(),
+            )
+        })
+        .collect();
+    let value = |name: &str| {
+        headers
+            .iter()
+            .find(|(header, _)| header == name)
+            .map(|(_, value)| value.as_str())
+            .unwrap_or_else(|| panic!("{name} is missing from the capture: {headers:?}"))
+    };
+
+    assert_eq!(value("anthropic-version"), "2023-06-01");
+    assert_eq!(value("anthropic-beta"), "oauth-2025-04-20");
+    assert_eq!(value("user-agent"), "claude-cli/2.0.0");
+
+    // Presence recorded, value withheld — for the whole file, not just the
+    // headers field, because a secret is a secret wherever serde put it.
+    assert_eq!(value("x-api-key"), "(redacted)");
+    assert_eq!(value("authorization"), "(redacted)");
+    assert!(
+        !raw.contains("secret"),
+        "a credential value must never reach a capture file: {raw}"
+    );
+}
+
 /// A capture replays through the corpus loader without hand-editing. A capture
 /// that needs editing before it can be used is not a fixture, it is a note.
 #[tokio::test]
@@ -2380,6 +2467,7 @@ async fn captures_are_private_and_bounded() {
             proxenos::recorder::Mode::Upstream,
             &request,
             Vec::new(),
+            Vec::new(),
             "a note long enough to be meaningful for the corpus loader",
         )
         .expect("the capture should be written");
@@ -2406,6 +2494,7 @@ async fn captures_are_private_and_bounded() {
         recorder.record(
             proxenos::recorder::Mode::Upstream,
             &request,
+            Vec::new(),
             Vec::new(),
             "a note long enough to be meaningful for the corpus loader",
         );

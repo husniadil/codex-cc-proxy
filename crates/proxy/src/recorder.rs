@@ -93,8 +93,45 @@ struct Capture<'a> {
     provenance: &'a str,
     note: String,
     request: &'a Value,
+    /// The request headers as they arrived, in arrival order, repeats kept —
+    /// both are data when the question is what a client actually sends.
+    /// Credential-bearing values are redacted before they reach this struct.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    headers: Vec<(String, String)>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     upstream: Vec<Value>,
+}
+
+/// Header values that are credentials, matched by name. Redacted at the edge
+/// rather than trusted to be harmless: a capture is written to disk, and a
+/// secret in a file that is not the credential store is a leak however it got
+/// there. The name survives — that the client sent it is the datum.
+const CREDENTIAL_HEADERS: [&str; 4] = [
+    "authorization",
+    "x-api-key",
+    "cookie",
+    "proxy-authorization",
+];
+
+/// The recordable form of a header set: names lowercased by the HTTP layer,
+/// credential values replaced, a non-UTF-8 value named as such rather than
+/// mangled.
+pub fn presentable_headers(headers: &axum::http::HeaderMap) -> Vec<(String, String)> {
+    headers
+        .iter()
+        .map(|(name, value)| {
+            let name = name.as_str().to_owned();
+            let value = if CREDENTIAL_HEADERS.contains(&name.as_str()) {
+                "(redacted)".to_owned()
+            } else {
+                value
+                    .to_str()
+                    .unwrap_or("(a value that is not valid UTF-8)")
+                    .to_owned()
+            };
+            (name, value)
+        })
+        .collect()
 }
 
 #[derive(Debug, Clone)]
@@ -130,6 +167,7 @@ impl Recorder {
         &self,
         mode: Mode,
         request: &Value,
+        headers: Vec<(String, String)>,
         upstream: Vec<Value>,
         note: &str,
     ) -> Option<PathBuf> {
@@ -149,6 +187,7 @@ impl Recorder {
             provenance: "captured",
             note: note.to_owned(),
             request,
+            headers,
             upstream,
         };
 

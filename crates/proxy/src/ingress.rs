@@ -142,6 +142,8 @@ async fn count_tokens(
 
 async fn messages(
     State(state): State<AppState>,
+    // Read for the ingress capture only; routing never depends on a header.
+    headers: axum::http::HeaderMap,
     body: Result<Json<MessagesRequest>, axum::extract::rejection::JsonRejection>,
 ) -> Response {
     let Json(request) = match body {
@@ -273,6 +275,7 @@ async fn messages(
         recorder.record(
             crate::recorder::Mode::Ingress,
             &raw,
+            crate::recorder::presentable_headers(&headers),
             Vec::new(),
             "Captured from a live client before translation. No credentials were \
              involved: this is what the client sent, not what the backend replied.",
@@ -611,6 +614,7 @@ impl StreamState {
         recorder.record(
             crate::recorder::Mode::Upstream,
             &request,
+            Vec::new(),
             std::mem::take(&mut self.seen),
             note,
         );
