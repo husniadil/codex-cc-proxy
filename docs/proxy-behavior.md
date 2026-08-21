@@ -1269,6 +1269,12 @@ A provider that speaks the surface this proxy already exposes needs no
 translation at all. A turn belonging to one is **relayed**: forwarded as it
 arrived, and streamed back as it returns.
 
+Everything in this section is **derived, not confirmed**: the path is proven
+against recorded fixtures, and no turn has yet been sent to the live endpoint of
+the second provider. What that endpoint accepts — the header delta, and
+therefore whether a relayed turn round-trips at all — is a `roadmap.md` §L
+question, not a settled fact.
+
 **The body is relayed verbatim.** Not observed as a property — stated as a
 rule, because the obvious implementation breaks it quietly. Parsing the request
 and writing it out again would round-trip it through this proxy's own types,

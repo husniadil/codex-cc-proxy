@@ -32,6 +32,8 @@ byte for byte and the reply is streamed back byte for byte, with the bearer
 replaced by that account's credential. `proxy-behavior.md` §9 states the rule
 and the header delta. Nothing about the endpoint changes — the same URL serves
 both paths, and which one a turn takes is decided from the model id it carries.
+This path is proven against fixtures and not yet confirmed against the second
+provider's live endpoint (`proxy-behavior.md` §9, `roadmap.md` §L).
 
 `run` fails immediately if the port is already bound, naming the conflict, rather
 than retrying or selecting another port. A second daemon on a different port
