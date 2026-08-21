@@ -213,6 +213,16 @@ pub trait AccountStore: CredentialStore {
     /// request asks, since the answer decides which headers it sends.
     fn credential(&self) -> Result<Option<Credential>, ProxyError>;
 
+    /// The credential of one named account, whether or not it is selected.
+    ///
+    /// What a pinned tier asks (`proxy-behavior.md` §7.1): the entry names the
+    /// account its turns belong to, and the selection is the wrong answer to
+    /// that question. Absent rather than optional — a name with nothing behind
+    /// it is refused here and the refusal names it, because the alternative is
+    /// serving those turns as the selected account and spending a
+    /// subscription nobody pointed at them.
+    fn credential_for(&self, name: &str) -> Result<Credential, ProxyError>;
+
     /// Store a key under a name and select it.
     ///
     /// Separate from `add`, which takes what an authorization produced. A key
@@ -754,6 +764,14 @@ impl AccountStore for FileStore {
             .selected_index()
             .and_then(|index| file.accounts.get(index))
             .map(|entry| entry.credential.clone()))
+    }
+
+    fn credential_for(&self, name: &str) -> Result<Credential, ProxyError> {
+        let file = self.read()?;
+        match file.index_of(name).and_then(|index| file.accounts.get(index)) {
+            Some(entry) => Ok(entry.credential.clone()),
+            None => Err(file.unknown(name)),
+        }
     }
 
     fn add_key(&self, name: &str, key: &str) -> Result<(), ProxyError> {

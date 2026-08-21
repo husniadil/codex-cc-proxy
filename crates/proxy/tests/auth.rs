@@ -2083,3 +2083,57 @@ fn a_rotation_that_belongs_to_no_stored_account_is_refused() {
     store.save(&sample()).unwrap();
     assert_eq!(store.accounts().unwrap().len(), 1);
 }
+
+// ---------------------------------------------------------------------------
+// §8.1 — the store answers for an account by name.
+// ---------------------------------------------------------------------------
+
+/// A pinned tier names an account, and the store has to answer for that one
+/// rather than for the selection.
+///
+/// `credential()` answers for whichever account is serving turns, which is the
+/// wrong question here: a pinned tier says which account its turns belong to,
+/// and reading the selection would serve them as somebody else.
+#[test]
+fn the_store_answers_for_an_account_other_than_the_selected_one() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = FileStore::new(dir.path().join("credentials.json"));
+    store.add(&sample(), None).unwrap();
+    store.add(&other(), None).unwrap();
+    store.select("acct_123").unwrap();
+
+    let pinned = store.credential_for("acct_456").unwrap();
+    assert_eq!(
+        pinned.grant().map(|grant| grant.refresh_token.as_str()),
+        Some("other-refresh")
+    );
+
+    // And the selection is still what `credential()` answers for.
+    assert_eq!(
+        store
+            .credential()
+            .unwrap()
+            .and_then(|held| held.grant().map(|grant| grant.refresh_token.clone())),
+        Some("refresh-secret".to_owned())
+    );
+}
+
+/// A pin naming an account that is not stored refuses, and the refusal names
+/// it.
+///
+/// Never a fallback to the serving account: that spends the wrong
+/// subscription's quota invisibly, which is the failure the consent gate
+/// exists to prevent (`roadmap.md` v0.6.0). The name is in the message because
+/// a mapping and a store are edited separately and either one could be the
+/// half that is wrong.
+#[test]
+fn a_pin_naming_an_unstored_account_is_refused_by_name() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = FileStore::new(dir.path().join("credentials.json"));
+    store.add(&sample(), None).unwrap();
+
+    let error = store.credential_for("spare").unwrap_err();
+    let rendered = format!("{error}");
+    assert!(rendered.contains("spare"), "{rendered}");
+    assert!(rendered.contains("acct_123"), "{rendered}");
+}
