@@ -964,15 +964,27 @@ beside it and moved over it, under a name carrying the writing process's id so
 two writers cannot interleave into a file that is neither. One account's
 rotated token is not worth risking every account to a write that stops halfway.
 
-A write that finds the file changed since it read **starts over** rather than
-replacing it. Every write rewrites the whole file, so two overlapping writers
-would otherwise mean one discarding whatever the other had just done — a whole
-account now, not a stale token — and the pair that overlaps in practice is
-real: `login` in the CLI writes this file directly while the daemon may be
-persisting a refresh. This narrows the window rather than closing it: the
-comparison and the replacement are two operations, and a writer landing between
-them is still lost. Closing it needs a lock the filesystem enforces, which is
-not here yet.
+Every write is taken **under a lock the filesystem enforces**, held for as long
+as it takes to read the file, change it, and replace it. Every write rewrites
+the whole file, so two overlapping writers would otherwise mean one discarding
+whatever the other had just done — a whole account, not a stale token — and the
+pair that overlaps in practice is real: `login` in the CLI writes this file
+directly while the daemon may be persisting a refresh.
+
+The lock is a file of its own beside the credentials, never read and never
+written. It cannot be the credential file, because a write replaces that one by
+rename, and a lock held on it would be a lock on an inode the next writer never
+opens. It is advisory and the kernel drops it when the descriptor closes, so a
+process that dies partway through a write leaves nothing behind for the next one
+to wait on, and it stays on disk when the credentials are cleared, because
+removing it would leave the next two writers locking two different files.
+
+A write that finds the file changed since it read still **starts over** rather
+than replacing it. The lock reaches only writers that take it, and an older
+binary or a hand edit takes none; the comparison is what catches those. It
+cannot close the window on its own — the comparison and the replacement are two
+operations, and a writer landing between them is lost — which is what the lock
+is for.
 
 **Accounts do not interfere with each other.** Each holds its own
 refresh-token family, so rotating one leaves every other exactly where it was.

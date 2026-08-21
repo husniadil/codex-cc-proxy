@@ -6,6 +6,7 @@ use codex_cc_proxy::auth::pkce::Pkce;
 use codex_cc_proxy::auth::store::CredentialStore;
 use codex_cc_proxy::auth::store::Credentials;
 use codex_cc_proxy::auth::store::FileStore;
+use codex_cc_proxy::auth::store::WritePoint;
 use pretty_assertions::assert_eq;
 use serde_json::Value;
 
@@ -1419,11 +1420,14 @@ fn a_write_leaves_no_window_where_the_store_is_half_written() {
         "the file was written in place rather than replaced"
     );
     assert_ne!(std::fs::read_to_string(&path).unwrap(), before);
-    // Nothing is left lying around beside it.
+    // Nothing is left lying around beside it. The lock is the one permanent
+    // neighbour: every writer takes it, so it is there before the first write
+    // and stays after the last. A half-finished replacement is what this is
+    // looking for.
     let strays: Vec<_> = std::fs::read_dir(dir.path())
         .unwrap()
         .filter_map(|entry| entry.ok().map(|entry| entry.file_name()))
-        .filter(|name| name != "credentials.json")
+        .filter(|name| name != "credentials.json" && name != "credentials.json.lock")
         .collect();
     assert!(strays.is_empty(), "left behind: {strays:?}");
 
@@ -1561,13 +1565,31 @@ fn selecting_from_an_empty_store_says_so() {
     );
 }
 
+/// Add an account by editing the file directly, taking no lock.
+///
+/// What an older binary or a hand edit does. Built by cloning an entry already
+/// there, so the test states only what it means to change and cannot drift
+/// from the stored shape.
+fn add_account_behind_the_lock(path: &std::path::Path, name: &str, account_id: &str) {
+    let mut file: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+    let mut entry = file["accounts"][0].clone();
+    entry["name"] = name.into();
+    entry["account_id"] = account_id.into();
+    file["accounts"].as_array_mut().unwrap().push(entry);
+    std::fs::write(path, serde_json::to_string_pretty(&file).unwrap()).unwrap();
+}
+
 /// A write that finds the file changed since it read starts over.
 ///
 /// Every write is a read, a change, and a replacement of the whole file, so two
 /// writers overlapping used to mean one of them silently lost everything the
 /// other had done — and with several accounts in one file, "everything" is an
-/// account, not a stale token. The CLI's `login` writes the file directly while
-/// the daemon may be refreshing, which is the pair that actually overlaps.
+/// account, not a stale token.
+///
+/// The writer simulated here takes no lock: it edits the file in place, which
+/// is what an older binary or a hand edit does. The lock cannot cover those,
+/// so the comparison still has to.
 #[test]
 fn a_write_that_lost_a_race_is_redone_rather_than_lost() {
     let dir = tempfile::tempdir().unwrap();
@@ -1575,21 +1597,15 @@ fn a_write_that_lost_a_race_is_redone_rather_than_lost() {
     let store = FileStore::new(&path);
     store.add(&sample(), None).unwrap();
 
-    // Another writer, landing between this one's read and its replacement.
+    // Another writer, landing between this one's read and its comparison.
     // Once, so the retry has something to converge on.
-    let interloper = FileStore::new(&path);
     let raced = std::sync::atomic::AtomicBool::new(false);
-    store.on_write_for_test(move || {
-        if !raced.swap(true, std::sync::atomic::Ordering::SeqCst) {
-            interloper
-                .add(
-                    &Credentials {
-                        account_id: Some("acct_interloper".to_owned()),
-                        ..other()
-                    },
-                    Some("interloper"),
-                )
-                .unwrap();
+    let edited = path;
+    store.on_write_for_test(move |point| {
+        if point == WritePoint::BeforeComparison
+            && !raced.swap(true, std::sync::atomic::Ordering::SeqCst)
+        {
+            add_account_behind_the_lock(&edited, "interloper", "acct_interloper");
         }
     });
 
@@ -1609,6 +1625,80 @@ fn a_write_that_lost_a_race_is_redone_rather_than_lost() {
             "acct_456".to_owned()
         ],
         "the other writer's account was overwritten"
+    );
+}
+
+/// A writer waits for the one already writing, rather than landing inside it.
+///
+/// The comparison covers the gap between a write's read and its check. It
+/// cannot cover the gap between the check and the replacement: those are two
+/// operations, and a writer that lands between them is copied over by a
+/// replacement that already decided nothing had changed. Only a lock the
+/// filesystem enforces closes that, which is why this drives the second writer
+/// into exactly that gap.
+///
+/// Both writers are `FileStore`, so both take the lock — two open descriptions
+/// in one process conflict the same way two processes do.
+#[test]
+fn a_writer_waits_rather_than_landing_inside_a_replacement() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("credentials.json");
+    let store = FileStore::new(&path);
+    store.add(&sample(), None).unwrap();
+
+    let (start, wait_to_start) = std::sync::mpsc::channel();
+    let (finished, wait_for_finish) = std::sync::mpsc::channel();
+    let second = {
+        std::thread::spawn(move || {
+            wait_to_start.recv().unwrap();
+            FileStore::new(&path)
+                .add(
+                    &Credentials {
+                        account_id: Some("acct_second".to_owned()),
+                        ..other()
+                    },
+                    Some("second"),
+                )
+                .unwrap();
+            let _ = finished.send(());
+        })
+    };
+
+    // Inside the window the comparison cannot cover. The wait is bounded
+    // because the passing case is the one that never finishes: a second writer
+    // held off by the lock cannot report done until this write has released
+    // it. Timing out here is the evidence, and without the lock the second
+    // writer reports done in milliseconds and this one copies over it.
+    let started = std::sync::atomic::AtomicBool::new(false);
+    let wait_for_finish = std::sync::Mutex::new(wait_for_finish);
+    store.on_write_for_test(move |point| {
+        if point == WritePoint::AfterComparison
+            && !started.swap(true, std::sync::atomic::Ordering::SeqCst)
+        {
+            start.send(()).unwrap();
+            let _ = wait_for_finish
+                .lock()
+                .unwrap()
+                .recv_timeout(std::time::Duration::from_secs(2));
+        }
+    });
+
+    store.add(&other(), None).unwrap();
+    second.join().unwrap();
+
+    let names: Vec<String> = store
+        .accounts()
+        .unwrap()
+        .into_iter()
+        .map(|account| account.name)
+        .collect();
+    assert!(
+        names.contains(&"second".to_owned()),
+        "the second writer landed inside the first one's replacement and was copied over: {names:?}"
+    );
+    assert!(
+        names.contains(&"acct_456".to_owned()),
+        "the first writer's own account is missing: {names:?}"
     );
 }
 

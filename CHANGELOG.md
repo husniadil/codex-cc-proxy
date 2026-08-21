@@ -4,6 +4,24 @@ All notable changes to this project are recorded here. This project follows
 [semantic versioning](https://semver.org). The semver-bound surfaces are listed
 in [`docs/api.md`](docs/api.md) §6.
 
+## [Unreleased]
+
+### Fixed
+
+- **Two writers of the credential file no longer overlap at all.** A write
+  reads the file, changes it, and replaces the whole thing, and v0.3.0 answered
+  an overlap by starting over when the file had changed since it was read. That
+  check cannot cover the gap between itself and the replacement: a writer
+  landing there was copied over, silently, and what it lost was a whole account
+  rather than a stale token. Every write now takes a lock the filesystem
+  enforces and holds it across all three steps. The lock is a file of its own
+  beside the credentials — the credential file itself is replaced by rename, so
+  a lock on it would be a lock on an inode the next writer never opens — and
+  the kernel drops it when the process goes, so a crash mid-write leaves
+  nothing for the next run to wait on. The comparison stays, because the lock
+  reaches only writers that take it and an older binary or a hand edit takes
+  none.
+
 ## [0.3.0]
 
 One credential file held one account and one kind of credential, and starting a

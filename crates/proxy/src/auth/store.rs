@@ -339,10 +339,23 @@ pub trait CredentialStore: Send + Sync {
 /// rewrite them.
 pub struct FileStore {
     path: PathBuf,
-    /// Fired between a write's read and its replacement, so a test can make
-    /// the file change underneath one. Nothing outside a test sets it.
+    /// Fired at each point in a write where the file can change underneath it,
+    /// so a test can make it happen. Nothing outside a test sets it.
     #[allow(clippy::type_complexity)]
-    on_write: std::sync::Mutex<Option<Box<dyn Fn() + Send + Sync>>>,
+    on_write: std::sync::Mutex<Option<Box<dyn Fn(WritePoint) + Send + Sync>>>,
+}
+
+/// Where in a write a test hook fires.
+///
+/// Two points, because a write can lose in two different ways and the two are
+/// answered by different things. Before the comparison is where a writer that
+/// took no lock lands, and the comparison is what catches it. After the
+/// comparison is the window the comparison cannot cover — the check and the
+/// replacement are separate operations — and the lock is what closes that one.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum WritePoint {
+    BeforeComparison,
+    AfterComparison,
 }
 
 /// How many times a write will start over when it finds the file changed.
@@ -360,8 +373,13 @@ impl FileStore {
         }
     }
 
-    /// Test seam: run this between reading the file and replacing it.
-    pub fn on_write_for_test(&self, hook: impl Fn() + Send + Sync + 'static) {
+    /// Test seam: run this at each point a write can be interfered with.
+    ///
+    /// It fires with the write's lock held, so a hook that writes through
+    /// another `FileStore` in this thread waits for a lock this thread is
+    /// holding. A hook standing in for a writer that takes no lock edits the
+    /// file directly instead.
+    pub fn on_write_for_test(&self, hook: impl Fn(WritePoint) + Send + Sync + 'static) {
         if let Ok(mut on_write) = self.on_write.lock() {
             *on_write = Some(Box::new(hook));
         }
@@ -437,32 +455,35 @@ impl FileStore {
         value
     }
 
-    /// Read, change, replace — starting over if the file moved underneath.
+    /// Read, change, replace, under a lock, starting over if the file moved
+    /// underneath anyway.
     ///
     /// Every write here rewrites the whole file, so two overlapping writers
-    /// used to mean one discarded whatever the other had just done. That is a
-    /// whole account now, not one stale token, and the pair that overlaps in
-    /// practice is real: `login` in the CLI writes this file directly while
-    /// the daemon may be persisting a refresh.
+    /// mean one discards whatever the other has just done. That is a whole
+    /// account, not one stale token, and the pair that overlaps in practice is
+    /// real: `login` in the CLI writes this file directly while the daemon may
+    /// be persisting a refresh.
     ///
-    /// **This narrows the window rather than closing it.** The comparison and
-    /// the replacement are two operations, and a writer that lands between
-    /// them is still lost. Closing it needs a lock the filesystem enforces.
+    /// The lock is what makes that safe between writers that take it. The
+    /// comparison stays for the writers that do not — an older binary, a hand
+    /// edit — which the lock has no way to reach. It cannot close the window on
+    /// its own, because the check and the replacement are two operations, but
+    /// it costs a read and turns a silent loss into a retry.
     fn update<T>(
         &self,
         mutate: impl Fn(&mut StoredFile) -> Result<T, ProxyError>,
     ) -> Result<T, ProxyError> {
+        // Held for the whole of every attempt, so no other writer that takes
+        // it can be anywhere between this one's read and its replacement.
+        let _held = self.lock()?;
+
         for _ in 0..WRITE_ATTEMPTS {
             let (raw, mut file) = self.read_raw()?;
             // Before the write, never after: an error here is the caller's
             // answer, and retrying it would only produce the same one.
             let outcome = mutate(&mut file)?;
 
-            if let Ok(hook) = self.on_write.lock()
-                && let Some(hook) = hook.as_ref()
-            {
-                hook();
-            }
+            self.fire(WritePoint::BeforeComparison);
 
             if self.replace_if_unchanged(&file, raw.as_deref())? {
                 return Ok(outcome);
@@ -472,6 +493,37 @@ impl FileStore {
         Err(ProxyError::authentication(
             "the credential file kept changing while it was being written; try again",
         ))
+    }
+
+    /// Take the lock every writer of this file takes, for as long as it takes
+    /// to read, change and replace it.
+    ///
+    /// A file of its own rather than the credential file: a write replaces
+    /// that one by rename, so a lock held on it would be a lock on an inode
+    /// the next writer never opens. This one is only ever locked, never read
+    /// or written, so it holds nothing worth protecting. It stays behind when
+    /// the credentials are cleared, because removing it would leave the next
+    /// two writers locking two different files.
+    ///
+    /// The lock is advisory and released by the kernel when the descriptor
+    /// closes, including when the process dies, so a crash partway through a
+    /// write cannot leave one behind for the next run to wait on.
+    fn lock(&self) -> Result<std::fs::File, ProxyError> {
+        if let Some(parent) = self.path.parent() {
+            std::fs::create_dir_all(parent).map_err(|error| {
+                ProxyError::authentication(format!(
+                    "could not create credential directory: {error}"
+                ))
+            })?;
+        }
+
+        let mut path = self.path.clone().into_os_string();
+        path.push(".lock");
+        let file = open_private(&PathBuf::from(path))?;
+        file.lock().map_err(|error| {
+            ProxyError::authentication(format!("could not lock the credential file: {error}"))
+        })?;
+        Ok(file)
     }
 
     /// Replace the file, unless it is no longer what was read.
@@ -493,8 +545,18 @@ impl FileStore {
             return Ok(false);
         }
 
+        self.fire(WritePoint::AfterComparison);
+
         self.write(file)?;
         Ok(true)
+    }
+
+    fn fire(&self, point: WritePoint) {
+        if let Ok(hook) = self.on_write.lock()
+            && let Some(hook) = hook.as_ref()
+        {
+            hook(point);
+        }
     }
 
     fn write(&self, file: &StoredFile) -> Result<(), ProxyError> {
@@ -794,4 +856,30 @@ fn write_private(path: &Path, body: &str) -> Result<(), ProxyError> {
     std::fs::write(path, body).map_err(|error| {
         ProxyError::authentication(format!("could not write credentials: {error}"))
     })
+}
+
+/// Open a file only this user can open, creating it if it is not there.
+#[cfg(unix)]
+fn open_private(path: &Path) -> Result<std::fs::File, ProxyError> {
+    use std::os::unix::fs::OpenOptionsExt;
+
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .mode(0o600)
+        .open(path)
+        .map_err(|error| ProxyError::authentication(format!("could not open {path:?}: {error}")))
+}
+
+#[cfg(not(unix))]
+fn open_private(path: &Path) -> Result<std::fs::File, ProxyError> {
+    // Windows has no mode bits. The file inherits the directory's ACL, and the
+    // configuration directory is per-user.
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(path)
+        .map_err(|error| ProxyError::authentication(format!("could not open {path:?}: {error}")))
 }
