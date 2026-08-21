@@ -208,7 +208,7 @@ The last and riskiest subsystem, landing on a corpus that can catch its failures
 Connection reuse, prewarm, fallback latching, strict-extension delta computation,
 reasoning-item retention, zstd.
 
-**Done when** the §9.4 invariants in `proxy-behavior.md` all hold as tests, a
+**Done when** the §10.4 invariants in `proxy-behavior.md` all hold as tests, a
 policy close mid-turn falls back to HTTP without losing the turn, retained
 reasoning items are re-injected in position, and a long replayed session produces
 byte-identical conversation state over both transports.
@@ -464,6 +464,19 @@ recorded traffic, a cross-account mapping without the consent key refuses
 loudly at both points, and `usage` reports two accounts with their own windows
 and freshness without breaking a caller that reads today's shape.
 
+The first two rules have landed. A key stored with `--provider anthropic`
+routes by model id and is relayed verbatim in both directions, with the header
+delta of §9.2; a model id two accounts claim refuses the turn naming both. The
+transport claim was amended where this proved it: §4 now says the choice of
+transport belongs to the provider rather than to the session, because this path
+is HTTP with SSE and nothing else. `proxy-behavior.md` §9 is the rule set, and
+what was §9 (Testing) is §10.
+
+What has not landed: a grant for this provider (§L has no method for obtaining
+one yet, so the relay carries keys), the per-launch switch surface in `env` and
+`exec`, the cross-account consent key, and per-account quota. Capability probes
+do not run against this path yet, and neither does ingress capture.
+
 ### v0.7.0
 
 **A graphical front-end.** The control socket was built for exactly this: the
@@ -526,7 +539,8 @@ alongside what they cost to learn.
 | Does compaction actually fire at the window the proxy supplies? | **Largely answered, derived not observed.** The client's history check compares the token count against a function of `autoCompactWindow`, and its own schema describes the trigger as the effective window minus a summary buffer, lowered further by a separate percentage override. So the figure the proxy supplies is the one compaction is measured against. Reading this also turned up a constraint the proxy had been ignoring: the value is accepted only between 100,000 and 1,000,000 — "Expected 'auto' or 100k–1M tokens" — and the settings form *discards* an out-of-range value silently. The proxy now omits it outside that range and warns. What remains unobserved is a session long enough to watch compaction happen. |
 | ~~Is the true input count linear in the estimator's raw figure?~~ | **Answered: yes.** Six live turns, residuals under 3% from the second turn on. The uncalibrated first turn was +95%. Recorded in §6.3. |
 | Does the second provider's subscription endpoint answer a quota question? | **Open.** A usage endpoint on the provider's API host is reported elsewhere to answer a subscription grant with both windows, severity-scoped limits, and spend — reported, not measured here. Method: record a live exchange with this proxy's own grant and make the recording a fixture. Until then the per-account meter treats that provider's figures as unavailable rather than plausible. |
-| What header delta does the Messages passthrough need? | **Half answered: the client's side is recorded.** Ingress capture now keeps headers, and a live client (`claude-cli/2.1.238`, `-p` mode) sent: `authorization: Bearer <token>` — the token variable becomes a bearer header, and no `x-api-key` — plus `anthropic-version: 2023-06-01`, `anthropic-beta: claude-code-20250219,interleaved-thinking-2025-05-14,thinking-token-count-2026-05-13,context-management-2025-06-27,prompt-caching-scope-2026-01-05,mid-conversation-system-2026-04-07,advisor-tool-2026-03-01,effort-2025-11-24`, `anthropic-dangerous-direct-browser-access: true`, `x-app: cli`, `x-claude-code-session-id`, the `x-stainless-*` client telemetry, and ordinary transport headers. The interactive client was captured too and differs only in the `user-agent` suffix (`(external, cli)` vs `(external, sdk-cli)`) — and in one state-dependent entry: without `CLAUDE_CODE_DISABLE_1M_CONTEXT`, `context-1m-2025-08-07` joins the beta list, so the flag governs a wire header as well as the window assumption (§7.2). Notably absent in every capture: the OAuth beta token the subscription-grant path is reported to require — so the passthrough must at least replace the bearer and may need to add that beta. **Still open:** what the real endpoint accepts (one turn), and therefore the delta itself. |
+| What header delta does the Messages passthrough need? | **Half answered, and the half that is answered is now implemented.** The relay replaces `authorization` with the account credential, drops any `x-api-key` the caller brought, and passes every other client header through as sent (`proxy-behavior.md` §9.2). **Still open, unchanged:** what the real endpoint accepts — in particular whether the subscription-grant path needs the OAuth beta token that appears in no capture, which is why the relay carries keys and not grants at this slice. Method: one live turn against the real endpoint with a stored key, then one with a grant if a grant can be obtained at all (the row below). The client's side is recorded. Ingress capture now keeps headers, and a live client (`claude-cli/2.1.238`, `-p` mode) sent: `authorization: Bearer <token>` — the token variable becomes a bearer header, and no `x-api-key` — plus `anthropic-version: 2023-06-01`, `anthropic-beta: claude-code-20250219,interleaved-thinking-2025-05-14,thinking-token-count-2026-05-13,context-management-2025-06-27,prompt-caching-scope-2026-01-05,mid-conversation-system-2026-04-07,advisor-tool-2026-03-01,effort-2025-11-24`, `anthropic-dangerous-direct-browser-access: true`, `x-app: cli`, `x-claude-code-session-id`, the `x-stainless-*` client telemetry, and ordinary transport headers. The interactive client was captured too and differs only in the `user-agent` suffix (`(external, cli)` vs `(external, sdk-cli)`) — and in one state-dependent entry: without `CLAUDE_CODE_DISABLE_1M_CONTEXT`, `context-1m-2025-08-07` joins the beta list, so the flag governs a wire header as well as the window assumption (§7.2). Notably absent in every capture: the OAuth beta token the subscription-grant path is reported to require — so the passthrough must at least replace the bearer and may need to add that beta. **Still open:** what the real endpoint accepts (one turn), and therefore the delta itself. |
+| Does the relay's routing survive a client that sends a tier name? | **Open, and deliberately not guessed at.** The relay routes by model id because the client is handed final ids at launch, so a body carrying a tier name never matches a relay route and falls through to the translating path — where it fails as a credential-kind mismatch naming the account. Whether any real client can be made to send a tier name against a relay account is unmeasured. Method: launch through `exec` with the relay account selected and read what the first request's `model` actually says. |
 | How is a grant for the second provider obtained? | **Open.** The proxy's own PKCE flow is written against one authorization server. Whether the second provider's flow accepts a login this daemon performs — and under what client identity — is unmeasured, and the same one-grant-two-stores hazard that ruled out credential import for the first provider applies unchanged. Method: record the flow before writing it. |
 
 Before a question was answered, the corresponding claim in `proxy-behavior.md`

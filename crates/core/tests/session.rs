@@ -1,4 +1,4 @@
-//! `docs/proxy-behavior.md` §3.1 and §9.4 — session identity and delta
+//! `docs/proxy-behavior.md` §3.1 and §10.4 — session identity and delta
 //! invariants.
 //!
 //! These are the invariants the transports are held to. Incremental upload is

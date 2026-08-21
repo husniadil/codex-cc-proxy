@@ -1,4 +1,4 @@
-//! `docs/proxy-behavior.md` §9.3 — capability probes.
+//! `docs/proxy-behavior.md` §10.3 — capability probes.
 //!
 //! A probe must turn on content the model could not infer. A model handed no
 //! file at all describes one confidently from its name, and that output is
@@ -380,7 +380,7 @@ fn spoken_text(frames: &[Value]) -> String {
 ///
 /// The header states what the run was against. A matrix built from replayed
 /// fixtures that reads like one built from a live backend is exactly the
-/// plausible-looking output §9.3 exists to prevent.
+/// plausible-looking output §10.3 exists to prevent.
 pub fn matrix(outcomes: &[Outcome], against: &str) -> String {
     let mut lines = vec![format!("Capability matrix — {against}"), String::new()];
 

@@ -26,6 +26,13 @@ ignored.
 | `POST /v1/messages/count_tokens` | Pre-flight sizing. Returns an estimate. |
 | `GET /v1/models` | The mapped models, in the Anthropic list shape — `{"data": [{"id", "display_name", "type": "model"}]}`. Ids are the upstream model ids the tiers map to. |
 
+A request to `POST /v1/messages` whose model id belongs to an account on the
+second provider is **relayed** rather than translated: the body is forwarded
+byte for byte and the reply is streamed back byte for byte, with the bearer
+replaced by that account's credential. `proxy-behavior.md` §9 states the rule
+and the header delta. Nothing about the endpoint changes — the same URL serves
+both paths, and which one a turn takes is decided from the model id it carries.
+
 `run` fails immediately if the port is already bound, naming the conflict, rather
 than retrying or selecting another port. A second daemon on a different port
 would be silently unused by a client already configured for the first.
@@ -66,7 +73,8 @@ changing an already-sent status.
 
 ```
 proxenos run        start the daemon (--detach: in the background)
-proxenos login      authenticate (--as NAME labels it, --key reads one from stdin)
+proxenos login      authenticate (--as NAME labels it, --key reads one from stdin,
+                    --provider names which provider that key is for)
 proxenos accounts   stored accounts (--use switches, --rename, --forget drops)
 proxenos status     connection, tier mapping, model catalog
 proxenos models     available models
@@ -87,7 +95,11 @@ against a running daemon.
 stored (`proxy-behavior.md` §8.1). `--key` stores a key read from **stdin**
 instead of starting an authorization: no browser, and the secret never appears
 in a command line. `--as NAME` is required with it, because a key carries no id
-to be named by. `--as NAME` is what to call it locally, for
+to be named by. `--provider` states which provider's endpoints the key is spent
+against — `codex` by default, `anthropic` for a key that serves turns through
+the relay (`proxy-behavior.md` §9). It is only meaningful with `--key`: an
+authorization runs against one provider's server, so a grant has nothing to
+choose, and naming a provider without `--key` is refused rather than ignored. `--as NAME` is what to call it locally, for
 an operator holding more than one; without it the account id the grant carries
 names it. `accounts` lists what is stored, marking the one serving turns, and
 `--use NAME` switches to another. `--rename FROM TO` changes what an account is
@@ -724,12 +736,20 @@ catalog                  = "https://..."
 [upstream.key]
 endpoint = "https://..."
 catalog  = "https://..."
+
+[upstream.anthropic]
+endpoint = "https://..."
 ```
 
 `[upstream.key]` is where an API key is spent, which is not where a grant is
 (`proxy-behavior.md` §8.2). There is no socket in it: the WebSocket protocol
 belongs to the subscription backend, so a key account uses HTTP. Sending either
 credential to the other's endpoint is refused before anything leaves.
+
+`[upstream.anthropic]` is where a relayed turn goes (`proxy-behavior.md` §9).
+One entry, because the relay does one thing: it speaks the surface this proxy
+already exposes, so there is no catalog to translate and no socket protocol to
+speak.
 
 `[upstream]` is entirely optional; every key defaults to what ships. It exists so
 a pinned binary can be repointed rather than rebuilt, and because two of the keys

@@ -144,7 +144,7 @@ is the only position where it could be accepted at all.
 This is not an edge case. It is how every file Claude Code reads arrives. Without
 it the bytes never reach the model, and the model answers from the filename in
 hedged wording that reads as success — the failure is invisible in ordinary
-output, which is why §9.3 requires unguessable probes.
+output, which is why §10.3 requires unguessable probes.
 
 ### 2.4 Tools
 
@@ -354,6 +354,13 @@ client as model output.
 ---
 
 ## 4. Transport
+
+Everything in this section describes the first provider's path. The transports
+below are interchangeable with each other and neither is a degraded form of the
+other — but that interchangeability stops at the provider: the relay in §9 uses
+HTTP with SSE and nothing else, because WebSocket and incremental upload are
+this backend's protocol rather than a general capability. **The choice of
+transport belongs to the provider, not to the session.**
 
 ### 4.1 WebSocket
 
@@ -1180,30 +1187,114 @@ An account with no kind recorded is a grant, the same read-the-old-shape rule
 
 ---
 
-## 9. Testing
+## 9. The second provider
+
+A provider that speaks the surface this proxy already exposes needs no
+translation at all. A turn belonging to one is **relayed**: forwarded as it
+arrived, and streamed back as it returns.
+
+**The body is relayed verbatim.** Not observed as a property — stated as a
+rule, because the obvious implementation breaks it quietly. Parsing the request
+and writing it out again would round-trip it through this proxy's own types,
+and every field they do not model would go missing somewhere no test looks. So
+the routing decision is made from the raw bytes, before anything is parsed, and
+the bytes that arrive are the bytes that leave.
+
+Everything §2 does on the translating path is therefore absent here: no
+instructions lead, no tier name rewritten into a model id, no tool flattening,
+no effort cap, no window guard. So is §3: no baseline, no delta, no previous
+response id. This path holds no per-conversation state, because it has nothing
+to hold — the client sends the whole conversation every turn and the backend
+reads it.
+
+### 9.1 Routing
+
+Each stored account states which provider its credential is spent against (§8),
+and a turn routes by **model id**: the id in the body is looked up among the
+mapped models, and the account that mapping pins (§7.1) decides the path. An id
+mapped to an account on the second provider is relayed; everything else
+translates, exactly as before this path existed.
+
+By model id rather than by tier name, because this path never rewrites the
+model. The client is handed final ids by `env` and `exec` at launch and sends
+them for the session's life, so what arrives in the body is already what the
+backend must see.
+
+**One model id may be claimed by at most one account.** Two mappings naming one
+id and two different accounts leave nothing to say which account a turn belongs
+to, and that is refused — naming the id and both claimants — rather than
+resolved by picking one. Picking spends a subscription nobody pointed at the
+turn and says nothing about having done so.
+
+The refusal is scoped to ids this path claims. Two tiers of the first provider
+sharing an upstream model is ordinary, decides nothing, and stays what it has
+always been.
+
+A pinned account the store does not hold is *not* refused here. It falls
+through to the translating path, where §7.1 already refuses it by name — one
+mistake with one message rather than two.
+
+### 9.2 Headers
+
+The header set is the only thing that changes between ingress and egress.
+
+- **`authorization` is replaced** with the account's credential. The client's
+  own bearer is a placeholder: `ANTHROPIC_AUTH_TOKEN` has to be set for the
+  client's sake and its value is ignored (§8).
+- **`x-api-key` is dropped.** No observed client sends one, and a turn
+  authenticated as whatever the caller happened to hold is a turn this proxy
+  did not route.
+- **Everything else passes through as the client sent it** — `anthropic-version`,
+  `anthropic-beta`, and the client's own identifying headers included. The beta
+  list is the client's statement about what it can parse in the reply, so
+  editing it would change what comes back.
+- **Hop-by-hop and length headers are not forwarded.** They describe this hop
+  rather than the message, and the length and transfer coding belong to
+  whichever HTTP client writes the request. `accept-encoding` is dropped for
+  the same reason: this path does not decode a content coding, so asking for
+  one would leave it relaying bytes the client never agreed to.
+
+What the real endpoint accepts is not settled here. The client's half of the
+delta is recorded — `roadmap.md` §L — and the endpoint's half is open.
+
+### 9.3 Errors
+
+An upstream refusal on this path **is already an Anthropic error**. Its status
+and its body pass through as they arrive. Rewrapping would restate a message
+the backend wrote, and a rewrap that loses the error type takes the client's
+own retry logic with it (§1.1).
+
+A refusal this proxy makes — an ambiguous model id, an account that cannot be
+read, a credential of the wrong kind — is its own, in the same shape everything
+else in §1.1 uses. A connection that never opened is retryable, because nothing
+was sent.
+
+---
+
+## 10. Testing
 
 Development is test-first.
 
-### 9.1 Translation
+### 10.1 Translation
 
 Every rule is a pure function over data and is specified by a failing test before
 it is implemented. Table-driven cases cover mappings; snapshots cover emitted
 frame sequences.
 
-### 9.2 Upstream contract
+### 10.2 Upstream contract
 
 What the backend sends cannot be invented. Ground truth is captured first, becomes
 a fixture, and the fixture becomes the failing test. This is still test-first —
 the test's content comes from observation rather than imagination.
 
-### 9.3 Capabilities
+### 10.3 Capabilities
 
 A capability test must turn on content the model could not infer — random codes,
 verbatim strings. A model handed nothing at all describes a file confidently from
 its name, and that output is indistinguishable from success. Plausibility is never
 evidence.
 
-### 9.4 Transport and sessions
+### 10.4 Transport and sessions
 
 Transport tests run against a local server replaying recorded exchanges.
 WebSocket coverage includes reuse, prewarm, fallback latching, and cancellation.

@@ -1,4 +1,4 @@
-//! `docs/proxy-behavior.md` §4 and §9.4 — transports and the incremental path.
+//! `docs/proxy-behavior.md` §4 and §10.4 — transports and the incremental path.
 //!
 //! Incremental upload is the one subsystem whose bugs corrupt conversations
 //! instead of failing loudly. Identical conversation state across both
@@ -54,7 +54,7 @@ fn request(input: Vec<InputItem>) -> ResponsesRequest {
 }
 
 // ---------------------------------------------------------------------------
-// §9.4 — the invariants, at the transport layer.
+// §10.4 — the invariants, at the transport layer.
 // ---------------------------------------------------------------------------
 
 /// A valid delta contains exactly the new items, and names what it continues.

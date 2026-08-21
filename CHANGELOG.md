@@ -4,6 +4,37 @@ All notable changes to this project are recorded here. This project follows
 [semantic versioning](https://semver.org). The semver-bound surfaces are listed
 in [`docs/api.md`](docs/api.md) §6.
 
+## [Unreleased]
+
+### Added
+
+- **A turn for the second provider is relayed verbatim.** A key stored with
+  `login --key --provider anthropic` and pinned to a tier serves that tier's
+  turns through a passthrough: the body is forwarded byte for byte, the reply
+  is streamed back byte for byte, and the only thing that changes on the way is
+  the header set — the bearer becomes the account's credential, any `x-api-key`
+  the caller brought is dropped, and `anthropic-version` and `anthropic-beta`
+  pass through as the client sent them. `docs/proxy-behavior.md` §9.
+- **`login --key --provider`** states which provider's endpoints a stored key is
+  spent against. `codex` by default. Only meaningful with `--key`, and refused
+  rather than ignored without it.
+- **`[upstream.anthropic]`** in the configuration, with an `endpoint` key.
+
+### Changed
+
+- **Routing on the relay path is by model id, and one id may be claimed by at
+  most one account.** Two mappings naming one id and two different accounts
+  refuse the turn, naming both. Picking one would spend a subscription nobody
+  pointed at that turn and say nothing.
+- **`AccountStore::add_key` takes the provider.** A required parameter rather
+  than a default: the two providers' endpoints refuse each other's credentials,
+  and a key that silently claimed the wrong one fails as an authentication
+  error naming the credential rather than the destination.
+- **`docs/proxy-behavior.md` §4** no longer claims transports are
+  interchangeable below the session. The choice of transport belongs to the
+  provider: the relay is HTTP with SSE and nothing else. §9 is the relay; what
+  was §9 (Testing) is §10.
+
 ## [0.5.0]
 
 The project is named for what it does. `codex-cc-proxy` named one provider on

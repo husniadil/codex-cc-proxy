@@ -1,4 +1,4 @@
-//! `docs/proxy-behavior.md` §9.3 — every probe, against the replay corpus.
+//! `docs/proxy-behavior.md` §10.3 — every probe, against the replay corpus.
 //!
 //! Each probe turns on a code that exists nowhere except in the exchange under
 //! test. A model handed nothing describes a file confidently from its name, and
@@ -279,7 +279,7 @@ fn every_marker_is_absent_from_the_rest_of_the_corpus() {
 
 /// The matrix says what it was run against. One built from replayed fixtures
 /// that reads like one built from a live backend is exactly the plausible
-/// output §9.3 exists to prevent.
+/// output §10.3 exists to prevent.
 #[tokio::test]
 async fn the_matrix_states_its_evidence() {
     let outcomes = proxenos::doctor::run(&Corpus::Dir(corpus()), None)
