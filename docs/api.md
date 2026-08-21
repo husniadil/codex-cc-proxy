@@ -476,6 +476,15 @@ A Unix domain socket, or a named pipe on Windows, carrying JSON-RPC:
 | `effort.set` | the effort ceiling, or `null` to remove it; in effect until the daemon stops | yes |
 | `doctor` | probe results | no — `doctor` runs in the CLI, which is where `--live` can be given credentials without a daemon already holding them |
 
+**`disconnect` keeps its name.** Every other account verb is `accounts.<verb>`,
+and by that pattern forgetting one would be `accounts.forget`. The name shipped
+in v0.1 when there was one account to disconnect from, and §6 binds it for the
+rest of this major version, so renaming is not on offer and adding the tidier
+name would leave two methods doing one thing for as long as the other has to
+stay. One name that does not match the pattern costs a reader a moment; two
+names for one operation costs every caller a decision about which to use. This
+is settled rather than pending.
+
 `auth.dead` is the one that is easy to miss: a refused grant leaves `connected`
 true, because the credential file is still there and still readable, while every
 turn after it fails with an authentication error. Without that field a front-end
