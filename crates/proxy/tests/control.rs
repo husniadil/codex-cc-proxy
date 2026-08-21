@@ -2345,11 +2345,15 @@ async fn selecting_an_account_moves_the_grant_that_serves_turns() {
     assert_eq!(status["auth"]["account_id"], json!("acct_one"));
 }
 
-/// A quota belongs to an account. Carrying the previous account's snapshot
-/// across a switch would report headroom the new account may not have, which
-/// is the direction that costs something.
+/// A quota belongs to an account (§8.3). Carrying the previous account's
+/// snapshot across a switch would report headroom the new account may not
+/// have, which is the direction that costs something.
+///
+/// The figure is not discarded — it is held under the account that earned it,
+/// and reported for that account. What changes is which account the top of the
+/// answer is about.
 #[tokio::test]
-async fn selecting_an_account_drops_the_previous_accounts_quota() {
+async fn selecting_an_account_does_not_report_the_previous_accounts_quota() {
     let harness = Harness::start().await;
     harness
         .store
@@ -4257,4 +4261,88 @@ async fn the_rendered_usage_names_every_account() {
     assert!(rendered.contains("spare"), "{rendered}");
     assert!(rendered.contains("77% used"), "{rendered}");
     assert!(rendered.contains("rode a turn"), "{rendered}");
+}
+
+/// **Build 4, at the socket.** A select changes which account the answer is
+/// about and invalidates nothing: each figure still describes the account it
+/// was taken from, so switching back reports it again rather than a blank.
+#[tokio::test]
+async fn selecting_another_account_keeps_every_accounts_figure() {
+    let harness = Harness::start().await;
+    harness
+        .store
+        .add(&grant("acct_spare", "a-spare"), Some("spare"))
+        .unwrap();
+    harness
+        .store
+        .add(&grant("acct_main", "a-main"), Some("main"))
+        .unwrap();
+    harness
+        .usage
+        .record_for(Some("spare"), &quota(77.0), proxenos::usage::Source::Turn);
+    harness
+        .usage
+        .record_for(None, &quota(11.0), proxenos::usage::Source::Turn);
+
+    harness
+        .call_with("accounts.select", json!({ "account": "spare" }))
+        .await
+        .unwrap();
+
+    let usage = harness.call("usage").await.unwrap();
+    assert_eq!(
+        usage["windows"][0]["used_percent"],
+        json!(77.0),
+        "the answer should now be about the account that serves turns: {usage}"
+    );
+    let main = usage["accounts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["account"] == json!("main"))
+        .expect("the account that stopped serving is still an account")
+        .clone();
+    assert_eq!(
+        main["windows"][0]["used_percent"],
+        json!(11.0),
+        "a figure that describes `main` still describes it after a select: {main}"
+    );
+}
+
+/// **Build 4, the other half.** Forgetting an account drops its figure, serving
+/// or idle: the entitlement belongs to a subscription this daemon can no longer
+/// spend.
+#[tokio::test]
+async fn forgetting_an_account_drops_that_accounts_figure() {
+    let harness = Harness::start().await;
+    harness
+        .store
+        .add(&grant("acct_spare", "a-spare"), Some("spare"))
+        .unwrap();
+    harness
+        .store
+        .add(&grant("acct_main", "a-main"), Some("main"))
+        .unwrap();
+    harness
+        .usage
+        .record_for(Some("spare"), &quota(77.0), proxenos::usage::Source::Turn);
+    harness
+        .usage
+        .record_for(None, &quota(11.0), proxenos::usage::Source::Turn);
+
+    harness
+        .call_with("accounts.forget", json!({ "account": "spare" }))
+        .await
+        .unwrap();
+
+    // Asserted on the store the ingress writes into, not only on what the
+    // answer lists: an account that is gone would drop off the list either way.
+    assert!(
+        harness.usage.latest_for("spare").is_none(),
+        "the forgotten account's figure outlived the account"
+    );
+    assert!(
+        harness.usage.latest_for("main").is_some(),
+        "the serving account's figure went with someone else's removal"
+    );
 }

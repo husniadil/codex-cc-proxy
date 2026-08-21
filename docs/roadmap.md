@@ -477,10 +477,16 @@ The cross-account consent key landed ahead of this slice and is not part of it:
 startup and `tiers.set` at write time — and `cross_account_tiers.set` grants it
 over the socket.
 
+Per-account quota has landed: a figure is filed under the account that served
+the turn it rode in on, `usage` reports every account's own figure beside the
+serving one with its freshness stated, and an account with no figure reports
+that rather than a zero — which is every account of this provider until §L's
+quota-endpoint row is answered. `proxy-behavior.md` §8.3.
+
 What has not landed: a grant for this provider (§L has no method for obtaining
-one yet, so the relay carries keys), the per-launch switch surface in `env` and
-`exec`, and per-account quota. Capability probes do not run against this path
-yet, and neither does ingress capture.
+one yet, so the relay carries keys), and the per-launch switch surface in `env`
+and `exec`. Capability probes do not run against this path yet, and neither
+does ingress capture.
 
 ### v0.7.0
 

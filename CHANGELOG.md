@@ -8,6 +8,18 @@ in [`docs/api.md`](docs/api.md) §6.
 
 ### Added
 
+- **A quota figure per account, not per daemon.** A pinned tier's turns spend
+  the account it names, so two accounts can serve one session and a single
+  latest snapshot reported whichever made the most recent turn. Each figure is
+  now held under the account that earned it, and `usage` keeps its shape — the
+  serving account's figure stays where a reader already looks — while gaining
+  `accounts`: one entry per stored account with its own windows, whether it is
+  serving, how the figure was come by (riding a turn, or asked for over the
+  socket), and the moment it was taken. `docs/proxy-behavior.md` §8.3.
+- **An account with no figure says so, and says why.** No turn made as it yet, a
+  key holding no subscription entitlement, or a provider whose quota endpoint
+  is an open question. Never a zero, and never another account's figure.
+
 - **A turn for the second provider is relayed verbatim.** A key stored with
   `login --key --provider anthropic` and pinned to a tier serves that tier's
   turns through a passthrough: the body is forwarded byte for byte, the reply
@@ -22,6 +34,11 @@ in [`docs/api.md`](docs/api.md) §6.
 
 ### Changed
 
+- **A select no longer discards a quota figure, and a removal now does.** With
+  every figure held under the account that earned it, a select changes which
+  account `usage` is about and invalidates nothing; forgetting an account drops
+  its figure whether or not it was the one serving, because that entitlement
+  belongs to a subscription this daemon can no longer spend.
 - **Routing on the relay path is by model id, and one id may be claimed by at
   most one account.** A tier that pins nobody names the account serving turns,
   so selecting a key for this provider relays every turn rather than sending
