@@ -229,7 +229,11 @@ costs anything:
 
 - **ingress** captures what Claude Code sends to the proxy. It needs a working
   client and no upstream credentials at all, since the exchange is recorded
-  before translation.
+  before translation. The capture carries the request headers as they arrived —
+  they are half of any question about what a client actually sends — with
+  credential-bearing values (`authorization`, `x-api-key`, `cookie`,
+  `proxy-authorization`) redacted by name: the header's presence is the datum,
+  its value is a secret in a file that is not the credential store.
 - **upstream** captures the whole exchange: the client's request, untranslated,
   paired with the stream the backend answered it with. It needs credentials and
   spends quota, because the turn it records is a real one. Every turn through a
@@ -243,6 +247,10 @@ through the translation it had already been through.
 
 Both write to the same fixture format, so a test replays either without knowing
 which mode produced it.
+
+Either mode runs a daemon, so both take the daemon's port control: `--port`, or
+`PROXENOS_PORT`, overriding the configured value — the same pair `run`
+documents.
 
 Captures are written beside the configuration, `0600`, and the most recent
 twenty are kept. They hold conversation content — the system prompt, the

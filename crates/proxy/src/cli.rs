@@ -170,12 +170,25 @@ pub struct RecordArgs {
 
 /// The two capture modes differ in what they cost: ingress needs no credentials
 /// and spends nothing, upstream needs both.
+///
+/// Each mode runs a daemon, so each carries the daemon's port control. Declared
+/// here rather than assembled in the handler, because a declared binding is the
+/// only kind clap actually runs: the first version built the run arguments by
+/// hand and silently dropped `PROXENOS_PORT` on this verb alone.
 #[derive(Debug, Subcommand)]
 pub enum RecordMode {
     /// Capture what the client sends, before translation.
-    Ingress,
+    Ingress {
+        /// Port to bind on loopback. Overrides the configured value.
+        #[arg(long, env = "PROXENOS_PORT")]
+        port: Option<u16>,
+    },
     /// Capture what the backend sends back.
-    Upstream,
+    Upstream {
+        /// Port to bind on loopback. Overrides the configured value.
+        #[arg(long, env = "PROXENOS_PORT")]
+        port: Option<u16>,
+    },
 }
 
 #[cfg(test)]
@@ -351,7 +364,19 @@ mod tests {
         assert!(matches!(
             cli.command,
             Command::Record(RecordArgs {
-                mode: RecordMode::Ingress
+                mode: RecordMode::Ingress { .. }
+            })
+        ));
+    }
+
+    #[test]
+    fn record_takes_the_port_the_daemon_verbs_take() {
+        let cli =
+            Cli::try_parse_from(["proxenos", "record", "ingress", "--port", "18799"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Command::Record(RecordArgs {
+                mode: RecordMode::Ingress { port: Some(18799) }
             })
         ));
     }

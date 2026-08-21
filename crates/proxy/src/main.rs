@@ -656,17 +656,17 @@ async fn print_settings() -> Result<()> {
 /// involved at the point of capture.
 async fn record(args: cli::RecordArgs) -> Result<()> {
     match args.mode {
-        cli::RecordMode::Ingress => {
+        cli::RecordMode::Ingress { port } => {
             run_with(
                 RunArgs {
-                    port: None,
+                    port,
                     detach: false,
                 },
                 Capture::Ingress,
             )
             .await
         }
-        cli::RecordMode::Upstream => {
+        cli::RecordMode::Upstream { port } => {
             // Says so before it starts, because the cost is the difference
             // between the two modes and it is not recoverable afterwards.
             tracing::warn!(
@@ -675,7 +675,7 @@ async fn record(args: cli::RecordArgs) -> Result<()> {
             );
             run_with(
                 RunArgs {
-                    port: None,
+                    port,
                     detach: false,
                 },
                 Capture::Upstream,

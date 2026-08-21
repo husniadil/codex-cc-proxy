@@ -683,6 +683,53 @@ fn the_old_home_variable_is_refused_by_name() {
     );
 }
 
+/// `record ingress` runs a daemon, so the port controls the daemon controls
+/// apply to it — including `PROXENOS_PORT`, which `run` documents. It used to
+/// be dropped on this verb: the arguments were assembled by hand rather than
+/// parsed, so the declared environment binding never ran, and the capture
+/// daemon collided with whatever held the configured port.
+#[test]
+fn record_ingress_honours_the_port_variable() {
+    let dir = tempfile::tempdir().expect("a scratch directory");
+    let home = dir.path().join("home");
+    std::fs::create_dir_all(&home).expect("the home");
+
+    // A port that is free right now. Freed before the spawn, so a race is
+    // possible but vanishingly unlikely inside one test process.
+    let port = std::net::TcpListener::bind("127.0.0.1:0")
+        .expect("a free port")
+        .local_addr()
+        .expect("its address")
+        .port();
+
+    let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_proxenos"))
+        .args(["record", "ingress"])
+        .env("PROXENOS_HOME", &home)
+        .env("PROXENOS_PORT", port.to_string())
+        .env("TMPDIR", dir.path())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("the record verb should start");
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let mut answered = false;
+    while std::time::Instant::now() < deadline {
+        if std::net::TcpStream::connect(("127.0.0.1", port)).is_ok() {
+            answered = true;
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+
+    let _ = child.kill();
+    let _ = child.wait();
+    assert!(
+        answered,
+        "the capture daemon should be listening on the port the variable named"
+    );
+}
+
 /// A default home written by the old binary, with nothing yet at the new
 /// path, is the same operator in the same situation without the variable.
 /// The refusal names both directories and the move, and nothing is migrated
