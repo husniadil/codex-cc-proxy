@@ -411,6 +411,16 @@ first argument would otherwise be read as this verb's. On Unix the child is
 `exec`d, so signals, job control, the terminal, and the exit status pass through
 untouched.
 
+**One argument is rewritten, and only for a relay-serving daemon**: a plain
+`--model` id whose `[1m]` variant the curated list offers (§3) is upgraded to
+that variant, and the rewrite is named on stderr. The suffix is the client's
+own long-context selector, so the session starts on the million-token window
+instead of silently assuming the standard one. An id already carrying the
+marker, an alias the list does not name, and another program's `--model` are
+forwarded as typed — and a daemon translating to the first provider rewrites
+nothing, because there the marker makes the client assume a window it does not
+have.
+
 **It refuses, before starting anything, in three cases.**
 
 When the daemon is not answering: launching anyway hands the operator a

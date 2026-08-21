@@ -49,6 +49,55 @@ fn carries_settings_flag(arguments: &[String]) -> bool {
     })
 }
 
+/// The flag the client selects a model with.
+const MODEL_FLAG: &str = "--model";
+
+/// Upgrade a plain `--model` id to its long-context variant, in place.
+///
+/// `eligible` is the set of plain ids whose `[1m]` variant the serving
+/// account offers — read from the curated list (`docs/api.md` §3), so it is
+/// **empty unless the serving account relays**: on the translating path the
+/// marker makes the client assume a window four times the real one, and
+/// nothing here may change that path's behavior.
+///
+/// Only an exact id in the set is touched, and only for the client itself.
+/// An id already carrying the marker, an alias the list does not name, and
+/// another program's `--model` are forwarded as typed. Returns what moved, so
+/// the launcher can say it out loud.
+pub fn upgrade_model_argument(
+    command: &mut [String],
+    eligible: &[String],
+) -> Option<(String, String)> {
+    let (program, forwarded) = command.split_first_mut()?;
+    if !accepts_settings_flag(program) {
+        return None;
+    }
+
+    let upgrade = |id: &str| {
+        eligible
+            .iter()
+            .any(|plain| plain == id)
+            .then(|| format!("{id}[1m]"))
+    };
+
+    let mut arguments = forwarded.iter_mut();
+    while let Some(argument) = arguments.next() {
+        if argument == MODEL_FLAG {
+            let value = arguments.next()?;
+            let long = upgrade(value)?;
+            let plain = std::mem::replace(value, long.clone());
+            return Some((plain, long));
+        }
+        if let Some(value) = argument.strip_prefix(&format!("{MODEL_FLAG}=")) {
+            let long = upgrade(value)?;
+            let plain = value.to_owned();
+            *argument = format!("{MODEL_FLAG}={long}");
+            return Some((plain, long));
+        }
+    }
+    None
+}
+
 /// Put the caller's command together with the policy this daemon published.
 ///
 /// **A settings flag from the caller is refused rather than merged or

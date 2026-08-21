@@ -621,7 +621,33 @@ async fn exec(args: cli::ExecArgs) -> Result<()> {
         .map(serde_json::to_string)
         .transpose()?;
 
-    let plan = proxenos::launch::plan(&args.command, policy.as_deref())?;
+    // A plain `--model` id is upgraded to its long-context variant where the
+    // serving account offers one. Eligibility comes from the curated list and
+    // only from it — `curated` is true only when the serving account relays,
+    // so a daemon translating to the first provider launches exactly as
+    // before. A failed read skips the upgrade rather than the launch: the
+    // session it starts is correct either way, just on the standard window.
+    let mut command = args.command.clone();
+    if let Ok(models) = control::call(&control::default_path(), "models", None).await
+        && models.get("curated").and_then(serde_json::Value::as_bool) == Some(true)
+    {
+        let eligible: Vec<String> = models
+            .get("models")
+            .and_then(serde_json::Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|model| model.get("id").and_then(serde_json::Value::as_str))
+            .filter_map(|id| id.strip_suffix("[1m]"))
+            .map(str::to_owned)
+            .collect();
+        if let Some((plain, long)) =
+            proxenos::launch::upgrade_model_argument(&mut command, &eligible)
+        {
+            eprintln!("note: --model {plain} upgraded to {long} — the long-context window");
+        }
+    }
+
+    let plan = proxenos::launch::plan(&command, policy.as_deref())?;
 
     // By design, and said out loud: to the person whose deny rule just
     // vanished, a silent by-design is indistinguishable from a bug.

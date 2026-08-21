@@ -30,6 +30,57 @@ fn the_policy_leads_the_forwarded_arguments() {
     );
 }
 
+/// A plain `--model` id is upgraded to its long-context variant where the
+/// serving account offers one.
+///
+/// The `[1m]` suffix is the client's own long-context selector; the curated
+/// list is what says which ids have a variant, so the eligible set arrives
+/// from there and is empty for a translating account — where the marker makes
+/// the client assume a window four times the real one.
+#[test]
+fn a_plain_model_argument_is_upgraded_to_its_long_context_variant() {
+    let eligible = vec!["claude-fable-5".to_owned(), "claude-opus-5".to_owned()];
+
+    let mut argv = command(&["claude", "--model", "claude-fable-5"]);
+    let upgraded = launch::upgrade_model_argument(&mut argv, &eligible);
+    assert_eq!(argv, command(&["claude", "--model", "claude-fable-5[1m]"]));
+    assert_eq!(
+        upgraded,
+        Some(("claude-fable-5".to_owned(), "claude-fable-5[1m]".to_owned()))
+    );
+
+    // The equals form is the same flag.
+    let mut argv = command(&["claude", "--model=claude-opus-5"]);
+    launch::upgrade_model_argument(&mut argv, &eligible);
+    assert_eq!(argv, command(&["claude", "--model=claude-opus-5[1m]"]));
+}
+
+/// Everything else is forwarded as typed: an id already carrying the marker,
+/// an id with no long-context variant, an alias the curated list does not
+/// name, a program that is not the client, and an empty eligible set.
+#[test]
+fn a_model_argument_with_no_variant_to_offer_is_left_as_typed() {
+    let eligible = vec!["claude-fable-5".to_owned()];
+
+    let untouched = [
+        command(&["claude", "--model", "claude-fable-5[1m]"]),
+        command(&["claude", "--model", "claude-haiku-4-5"]),
+        command(&["claude", "--model", "sonnet"]),
+        command(&["other-tool", "--model", "claude-fable-5"]),
+    ];
+    for given in untouched {
+        let mut argv = given.clone();
+        let upgraded = launch::upgrade_model_argument(&mut argv, &eligible);
+        assert_eq!(argv, given);
+        assert_eq!(upgraded, None);
+    }
+
+    let mut argv = command(&["claude", "--model", "claude-fable-5"]);
+    let upgraded = launch::upgrade_model_argument(&mut argv, &[]);
+    assert_eq!(argv, command(&["claude", "--model", "claude-fable-5"]));
+    assert_eq!(upgraded, None);
+}
+
 /// Refused rather than merged or overridden.
 ///
 /// Measured: two `--settings` on one argument list and the client keeps the
