@@ -627,6 +627,7 @@ fn the_client_policy_ships_on_and_can_be_switched_off() {
             "permissions": { "deny": ["Skill(claude-api)"] },
             "disableClaudeAiConnectors": true,
             "remoteControlAtStartup": false,
+            "attribution": { "commit": "" },
         })
     );
 
@@ -636,6 +637,7 @@ fn the_client_policy_ships_on_and_can_be_switched_off() {
         deny_skills = []
         disable_connectors = false
         disable_remote_control = false
+        disable_commit_attribution = false
         "#,
     )
     .unwrap();
@@ -687,6 +689,7 @@ fn each_half_of_the_client_policy_stands_alone() {
         [client]
         disable_connectors = false
         disable_remote_control = false
+        disable_commit_attribution = false
         "#,
     )
     .unwrap();
@@ -700,6 +703,7 @@ fn each_half_of_the_client_policy_stands_alone() {
         [client]
         deny_skills = []
         disable_remote_control = false
+        disable_commit_attribution = false
         "#,
     )
     .unwrap();
@@ -892,5 +896,45 @@ fn the_example_states_the_defaults_it_documents() {
         example.accounts.is_empty(),
         "the example must not ship an account section: it would be written into \
          a first persisted change as though the operator had asked for it"
+    );
+}
+
+/// Commit attribution is off for a session launched through this proxy.
+///
+/// The client honours an empty commit template: `{"attribution": {"commit": ""}}`
+/// appends no trailer to a commit a session makes. It ships on every launch,
+/// translate or relay, because whose model served a turn is not a fact a commit
+/// message is the place to record.
+#[test]
+fn the_settings_document_disables_commit_attribution_by_default() {
+    let on = Config::default();
+    assert!(on.client.disable_commit_attribution);
+
+    for translating in [true, false] {
+        assert_eq!(
+            serde_json::Value::Object(on.client.settings(translating))["attribution"],
+            serde_json::json!({ "commit": "" }),
+            "attribution ships on both paths (translating: {translating})"
+        );
+    }
+}
+
+/// Switched off, the object is absent rather than empty.
+///
+/// An `attribution` block carrying nothing reads as a policy to whoever merges
+/// the document, and merging an empty template over a real one is how an
+/// operator's own template disappears.
+#[test]
+fn commit_attribution_left_on_writes_no_attribution_object() {
+    let off: Config = toml::from_str(
+        r#"
+        [client]
+        disable_commit_attribution = false
+        "#,
+    )
+    .unwrap();
+    assert!(
+        off.client.settings(true).get("attribution").is_none(),
+        "switched off must leave no attribution key behind"
     );
 }

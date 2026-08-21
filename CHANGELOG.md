@@ -8,6 +8,15 @@ in [`docs/api.md`](docs/api.md) §6.
 
 ### Added
 
+- **The launch settings disable the client's commit attribution.** A session
+  started through `proxenos exec` or configured from `proxenos env` now receives
+  `attribution.commit: ""`, the client's own empty-template form for appending
+  no trailer to a commit it makes. Which model served a turn is not a fact a
+  commit message is the place to record, so it ships on both the translating and
+  the all-relay path. `client.disable_commit_attribution = false` puts the
+  client's own default back, and then the `attribution` object is absent from
+  the document rather than present and empty.
+
 - **A ninth `doctor` probe, `env-contract`, holds the launch surface to its
   contract.** `ENABLE_TOOL_SEARCH` and `CLAUDE_CODE_DISABLE_1M_CONTEXT` are both
   load-bearing and both fail silently — the first hands the deferred tool set

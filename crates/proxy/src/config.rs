@@ -188,6 +188,12 @@ disable_connectors = true
 # launched through a local proxy is a local decision.
 disable_remote_control = true
 
+# Keep the client from appending its commit attribution trailer to commits a
+# launched session makes (`attribution.commit: ""` in the client's settings —
+# an empty template appends nothing). Which model served a turn is not a fact a
+# commit message is the place to record.
+disable_commit_attribution = true
+
 # Every key here has a default that is correct today and will not always be.
 # They are configurable so a pinned binary can be repointed rather than rebuilt.
 [upstream]
@@ -584,6 +590,14 @@ pub struct ClientConfig {
     /// a remote controller at startup.
     #[serde(default = "default_disable_remote_control")]
     pub disable_remote_control: bool,
+    /// Keep the client from appending its commit attribution trailer.
+    ///
+    /// An empty commit template (`{"attribution": {"commit": ""}}`) is the
+    /// client's own way of saying "append nothing". Which model served a turn
+    /// is not a fact a commit message is the place to record, so this ships on
+    /// every launch, translate or relay.
+    #[serde(default = "default_disable_commit_attribution")]
+    pub disable_commit_attribution: bool,
 }
 
 fn default_deny_skills() -> Vec<String> {
@@ -598,12 +612,17 @@ fn default_disable_remote_control() -> bool {
     true
 }
 
+fn default_disable_commit_attribution() -> bool {
+    true
+}
+
 impl Default for ClientConfig {
     fn default() -> Self {
         Self {
             deny_skills: None,
             disable_connectors: default_disable_connectors(),
             disable_remote_control: default_disable_remote_control(),
+            disable_commit_attribution: default_disable_commit_attribution(),
         }
     }
 }
@@ -666,6 +685,13 @@ impl ClientConfig {
             document.insert(
                 "remoteControlAtStartup".to_owned(),
                 serde_json::Value::Bool(false),
+            );
+        }
+
+        if self.disable_commit_attribution {
+            document.insert(
+                "attribution".to_owned(),
+                serde_json::json!({ "commit": "" }),
             );
         }
 

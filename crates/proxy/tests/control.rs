@@ -914,7 +914,28 @@ async fn the_env_payload_carries_the_client_policy_beside_the_variables() {
             "permissions": { "deny": ["Skill(claude-api)"] },
             "disableClaudeAiConnectors": true,
             "remoteControlAtStartup": false,
+            "attribution": { "commit": "" },
         })
+    );
+}
+
+/// The one payload both launch surfaces read carries the attribution opt-out.
+///
+/// `proxenos env` renders this document and `proxenos exec` passes it to the
+/// client as `--settings`; both read the same `settings` object off the same
+/// control call, so asserting it here covers both deliveries.
+#[tokio::test]
+async fn the_launch_settings_disable_commit_attribution() {
+    let harness = Harness::start().await;
+    let result = harness.call("env").await.unwrap();
+
+    assert_eq!(result["settings"]["attribution"], json!({ "commit": "" }));
+
+    let parsed: Value = serde_json::from_str(&render::settings_json(&result)).unwrap();
+    assert_eq!(
+        parsed["attribution"],
+        json!({ "commit": "" }),
+        "the rendered document is what a client actually reads: {parsed}"
     );
 }
 
@@ -1007,6 +1028,7 @@ async fn a_client_policy_switched_off_leaves_no_trace() {
             deny_skills: Some(Vec::new()),
             disable_connectors: false,
             disable_remote_control: false,
+            disable_commit_attribution: false,
         })
         .await;
     let result = harness.call("env").await.unwrap();
@@ -1069,7 +1091,11 @@ async fn an_all_relay_launch_carries_no_skill_deny_by_default() {
     let result = harness.call("env").await.unwrap();
     assert_eq!(
         result["settings"],
-        json!({ "disableClaudeAiConnectors": true, "remoteControlAtStartup": false }),
+        json!({
+            "disableClaudeAiConnectors": true,
+            "remoteControlAtStartup": false,
+            "attribution": { "commit": "" },
+        }),
         "{result}"
     );
 
@@ -1242,6 +1268,7 @@ async fn status_stays_quiet_when_nothing_is_denied() {
             deny_skills: Some(Vec::new()),
             disable_connectors: true,
             disable_remote_control: true,
+            disable_commit_attribution: false,
         })
         .await;
     let result = harness.call("status").await.unwrap();
@@ -2239,6 +2266,7 @@ async fn the_policy_half_is_present_and_empty_rather_than_absent() {
             deny_skills: Some(Vec::new()),
             disable_connectors: false,
             disable_remote_control: false,
+            disable_commit_attribution: false,
         })
         .await;
     let result = harness.call("env").await.unwrap();

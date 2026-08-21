@@ -450,7 +450,9 @@ older name kept a behaviour the newer one had dropped.
 {
   "env": { "ANTHROPIC_BASE_URL": "http://127.0.0.1:8787", "...": "..." },
   "permissions": { "deny": ["Skill(claude-api)"] },
-  "disableClaudeAiConnectors": true
+  "disableClaudeAiConnectors": true,
+  "remoteControlAtStartup": false,
+  "attribution": { "commit": "" }
 }
 ```
 
@@ -458,8 +460,8 @@ older name kept a behaviour the newer one had dropped.
 `ANTHROPIC_*` in its environment, reading only a settings file holding this
 document's `env` block, still reached the proxy. It needs no `eval`.
 
-The `permissions` and `disableClaudeAiConnectors` keys are absent from the
-*document* when nothing is configured, rather than present and empty. An empty
+The `permissions`, `disableClaudeAiConnectors`, `remoteControlAtStartup`, and
+`attribution` keys are absent from the *document* when nothing is configured, rather than present and empty. An empty
 deny list merged over a real one is how a rule disappears.
 
 **The payload behind it is the other way round.** The `env` method's `settings`
@@ -895,9 +897,10 @@ working_budget = true
 append         = "..."
 
 [client]
-deny_skills            = ["claude-api"]
-disable_connectors     = true
-disable_remote_control = true
+deny_skills                = ["claude-api"]
+disable_connectors         = true
+disable_remote_control     = true
+disable_commit_attribution = true
 
 [upstream]
 client_version           = "2.0.0"
@@ -1002,7 +1005,11 @@ documented opt-out for the claude.ai-hosted servers themselves — the half that
 still reaches a client launched from `proxenos env` alone.
 `disable_remote_control` writes `remoteControlAtStartup: false`, keeping the
 client from starting its remote-control session at launch: a session started
-through a local proxy is a local decision.
+through a local proxy is a local decision. `disable_commit_attribution` writes
+`attribution.commit: ""` — an empty template, which is the client's own way of
+appending no trailer to a commit a launched session makes. Which model served a
+turn is not a fact a commit message is the place to record, so it ships on every
+launch, translate or relay.
 
 `effort` caps reasoning effort on every request, whatever the client asks for —
 one of `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, `ultra`
