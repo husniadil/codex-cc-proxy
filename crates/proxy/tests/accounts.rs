@@ -93,7 +93,7 @@ impl Daemon {
             .spawn()
             .expect("the daemon should start");
 
-        let socket = dir.path().join("proxenos.sock");
+        let socket = home.join("proxenos.sock");
         for _ in 0..200 {
             if socket.exists() {
                 break;

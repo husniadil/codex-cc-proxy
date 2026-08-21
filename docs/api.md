@@ -620,6 +620,20 @@ A Unix domain socket, or a named pipe on Windows, carrying JSON-RPC:
 | `cross_account_tiers.set` | `{"enabled": bool}` — consent for pinned tiers. **Always persisted**, unlike the setters above: consent is the operator changing what the daemon is, and a grant that evaporated at restart would leave the file refusing a mapping the operator permitted. Granting applies to the next call, not the next restart; revoking is refused by name while any tier still pins an account, because the write would produce a file the daemon refuses to start from | yes |
 | `doctor` | probe results | no — `doctor` runs in the CLI, which is where `--live` can be given credentials without a daemon already holding them |
 
+**Where the socket lives.** `$PROXENOS_HOME/proxenos.sock` when that variable
+is set, else `$TMPDIR/proxenos.sock`. The home is what isolates a daemon from
+the operator's own, and the socket is part of what has to move with it: while
+the path ignored the home, a CLI isolated into a temporary home still reached
+the real daemon whenever the two shared a `TMPDIR`, and every login path ends in
+`accounts.select` over that socket. One derivation answers for the daemon's bind
+and for every CLI call, so the pair cannot split.
+
+**An unaddressable path is refused by name, at bind and at dial.** A unix socket
+address is capped at `sun_path` — 104 bytes on macOS, 108 on Linux — and a
+longer path fails the bind while the HTTP port comes up fine, leaving a daemon
+that serves turns, looks healthy, and answers no verb. Both ends check first and
+say the path and the cap.
+
 **`tiers.get` is gone and `tiers` replaces it.** Every other read on this
 socket is a bare noun — `status`, `models`, `accounts`, `usage`, `env` — and each
 of them coexists with namespaced writers under the same noun, `accounts.select`

@@ -8,6 +8,16 @@ in [`docs/api.md`](docs/api.md) §6.
 
 ### Changed
 
+- **The control socket lives inside `PROXENOS_HOME` when one is set.** *Path
+  change.* It was `$TMPDIR/proxenos.sock` regardless of the home, so a CLI or a
+  daemon isolated into a temporary home still reached the operator's real
+  daemon whenever the two shared a `TMPDIR` — and every login path ends in
+  `accounts.select` over that socket, so an isolated login could switch the
+  account the real daemon serves. With no home named the path is unchanged. One
+  derivation answers for the daemon's bind and every CLI call, and a derived
+  path over the platform's `sun_path` cap is now refused by name at both ends
+  rather than leaving a daemon that serves turns and answers no verb.
+
 - **A login no longer takes over what serves turns.** *Behaviour change to a
   v0.6.0 surface.* `login` stores a credential and selects it only where
   nothing is already serving; every login after the first leaves the selection

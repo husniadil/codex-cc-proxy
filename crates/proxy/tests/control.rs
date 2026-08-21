@@ -4650,3 +4650,101 @@ fn the_rendered_status_is_quiet_about_relaying_for_a_translating_account() {
     assert!(!rendered.contains("inert"), "{rendered}");
     assert!(!rendered.to_lowercase().contains("relay"), "{rendered}");
 }
+
+/// §3 — the socket belongs to the home it serves.
+///
+/// The derivation used to be `$TMPDIR/proxenos.sock` regardless of
+/// `PROXENOS_HOME`, so a CLI isolated into a temporary home still reached the
+/// real daemon whenever the two shared a `TMPDIR` — and every login path ends
+/// in `accounts.select` over that socket. An isolated login could therefore
+/// switch the account the operator's own daemon serves.
+#[test]
+fn the_socket_lives_inside_proxenos_home_when_one_is_set() {
+    let dir = tempfile::tempdir().unwrap();
+
+    // SAFETY-adjacent: the variable is scoped to this process, and the test is
+    // the only reader.
+    unsafe { std::env::set_var("PROXENOS_HOME", dir.path()) };
+    let path = control::default_path();
+    unsafe { std::env::remove_var("PROXENOS_HOME") };
+
+    assert_eq!(path, dir.path().join("proxenos.sock"));
+}
+
+/// The other half of the same rule: with no home named, nothing moves. An
+/// operator's running daemon is addressed by the path it already bound.
+#[test]
+fn without_proxenos_home_the_socket_stays_in_the_temporary_directory() {
+    unsafe { std::env::remove_var("PROXENOS_HOME") };
+    let path = control::default_path();
+
+    assert_eq!(path, std::env::temp_dir().join("proxenos.sock"));
+}
+
+/// A unix socket address is capped at `sun_path` bytes, and a derived path
+/// over that cap fails in the least legible way available: the bind fails while
+/// the HTTP port comes up fine, so the daemon looks healthy and every CLI verb
+/// gets connection refused. Both ends say the path and the cap instead.
+#[tokio::test]
+async fn an_over_long_socket_path_is_refused_at_bind_and_at_dial_naming_the_cap() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut home = dir.path().to_path_buf();
+    while home.as_os_str().len() <= control::PATH_LIMIT {
+        home.push("a-directory-with-a-long-name");
+    }
+    let path = home.join("proxenos.sock");
+
+    let dial = control::call(&path, "status", None)
+        .await
+        .expect_err("an unaddressable path cannot be dialed");
+    assert!(
+        dial.message.contains(&path.display().to_string())
+            && dial.message.contains(&control::PATH_LIMIT.to_string()),
+        "{}",
+        dial.message
+    );
+
+    let state = probe_state(dir.path());
+    let bind = control::serve(&path, state)
+        .await
+        .expect_err("an unaddressable path cannot be bound");
+    assert!(
+        bind.message.contains(&path.display().to_string())
+            && bind.message.contains(&control::PATH_LIMIT.to_string()),
+        "{}",
+        bind.message
+    );
+}
+
+/// The smallest state `serve` will accept. It answers nothing here — the bind
+/// is refused before the listener exists.
+fn probe_state(dir: &std::path::Path) -> ControlState {
+    ControlState {
+        port: 8787,
+        policy: Arc::new(proxenos::policy::Policy::new(
+            proxenos::policy::Snapshot::new(
+                tiers(),
+                None,
+                proxenos::config::CrossAccountTiers::Refused,
+            ),
+        )),
+        catalog: Arc::new(CatalogSource::fixed(
+            Catalog::parse(
+                r#"{"data":[{"id":"gpt-5.6-terra","context_window":272000}]}"#,
+                95.0,
+            )
+            .unwrap(),
+        )),
+        credentials: Arc::new(FileStore::new(dir.join("credentials.json")))
+            as Arc<dyn AccountStore>,
+        capture: Arc::new(proxenos::recorder::Switches::default()),
+        usage: Arc::new(proxenos::usage::UsageStore::default()),
+        login: Arc::new(proxenos::auth::daemon_login::LoginFlow::default()),
+        config: Arc::new(proxenos::config::Config::default()),
+        shutdown: Arc::new(proxenos::daemon::Shutdown::default()),
+        tokens: None,
+        usage_endpoint: String::new(),
+        sessions: Arc::new(proxenos::session::SessionStore::new()),
+        config_path: Some(dir.join("config.toml")),
+    }
+}

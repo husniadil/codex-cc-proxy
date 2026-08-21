@@ -14,9 +14,57 @@ use tokio::io::AsyncBufReadExt;
 use tokio::io::AsyncWriteExt;
 use tokio::io::BufReader;
 
-/// Where the socket lives by default.
+/// The most bytes a unix socket address can carry on this platform.
+///
+/// `sun_path` is 104 bytes on the BSDs and macOS and 108 on Linux, one of which
+/// is the terminator. Nothing in the standard library exposes it, and exceeding
+/// it fails at `bind` and at `connect` rather than at the point the path was
+/// chosen.
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+pub const PATH_LIMIT: usize = 103;
+#[cfg(not(any(target_os = "macos", target_os = "ios")))]
+pub const PATH_LIMIT: usize = 107;
+
+/// Where the socket lives.
+///
+/// **One derivation, used by the daemon's bind and by every CLI call**, so the
+/// pair cannot split: a CLI that derived its own path would talk to a daemon
+/// that is not the one its configuration belongs to.
+///
+/// `PROXENOS_HOME` is what isolates a daemon from the operator's own, and the
+/// socket is part of what has to move with it. When it named only the
+/// configuration, an isolated CLI sharing a `TMPDIR` still reached the real
+/// daemon — and every login path ends in `accounts.select` over that socket,
+/// so an isolated login could switch the account the operator's daemon serves.
+///
+/// With no home named, the path is unchanged: an operator's running daemon is
+/// addressed by the path it already bound.
 pub fn default_path() -> PathBuf {
-    std::env::temp_dir().join("proxenos.sock")
+    match std::env::var_os("PROXENOS_HOME") {
+        Some(home) => PathBuf::from(home).join("proxenos.sock"),
+        None => std::env::temp_dir().join("proxenos.sock"),
+    }
+}
+
+/// Refuse a path the platform cannot address, by name.
+///
+/// The silent variant of this costs a real debugging session: the bind fails
+/// while the HTTP port comes up fine, so the daemon serves turns and looks
+/// healthy while every CLI verb gets connection refused and `--detach` times
+/// out waiting for a socket that will never appear. Both ends check, because
+/// either can be the first to be given the path.
+pub fn ensure_addressable(path: &Path) -> Result<(), ProxyError> {
+    let length = path.as_os_str().len();
+    if length <= PATH_LIMIT {
+        return Ok(());
+    }
+
+    Err(ProxyError::invalid_request(format!(
+        "the control socket path is {length} bytes, over the {PATH_LIMIT}-byte limit this \
+         platform puts on a unix socket address: {}. Point `PROXENOS_HOME` at a shorter \
+         directory, or unset it and use a shorter `TMPDIR`.",
+        path.display()
+    )))
 }
 
 /// This binary's version. One file is both the daemon and the CLI, so the
@@ -50,6 +98,8 @@ pub fn require_client_policy(result: &serde_json::Value) -> Result<(), ProxyErro
 /// Serve the control socket until the process stops.
 #[cfg(unix)]
 pub async fn serve(path: &Path, state: ControlState) -> Result<(), ProxyError> {
+    ensure_addressable(path)?;
+
     // A socket left behind by a crashed daemon would refuse the bind. Removing
     // it is safe here because the port bind has already established that no
     // other daemon is running.
@@ -153,6 +203,8 @@ pub async fn call(
     method: &str,
     params: Option<serde_json::Value>,
 ) -> Result<serde_json::Value, ProxyError> {
+    ensure_addressable(path)?;
+
     let stream = tokio::net::UnixStream::connect(path).await.map_err(|error| {
         ProxyError::invalid_request(format!(
             "could not reach the daemon at {}: {error}. Is it running? Start it with `proxenos run`.",

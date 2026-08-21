@@ -198,9 +198,9 @@ fn exec_refuses_before_starting_anything_when_the_daemon_is_not_answering() {
 ///
 /// **It contacts nothing.** Without credentials the daemon short-circuits to
 /// the fallback model list before any request is built, which the log states in
-/// as many words. `TMPDIR` moves the control socket and `PROXENOS_HOME`
-/// moves the configuration, so neither this developer's daemon nor their
-/// configuration is touched.
+/// as many words. `PROXENOS_HOME` moves the configuration and the control
+/// socket with it, so neither this developer's daemon nor their configuration
+/// is touched.
 #[cfg(unix)]
 #[test]
 fn a_launched_child_is_given_the_policy_and_the_environment() {
@@ -232,7 +232,7 @@ fn a_launched_child_is_given_the_policy_and_the_environment() {
         .spawn()
         .expect("the daemon should start");
 
-    let socket = dir.path().join("proxenos.sock");
+    let socket = home.join("proxenos.sock");
     for _ in 0..200 {
         if socket.exists() {
             break;
@@ -369,9 +369,9 @@ fn settings_and_exec_refuse_a_daemon_that_predates_client_policy() {
 /// and waits for the process to be gone. The wiring is the whole assertion.
 ///
 /// It contacts nothing: without credentials the daemon short-circuits to the
-/// fallback model list before any request is built. `TMPDIR` moves the control
-/// socket and `PROXENOS_HOME` the configuration, so a developer's own
-/// daemon is never involved.
+/// fallback model list before any request is built. `PROXENOS_HOME` moves the
+/// configuration and the control socket with it, so a developer's own daemon is
+/// never involved.
 #[cfg(unix)]
 #[test]
 fn a_stop_asked_for_over_the_socket_ends_the_process() {
@@ -389,7 +389,7 @@ fn a_stop_asked_for_over_the_socket_ends_the_process() {
         .spawn()
         .expect("the daemon should start");
 
-    let socket = dir.path().join("proxenos.sock");
+    let socket = home.join("proxenos.sock");
     for _ in 0..200 {
         if socket.exists() {
             break;
@@ -676,7 +676,7 @@ fn a_launch_that_cannot_carry_the_policy_names_the_loss() {
         .spawn()
         .expect("the daemon should start");
 
-    let socket = dir.path().join("proxenos.sock");
+    let socket = home.join("proxenos.sock");
     for _ in 0..200 {
         if socket.exists() {
             break;
