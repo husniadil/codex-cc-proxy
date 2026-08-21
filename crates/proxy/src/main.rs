@@ -935,12 +935,17 @@ async fn run_with(args: RunArgs, capture: Capture) -> Result<()> {
 
     // An unknown model id is refused here, and the error names what the catalog
     // does have — which is the fastest way to find the id you actually meant.
-    catalog.current().validate(
-        &tiers
-            .iter()
-            .map(|tier| tier.model.clone())
-            .collect::<Vec<_>>(),
-    )?;
+    //
+    // Over the tiers this catalog is a menu for. A tier whose turns are relayed
+    // names a model on the second provider (§9.1), absent from this list by
+    // construction, and refusing the daemon's start over it would name a menu
+    // the id was never offered on.
+    catalog
+        .current()
+        .validate(&proxenos::upstream::relay::validated_models(
+            &credentials.accounts().unwrap_or_default(),
+            &tiers,
+        ))?;
 
     // One policy, shared. The control socket can move the tier mapping and the
     // effort ceiling on a running daemon, and the ingress routes turns from the

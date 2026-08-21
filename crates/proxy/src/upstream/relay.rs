@@ -49,6 +49,52 @@ fn is_hop_by_hop(name: &HeaderName) -> bool {
     HOP_BY_HOP.contains(&name.as_str())
 }
 
+/// Which stored account a mapping entry's turns are relayed as, if any.
+///
+/// `docs/proxy-behavior.md` §9.1 in one function: a pinned entry names its
+/// account, an unpinned one names whichever account is serving turns, and the
+/// answer is on this path only when that account's credential is spent against
+/// the second provider.
+///
+/// A name the store does not hold answers `None`. The translating path already
+/// refuses that name, and refusing it here as well would give one mistake two
+/// different errors.
+pub fn relayed_by<'a>(
+    accounts: &'a [crate::auth::store::Account],
+    pinned: Option<&str>,
+) -> Option<&'a crate::auth::store::Account> {
+    accounts
+        .iter()
+        .find(|stored| match pinned {
+            Some(pinned) => stored.name == pinned,
+            None => stored.selected,
+        })
+        .filter(|stored| stored.provider == Provider::Anthropic.as_str())
+}
+
+/// Whether a mapping entry's turns leave by this path rather than translating.
+pub fn relays(accounts: &[crate::auth::store::Account], pinned: Option<&str>) -> bool {
+    relayed_by(accounts, pinned).is_some()
+}
+
+/// The mapped models the first provider's catalog can speak for.
+///
+/// **A catalog is one provider's menu** (§7.0), and the ids on the relay path
+/// are not on it — they are the second provider's, absent from the first's by
+/// construction. Measuring them against it would refuse a correct mapping and
+/// name a list the id was never offered on. Both places that validate a mapping
+/// against the catalog — the daemon's start and `tiers.set` — ask this first.
+pub fn validated_models(
+    accounts: &[crate::auth::store::Account],
+    tiers: &[crate::config::ResolvedTier],
+) -> Vec<String> {
+    tiers
+        .iter()
+        .filter(|tier| !relays(accounts, tier.account.as_deref()))
+        .map(|tier| tier.model.clone())
+        .collect()
+}
+
 /// Where a turn for the second provider goes, and what it goes as.
 pub struct Relay {
     client: reqwest::Client,
@@ -75,31 +121,12 @@ impl Relay {
 
     /// The account this mapping names, if its turns belong on this path.
     ///
-    /// `None` for the account — the mapping pinned nobody — resolves to
-    /// whichever account is serving turns. An unpinned tier has always meant
-    /// that, and a key selected for this provider would otherwise send every
-    /// turn to the other provider's endpoint.
-    ///
-    /// The answer is the account's *name* either way, because the relay
-    /// authenticates by name: a credential read by name is the same credential
-    /// whether or not it happens to be selected, and reading it by name is
-    /// what lets a refusal say which account it was.
-    ///
-    /// A name the store does not hold answers `None`, which sends the turn
-    /// down the translating path — where the same name is already refused by
-    /// the store, with a message naming it. Refusing here as well would give
-    /// one mistake two different errors.
+    /// The store is read per call rather than captured, so a login or a switch
+    /// reaches the next turn. The rule itself is `relayed_by`, which the
+    /// launch surface asks the same question of without a `Relay` to ask it
+    /// through.
     fn serves(&self, account: Option<&str>) -> Result<Option<String>, ProxyError> {
-        Ok(self
-            .store
-            .accounts()?
-            .into_iter()
-            .find(|stored| match account {
-                Some(account) => stored.name == account,
-                None => stored.selected,
-            })
-            .filter(|stored| stored.provider == Provider::Anthropic.as_str())
-            .map(|stored| stored.name))
+        Ok(relayed_by(&self.store.accounts()?, account).map(|stored| stored.name.clone()))
     }
 
     /// Which account serves this model id, where one does.

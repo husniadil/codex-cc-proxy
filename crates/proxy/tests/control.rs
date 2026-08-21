@@ -3742,3 +3742,73 @@ async fn a_change_for_another_account_does_not_claim_to_be_in_effect() {
         answer["detail"]
     );
 }
+
+/// §9.1 — a tier whose turns are relayed is not measured against the first
+/// provider's catalog.
+///
+/// The id belongs to the second provider and is absent from this list by
+/// construction, so validating it here refuses a mapping that is correct, with
+/// a message naming a menu it was never offered on.
+#[tokio::test]
+async fn setting_a_relay_bound_tier_is_not_refused_by_the_first_providers_catalog() {
+    let harness = Harness::start().await;
+    harness
+        .store
+        .add_key("relay", "relay-key-value", Provider::Anthropic)
+        .unwrap();
+    harness.store.select("relay").unwrap();
+
+    harness
+        .call_with(
+            "tiers.set",
+            json!({ "tiers": { "sonnet": "claude-sonnet-5" } }),
+        )
+        .await
+        .expect("a relayed id is not the catalog's to refuse");
+
+    assert_eq!(
+        harness
+            .policy
+            .get()
+            .tiers()
+            .iter()
+            .find(|tier| tier.tier == "sonnet")
+            .map(|tier| tier.model.as_str()),
+        Some("claude-sonnet-5")
+    );
+}
+
+/// The same tier is not reported as a model the backend withholds, either.
+///
+/// The catalog here hides an entry under the relayed id — contrived, so that
+/// the exclusion is observable at all — because an id the first provider has
+/// never heard of would drop out of that report by accident rather than by
+/// rule, and an accident is not a thing a later change has to keep.
+#[tokio::test]
+async fn a_relay_bound_tier_is_not_reported_as_a_withheld_model() {
+    let harness = Harness::with_catalog(
+        r#"{"data":[{"id":"gpt-5.6-terra","context_window":272000},
+                    {"id":"claude-sonnet-5","context_window":200000,"visibility":"hide"}]}"#,
+        "gpt-5.6-terra",
+    )
+    .await;
+    harness
+        .store
+        .add_key("relay", "relay-key-value", Provider::Anthropic)
+        .unwrap();
+    harness.store.select("relay").unwrap();
+    harness
+        .call_with(
+            "tiers.set",
+            json!({ "tiers": { "sonnet": "claude-sonnet-5" } }),
+        )
+        .await
+        .unwrap();
+
+    let status = harness.call("status").await.unwrap();
+    assert_eq!(
+        status["unlisted_tiers"],
+        json!([]),
+        "the first provider's catalog does not speak for a relayed id"
+    );
+}

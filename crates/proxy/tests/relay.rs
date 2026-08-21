@@ -416,3 +416,51 @@ async fn an_unpinned_tier_follows_the_selection_back_to_the_translating_path() {
     assert_ne!(turn(&base, CLIENT_BODY).await.status(), 200);
     assert!(seen.lock().unwrap().bodies.is_empty());
 }
+
+/// §9.1 — a catalog is one provider's menu, so a relay-bound tier is not
+/// measured against it.
+///
+/// The ids on this path belong to the second provider and are absent from the
+/// first provider's list by construction. Validating them there would refuse a
+/// mapping that is correct, at startup and at `tiers.set` alike, and the
+/// refusal would name a menu the id was never on.
+#[test]
+fn relay_bound_tiers_are_left_out_of_the_catalog_validation() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = store_with_a_relay_account(&dir);
+    let accounts = store.accounts().unwrap();
+
+    // Pinned to the relay account: its model belongs to that account's menu.
+    assert_eq!(
+        proxenos::upstream::relay::validated_models(
+            &accounts,
+            &[
+                tier("opus", "gpt-5.6-terra", None),
+                tier("sonnet", "claude-sonnet-5", Some("relay")),
+            ],
+        ),
+        vec!["gpt-5.6-terra".to_owned()]
+    );
+
+    // Unpinned, with the relay account serving: every tier is on that path, so
+    // there is nothing left for the first provider's catalog to speak for.
+    store.select("relay").unwrap();
+    assert!(
+        proxenos::upstream::relay::validated_models(
+            &store.accounts().unwrap(),
+            &[tier("sonnet", "claude-sonnet-5", None)],
+        )
+        .is_empty()
+    );
+
+    // A pin to an account of the first provider is unchanged: whether that
+    // belongs on the serving account's menu is a question this rule does not
+    // answer.
+    assert_eq!(
+        proxenos::upstream::relay::validated_models(
+            &accounts,
+            &[tier("sonnet", "gpt-5.4-mini", Some("acct_serving"))],
+        ),
+        vec!["gpt-5.4-mini".to_owned()]
+    );
+}

@@ -301,15 +301,17 @@ fn tiers(state: &ControlState) -> Value {
 
 /// Every model a tier points at, once each.
 fn mapped_models(state: &ControlState) -> Vec<String> {
-    state
-        .policy
-        .get()
-        .tiers()
-        .iter()
-        .map(|tier| tier.model.clone())
-        .collect::<std::collections::BTreeSet<_>>()
-        .into_iter()
-        .collect()
+    // Relayed tiers excluded, for the reason validation excludes them: the
+    // catalog is the first provider's menu (§9.1), so it has nothing to say
+    // about whether an id on the other provider is offered or withheld.
+    crate::upstream::relay::validated_models(
+        &state.credentials.accounts().unwrap_or_default(),
+        state.policy.get().tiers(),
+    )
+    .into_iter()
+    .collect::<std::collections::BTreeSet<_>>()
+    .into_iter()
+    .collect()
 }
 
 fn tier_map(state: &ControlState) -> Value {
@@ -577,13 +579,21 @@ fn set_tiers(state: &ControlState, params: Option<&Value>) -> Result<Value, Prox
     // one entry: its model belongs to the pinned account's menu, so it is
     // excluded here rather than refused over somebody else's list.
     if applies_now {
-        state.catalog.current().validate(
-            &tiers
-                .iter()
-                .filter(|tier| tier.account.is_none())
-                .map(|tier| tier.model.clone())
-                .collect::<Vec<_>>(),
-        )?;
+        // And only over the tiers this catalog is a menu for. A relayed tier's
+        // id belongs to the second provider (§9.1) and is not on this list by
+        // construction, so measuring it here would refuse a correct mapping.
+        let unpinned = tiers
+            .iter()
+            .filter(|tier| tier.account.is_none())
+            .cloned()
+            .collect::<Vec<_>>();
+        state
+            .catalog
+            .current()
+            .validate(&crate::upstream::relay::validated_models(
+                &state.credentials.accounts()?,
+                &unpinned,
+            ))?;
     }
 
     // Persisting is asked for, never assumed. A front-end changing a mapping to

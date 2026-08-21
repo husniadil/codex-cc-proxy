@@ -675,9 +675,10 @@ That is also why a mapping validated at startup cannot go stale on its own, and
 why the only mismatch worth reporting otherwise is a mapped model the catalog
 withholds (§7.1).
 
-**A catalog is one account's menu.** The plan decides which models appear and
-which efforts each one offers, so a list fetched for one account is not a
-statement about another. It is attributed to the account it was fetched for,
+**A catalog is one account's menu**, and one provider's. The plan decides which
+models appear and which efforts each one offers, so a list fetched for one
+account is not a statement about another — and a mapping entry whose turns are
+relayed to the second provider is measured against no list here at all (§9.1). It is attributed to the account it was fetched for,
 and fetched again when the daemon changes which account it serves — selecting
 another, or forgetting the one that was serving. A failed refetch **keeps the
 list already in force**: fetch failure is not evidence that a model went away
@@ -1241,6 +1242,14 @@ always been.
 A pinned account the store does not hold is *not* refused here. It falls
 through to the translating path, where §7.1 already refuses it by name — one
 mistake with one message rather than two.
+
+**A relayed tier is not validated against the first provider's catalog.** That
+list is one account's menu (§7.0), and one provider's: an id on this path is
+absent from it by construction, so measuring it there refuses a correct mapping
+with a message naming a menu the id was never offered on. The exclusion holds at
+both places a mapping meets the catalog — the daemon's start and `tiers.set` —
+and the same tier is left out of the withheld-model report (`api.md` §3), which
+otherwise answers a question that list cannot speak to.
 
 ### 9.2 Headers
 
