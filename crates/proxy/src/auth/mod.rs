@@ -6,5 +6,6 @@ pub mod flow;
 pub mod jwt;
 pub mod login;
 pub mod pkce;
+pub mod setup_token;
 pub mod store;
 pub mod tokens;
