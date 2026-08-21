@@ -387,6 +387,84 @@ if a second caller arrives first — see `api.md` §6.
 
 ### v0.5.0
 
+**The name stops being half-true.** The next release makes this daemon serve a
+second provider, and `codex-cc-proxy` names the first one. The name is welded
+into the repo, the crates, the binary, and the `CODEX_CC_PROXY_*` environment
+prefix, and today the cost of changing all four is one commit and one re-login.
+After anyone else depends on it, the cost is permanent. The new name is not
+chosen here; the decision is that it changes now, before 1.0 and before the
+provider work makes the old one wrong.
+
+**Done when** nothing user-facing carries the old name, and a configuration or
+credential store written under the old home is either migrated or refused with
+a message that says where it moved.
+
+### v0.6.0
+
+**A second provider behind the same surface.** The adapter seam has been unused
+since v0.1. Its first real load is the provider whose API this proxy already
+speaks on the front: Messages in, Messages out, so translation on this path is
+nearly nothing and the weight moves to auth and transport. The Codex transports
+— WebSocket, incremental upload — are Codex-specific; this path is plain
+HTTP+SSE, which amends the claim that transports are interchangeable below
+`session`: the *choice* of transport belongs to the adapter.
+
+The rules this path is built on, each decided before the code:
+
+- **The body is relayed verbatim.** Stated as a rule rather than observed as a
+  property, because a rewrite path exists today: a request whose `model` is a
+  tier name is mapped in the body. On this provider's path, mapping is never
+  done in the body — the client already sends the final id, delivered through
+  the environment at launch — and the injected identity lead is off. Held by a
+  test that captures the ingress body and the egress body and asserts them
+  identical. Headers are the exception, and the exact header delta is a §L
+  question to record, not to assume.
+- **An account states its provider; routing is by model id.** Each stored
+  account carries which endpoint its credential is for (the store already
+  refuses a mismatch), and a request routes by looking its model id up in the
+  mapping. One model id may be claimed by at most one account — the body
+  carries an id, not a tier name, so a duplicate would make routing ambiguous.
+- **Switching providers is a per-launch decision, not a mid-session one.** The
+  client bakes model ids from its environment at startup and sends them for the
+  session's life, so a switch changes what `env` and `exec` hand the *next*
+  session. Running sessions keep resolving by the ids they hold and are never
+  broken by a switch. Nothing rewrites a running session's model to make a
+  switch look immediate; that would be the body rewrite the first rule forbids.
+- **Cross-account tiers exist and are opt-in.** A tier entry may name another
+  account — `haiku = { account = "...", model = "..." }`, with the bare-string
+  form keeping its current meaning — so a session can, for example, spend one
+  subscription's quota on main turns and another's on the client's haiku-tier
+  calls. This routes one client's traffic across accounts, which is a decision
+  the operator must own: it is enabled by a persisted configuration key,
+  written through the control socket so both the CLI and a front-end can set it
+  deliberately, with the shipped example carrying the warning. Absent the key,
+  a cross-account entry refuses the daemon at startup and refuses `tiers.set`
+  at write time, naming the key. Never a silent fallback to the serving
+  account: that spends the wrong account's quota invisibly, which is the exact
+  failure the gate exists to prevent.
+- **Quota becomes per-account.** One snapshot per account rather than one per
+  daemon, because two accounts can serve one session concurrently. The `usage`
+  response stays additive over its current shape. A window a provider does not
+  report is absent, never rendered as zero — the slot stays in the shape so a
+  provider that reports both fills both. Freshness is stated per account: a
+  figure that rode the last turn and a figure fetched on request are both
+  legitimate and differently stale, and `usage.refresh` already exists for the
+  second kind.
+
+Multi-account for the second provider falls out of the store as it stands —
+accounts are already plural and endpoint-typed. Automatic rotation between
+subscriptions when one hits its limit is deliberately **not** built: the
+machinery (switch on request) and the policy (switch on quota) are separable,
+and the policy half is not this proxy's decision to make by default.
+
+**Done when** a session served end to end by the second provider passes the
+capability probes that apply to it, the verbatim-body assertion holds on
+recorded traffic, a cross-account mapping without the consent key refuses
+loudly at both points, and `usage` reports two accounts with their own windows
+and freshness without breaking a caller that reads today's shape.
+
+### v0.7.0
+
 **A graphical front-end.** The control socket was built for exactly this: the
 daemon holds authoritative state, the CLI has no privileged path of its own, and
 a second front-end needs no new daemon work. Whether that promise is true is
@@ -395,7 +473,11 @@ unproven until something other than the CLI speaks the protocol.
 Which platforms, and whether it is native per platform or one cross-platform
 shell, is open. So is whether the method names survive contact with a second
 caller — they become a compatibility surface the moment one exists, and that is
-worth settling before it does rather than after.
+worth settling before it does rather than after. Two shapes it should carry
+from the start: the cross-account consent above renders as an explicit dialog
+before the key is written, and a quota meter shows per-account figures with
+their reset times and per-account freshness, omitting what a provider does not
+report.
 
 **Done when** every daemon capability is reachable without the CLI, and the
 socket needed no method that only the graphical client would ever call.
@@ -441,6 +523,9 @@ alongside what they cost to learn.
 | ~~Is `ultra` gated by plan as well as by model?~~ | **Answered: yes, both.** It exists only on `gpt-5.6-sol` and needs at least a Plus subscription. The account here is `free` — now read from the id token and reported by `status` — which is why its requests are refused with `Invalid value: 'ultra'`, the schema-level refusal rather than the model-specific one `minimal` gets. This is what makes the catalog a menu of what a client may offer rather than a statement of what the wire accepts: it advertises `ultra` on `gpt-5.6-terra`, which refuses it. The refusal is surfaced verbatim rather than guessed around, and the plan is reported so the two can be told apart locally. Not reproducible here without a paid plan. |
 | Does compaction actually fire at the window the proxy supplies? | **Largely answered, derived not observed.** The client's history check compares the token count against a function of `autoCompactWindow`, and its own schema describes the trigger as the effective window minus a summary buffer, lowered further by a separate percentage override. So the figure the proxy supplies is the one compaction is measured against. Reading this also turned up a constraint the proxy had been ignoring: the value is accepted only between 100,000 and 1,000,000 — "Expected 'auto' or 100k–1M tokens" — and the settings form *discards* an out-of-range value silently. The proxy now omits it outside that range and warns. What remains unobserved is a session long enough to watch compaction happen. |
 | ~~Is the true input count linear in the estimator's raw figure?~~ | **Answered: yes.** Six live turns, residuals under 3% from the second turn on. The uncalibrated first turn was +95%. Recorded in §6.3. |
+| Does the second provider's subscription endpoint answer a quota question? | **Open.** A usage endpoint on the provider's API host is reported elsewhere to answer a subscription grant with both windows, severity-scoped limits, and spend — reported, not measured here. Method: record a live exchange with this proxy's own grant and make the recording a fixture. Until then the per-account meter treats that provider's figures as unavailable rather than plausible. |
+| What header delta does the Messages passthrough need? | **Open.** A client pointed at a proxy believes it is in API-key mode and will not send what a subscription grant's path needs; the grant path is reported to require a beta header the key path does not carry. The body can be verbatim; the headers cannot be assumed to be. Method: capture what the client sends (free, ingress-side) and what the real endpoint accepts (one turn), and write the difference into the spec as the complete list. |
+| How is a grant for the second provider obtained? | **Open.** The proxy's own PKCE flow is written against one authorization server. Whether the second provider's flow accepts a login this daemon performs — and under what client identity — is unmeasured, and the same one-grant-two-stores hazard that ruled out credential import for the first provider applies unchanged. Method: record the flow before writing it. |
 
 Before a question was answered, the corresponding claim in `proxy-behavior.md`
 was **derived from the upstream's own protocol definitions, not confirmed
