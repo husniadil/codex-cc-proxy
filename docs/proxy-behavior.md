@@ -1058,6 +1058,15 @@ speaking it, so there is no socket to fall back from. And a key account has
 **no quota to report**: the figure is a subscription entitlement, so asking for
 one with a key is the same refusal rather than a request spent to be told so.
 
+A fourth follows from the catalog rather than the pairing. The key endpoint's
+model list is real and authoritative — it answers with every model the key can
+reach — and it carries no window and no supported efforts for any of them. So
+for a key account the window guard (§7.2) never fires and the model half of the
+effort cap (§2.7) has nothing to cap against; the operator's configured ceiling
+still applies, because that one is not derived from the catalog. Nothing is
+silently wrong: the list is the account's own, and every entry states no window
+rather than a guessed one.
+
 A login through the CLI **hands over to a running daemon**, because the daemon
 reads the file on every request but nothing else about a switch happens on its
 own: the conversations bound to the previous account keep the endpoint they

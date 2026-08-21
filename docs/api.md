@@ -741,6 +741,11 @@ pending work.
 - **The catalog fallback list is fixed** and needs updating if models are renamed
   or retired while the live fetch is unavailable. Its entries carry no context
   window, so the window guard does not fire for a model the fallback named.
+- **A key account's catalog carries no windows or efforts.** The list is real
+  and is the account's own, and the endpoint states neither for any entry. The
+  window guard therefore never fires for a key account and the model half of the
+  effort cap has nothing to cap against. The ceiling set in configuration still
+  applies.
 
 - **Claude Code never reaches the `input_file` path.** It rasterises PDFs into
   image blocks, so documents from that client reach the model as images. The
