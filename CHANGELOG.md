@@ -23,7 +23,9 @@ in [`docs/api.md`](docs/api.md) §6.
 ### Changed
 
 - **Routing on the relay path is by model id, and one id may be claimed by at
-  most one account.** Two mappings naming one id and two different accounts
+  most one account.** A tier that pins nobody names the account serving turns,
+  so selecting a key for this provider relays every turn rather than sending
+  them to the other provider's endpoint. Two mappings naming one id and two different accounts
   refuse the turn, naming both. Picking one would spend a subscription nobody
   pointed at that turn and say nothing.
 - **`AccountStore::add_key` takes the provider.** A required parameter rather

@@ -1211,9 +1211,17 @@ reads it.
 
 Each stored account states which provider its credential is spent against (§8),
 and a turn routes by **model id**: the id in the body is looked up among the
-mapped models, and the account that mapping pins (§7.1) decides the path. An id
-mapped to an account on the second provider is relayed; everything else
-translates, exactly as before this path existed.
+mapped models, and the account that mapping names decides the path. A mapping
+that pins one (§7.1) names it; a mapping that pins nobody names the account
+serving turns, which is what an unpinned tier has always meant. An id whose
+account is on the second provider is relayed; everything else translates,
+exactly as before this path existed.
+
+The unpinned case matters on its own. An operator who stores a key for this
+provider and selects it has said where their turns go, and routing that ignored
+the selection would send every one of them to the other provider's endpoint —
+refused there as a credential of the wrong kind, which is a message about the
+credential rather than about the half that is wrong.
 
 By model id rather than by tier name, because this path never rewrites the
 model. The client is handed final ids by `env` and `exec` at launch and sends

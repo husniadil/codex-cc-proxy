@@ -363,3 +363,56 @@ async fn an_unclaimed_model_id_still_takes_the_translating_path() {
     assert_ne!(response.status(), 200);
     assert!(seen.lock().unwrap().bodies.is_empty());
 }
+
+/// A tier that pins nobody belongs to the account serving turns, and if that
+/// account is on the second provider its turns are relayed too.
+///
+/// Otherwise an operator who stored a key for this provider and selected it
+/// would have every turn sent to the other provider's endpoint, where it is
+/// refused as a credential of the wrong kind — a message about the credential,
+/// which is not the half that is wrong.
+#[tokio::test]
+async fn an_unpinned_tier_is_relayed_when_the_serving_account_is_the_relay_account() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = store_with_a_relay_account(&dir);
+    store.select("relay").unwrap();
+
+    let (base, seen) = daemon(
+        Arc::clone(&store),
+        vec![tier("sonnet", "claude-sonnet-5", None)],
+        false,
+    )
+    .await;
+
+    assert_eq!(turn(&base, CLIENT_BODY).await.status(), 200);
+
+    let seen = seen.lock().unwrap();
+    assert_eq!(seen.bodies[0], CLIENT_BODY);
+    assert_eq!(
+        seen.headers[0]
+            .get("authorization")
+            .and_then(|value| value.to_str().ok()),
+        Some("Bearer relay-key-value")
+    );
+}
+
+/// Selecting an account on the first provider puts the same unpinned tier back
+/// on the translating path. The selection is what moved, and nothing else.
+#[tokio::test]
+async fn an_unpinned_tier_follows_the_selection_back_to_the_translating_path() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = store_with_a_relay_account(&dir);
+    store.select("acct_serving").unwrap();
+
+    let (base, seen) = daemon(
+        Arc::clone(&store),
+        vec![tier("sonnet", "claude-sonnet-5", None)],
+        false,
+    )
+    .await;
+
+    // The translating path's transport points nowhere, so this fails — and
+    // failing there is the assertion.
+    assert_ne!(turn(&base, CLIENT_BODY).await.status(), 200);
+    assert!(seen.lock().unwrap().bodies.is_empty());
+}

@@ -73,16 +73,33 @@ impl Relay {
         }
     }
 
-    /// Whether this account's turns belong on this path.
+    /// The account this mapping names, if its turns belong on this path.
     ///
-    /// A name the store does not hold answers `false`, which sends the turn
+    /// `None` for the account — the mapping pinned nobody — resolves to
+    /// whichever account is serving turns. An unpinned tier has always meant
+    /// that, and a key selected for this provider would otherwise send every
+    /// turn to the other provider's endpoint.
+    ///
+    /// The answer is the account's *name* either way, because the relay
+    /// authenticates by name: a credential read by name is the same credential
+    /// whether or not it happens to be selected, and reading it by name is
+    /// what lets a refusal say which account it was.
+    ///
+    /// A name the store does not hold answers `None`, which sends the turn
     /// down the translating path — where the same name is already refused by
     /// the store, with a message naming it. Refusing here as well would give
     /// one mistake two different errors.
-    fn serves(&self, account: &str) -> Result<bool, ProxyError> {
-        Ok(self.store.accounts()?.into_iter().any(|stored| {
-            stored.name == account && stored.provider == Provider::Anthropic.as_str()
-        }))
+    fn serves(&self, account: Option<&str>) -> Result<Option<String>, ProxyError> {
+        Ok(self
+            .store
+            .accounts()?
+            .into_iter()
+            .find(|stored| match account {
+                Some(account) => stored.name == account,
+                None => stored.selected,
+            })
+            .filter(|stored| stored.provider == Provider::Anthropic.as_str())
+            .map(|stored| stored.name))
     }
 
     /// Which account serves this model id, where one does.
@@ -110,9 +127,9 @@ impl Relay {
         }
 
         let mut relaying = Vec::new();
-        for account in claimants.iter().flatten() {
-            if self.serves(account)? {
-                relaying.push(*account);
+        for account in &claimants {
+            if let Some(name) = self.serves(*account)? {
+                relaying.push(name);
             }
         }
 
@@ -136,7 +153,7 @@ impl Relay {
             )));
         }
 
-        Ok(Some((*first).to_owned()))
+        Ok(Some(first.clone()))
     }
 
     /// Forward one turn and stream the answer back.
