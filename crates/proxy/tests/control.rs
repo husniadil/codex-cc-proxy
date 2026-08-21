@@ -1003,7 +1003,7 @@ async fn a_client_policy_switched_off_leaves_no_trace() {
     let harness = Harness::start()
         .await
         .with_client(proxenos::config::ClientConfig {
-            deny_skills: Vec::new(),
+            deny_skills: Some(Vec::new()),
             disable_connectors: false,
         })
         .await;
@@ -1035,6 +1035,48 @@ async fn a_client_policy_switched_off_leaves_no_trace() {
     );
 }
 
+/// An all-relay launch carries no skill deny by default.
+///
+/// The default deny exists because the bundled skill documents the second
+/// provider's API — the wrong reference for a session translated to the first,
+/// and a 73,000–93,000-byte load either way. A session whose every turn is
+/// relayed is served by the very provider the skill documents, so the default
+/// has nothing to protect and stays out of the document. An explicit
+/// `client.deny_skills` stays the operator's own rule and applies on either
+/// path.
+#[tokio::test]
+async fn an_all_relay_launch_carries_no_skill_deny_by_default() {
+    let harness = Harness::start().await;
+    harness
+        .store
+        .add_key("relay", "relay-key-value", Provider::Anthropic)
+        .unwrap();
+    harness
+        .call_with(
+            "tiers.set",
+            json!({ "tiers": {
+                "opus": "claude-opus-5",
+                "sonnet": "claude-sonnet-5",
+                "haiku": "claude-haiku-4-5",
+                "fable": "claude-fable-5",
+            }}),
+        )
+        .await
+        .unwrap();
+
+    let result = harness.call("env").await.unwrap();
+    assert_eq!(
+        result["settings"],
+        json!({ "disableClaudeAiConnectors": true }),
+        "{result}"
+    );
+
+    // And status reports what a launch would actually apply, so the reader is
+    // not sent chasing a rule that is not in force.
+    let status = harness.call("status").await.unwrap();
+    assert_eq!(status["client"]["deny_skills"], json!([]));
+}
+
 /// The client refuses a denied skill with "Skill execution blocked by
 /// permission rules" and names nobody. This is where the person holding that
 /// message finds out what blocked it and which key to change.
@@ -1064,7 +1106,7 @@ async fn status_stays_quiet_when_nothing_is_denied() {
     let harness = Harness::start()
         .await
         .with_client(proxenos::config::ClientConfig {
-            deny_skills: Vec::new(),
+            deny_skills: Some(Vec::new()),
             disable_connectors: true,
         })
         .await;
@@ -2060,7 +2102,7 @@ async fn the_policy_half_is_present_and_empty_rather_than_absent() {
     let harness = Harness::start()
         .await
         .with_client(proxenos::config::ClientConfig {
-            deny_skills: Vec::new(),
+            deny_skills: Some(Vec::new()),
             disable_connectors: false,
         })
         .await;

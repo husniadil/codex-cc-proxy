@@ -87,7 +87,7 @@ pub async fn dispatch(
         // upgrade that has not restarted anything.
         "env" => Ok(json!({
             "variables": environment(state),
-            "settings": state.config.client.settings(),
+            "settings": state.config.client.settings(any_tier_translates(state)),
         })),
         "usage" => Ok(usage(state)),
         "accounts.forget" => forget_account(state, params).await,
@@ -137,6 +137,24 @@ pub async fn dispatch(
         ))),
         other => Err(ProxyError::not_found(format!("unknown method `{other}`"))),
     }
+}
+
+/// Whether any tier's turns translate (§9.1), which is what the client-policy
+/// default turns on: the denied skill documents the second provider's API, the
+/// wrong reference only where turns are translated away from it.
+///
+/// An empty mapping answers `true`, keeping a daemon with nothing mapped on
+/// the policy it had before the relay existed.
+fn any_tier_translates(state: &ControlState) -> bool {
+    let policy = state.policy.get();
+    let tiers = policy.tiers();
+    if tiers.is_empty() {
+        return true;
+    }
+    let accounts = state.credentials.accounts().unwrap_or_default();
+    tiers
+        .iter()
+        .any(|tier| !crate::upstream::relay::relays(&accounts, tier.account.as_deref()))
 }
 
 /// This binary's version, reported so a caller can see whether the daemon
@@ -265,7 +283,10 @@ fn status(state: &ControlState) -> Value {
         // a message that names nobody — and what they need next is the key that
         // undoes it.
         "client": {
-            "deny_skills": state.config.client.deny_skills,
+            // The list a launch would actually apply, not the raw key: a
+            // reader chasing "Skill execution blocked" needs the rule in
+            // force, and an all-relay mapping has no default deny in force.
+            "deny_skills": state.config.client.effective_deny_skills(any_tier_translates(state)),
             "disable_connectors": state.config.client.disable_connectors,
         },
         "recording": state.capture.any(),

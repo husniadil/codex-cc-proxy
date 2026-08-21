@@ -163,19 +163,21 @@ working_budget = true
 # launcher. This proxy publishes it and never writes it into a file it does not
 # own.
 [client]
-# Skills refused for a session served through here. `claude-api` is on this list
-# by measurement: one invocation lands 73,000 to 93,000 bytes — roughly 18,000 to
-# 23,000 tokens — in the conversation, where it stays for the rest of the session
-# and is charged every turn, while a refused call costs a 43-byte error. A range
-# because the figure moves with what else the session has loaded. It is also the wrong
-# reference for a session served here, since it documents another provider's
-# model ids, prices, and parameters.
+# Skills refused for a session served through here. Unset, `claude-api` is
+# denied for a launch whose turns translate, and nothing is denied for one
+# whose turns are all relayed — the skill documents the second provider's API,
+# which is the wrong reference for a translated session and the right one for
+# a relayed session. The deny is on by measurement: one invocation lands
+# 73,000 to 93,000 bytes — roughly 18,000 to 23,000 tokens — in the
+# conversation, where it stays for the rest of the session and is charged
+# every turn, while a refused call costs a 43-byte error. A range because the
+# figure moves with what else the session has loaded.
 #
 # Denying does not remove the skill from the listing the client sends, so the
-# model may still reach for it once; what this stops is the load. Write an empty
-# list to allow everything, which is what someone building against that API
-# wants.
-deny_skills = ["claude-api"]
+# model may still reach for it once; what this stops is the load. Writing a
+# list makes it the rule on both paths; an empty list allows everything, which
+# is what someone building against that API wants.
+# deny_skills = ["claude-api"]
 
 # Suppress the connector notice the client prints whenever an auth token is set,
 # which here is always.
@@ -559,11 +561,15 @@ pub struct ClientConfig {
     /// The deny does **not** remove the skill from the listing the client
     /// sends, so the model may still reach for it; what it stops is the load.
     ///
-    /// It is also the wrong reference for a session served here at all: it
-    /// documents another provider's model ids, prices, and parameters, and a
-    /// model that reads it answers confidently about something it is not.
-    #[serde(default = "default_deny_skills")]
-    pub deny_skills: Vec<String>,
+    /// It is also the wrong reference for a *translated* session: it documents
+    /// the second provider's model ids, prices, and parameters, and a model
+    /// that reads it answers confidently about something it is not. A relayed
+    /// session is served by the very provider it documents — which is why the
+    /// default is resolved per launch (`effective_deny_skills`) rather than
+    /// written here. `None` is "the default, whichever applies"; a written
+    /// list is the operator's own rule and applies on either path.
+    #[serde(default)]
+    pub deny_skills: Option<Vec<String>>,
     /// Suppress the connector notice the client prints whenever an auth token
     /// is set, which is always, here.
     #[serde(default = "default_disable_connectors")]
@@ -581,13 +587,27 @@ fn default_disable_connectors() -> bool {
 impl Default for ClientConfig {
     fn default() -> Self {
         Self {
-            deny_skills: default_deny_skills(),
+            deny_skills: None,
             disable_connectors: default_disable_connectors(),
         }
     }
 }
 
 impl ClientConfig {
+    /// The skills a launch denies, resolved for the path its turns take.
+    ///
+    /// A written list is the operator's rule and applies on either path. Left
+    /// unset, `claude-api` is denied only for a launch that translates: the
+    /// skill documents the second provider's API — the wrong reference for a
+    /// translated session, and the right one for a relayed session.
+    pub fn effective_deny_skills(&self, translating: bool) -> Vec<String> {
+        match &self.deny_skills {
+            Some(skills) => skills.clone(),
+            None if translating => default_deny_skills(),
+            None => Vec::new(),
+        }
+    }
+
     /// The policy as the client's own settings keys, empty when there is
     /// nothing to say.
     ///
@@ -605,12 +625,12 @@ impl ClientConfig {
     /// The operator writes a skill id and this writes the rule. Building the
     /// wrapper by hand is a step that fails silently — a rule the client does
     /// not recognize denies nothing and reports nothing.
-    pub fn settings(&self) -> serde_json::Map<String, serde_json::Value> {
+    pub fn settings(&self, translating: bool) -> serde_json::Map<String, serde_json::Value> {
         let mut document = serde_json::Map::new();
 
-        if !self.deny_skills.is_empty() {
-            let rules: Vec<serde_json::Value> = self
-                .deny_skills
+        let deny = self.effective_deny_skills(translating);
+        if !deny.is_empty() {
+            let rules: Vec<serde_json::Value> = deny
                 .iter()
                 .map(|skill| serde_json::Value::from(format!("Skill({skill})")))
                 .collect();

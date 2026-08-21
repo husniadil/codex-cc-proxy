@@ -615,10 +615,13 @@ fn the_working_budget_ships_on_and_can_be_switched_off() {
 #[test]
 fn the_client_policy_ships_on_and_can_be_switched_off() {
     let on = Config::default();
-    assert_eq!(on.client.deny_skills, vec!["claude-api".to_owned()]);
+    assert_eq!(
+        on.client.effective_deny_skills(true),
+        vec!["claude-api".to_owned()]
+    );
     assert!(on.client.disable_connectors);
     assert_eq!(
-        serde_json::Value::Object(on.client.settings()),
+        serde_json::Value::Object(on.client.settings(true)),
         serde_json::json!({
             "permissions": { "deny": ["Skill(claude-api)"] },
             "disableClaudeAiConnectors": true,
@@ -634,8 +637,40 @@ fn the_client_policy_ships_on_and_can_be_switched_off() {
     )
     .unwrap();
     assert!(
-        off.client.settings().is_empty(),
+        off.client.settings(true).is_empty(),
         "switched off should leave no keys behind"
+    );
+}
+
+/// The deny default is resolved per launch: it protects a translated session
+/// from a reference that documents the second provider's API, and a session
+/// whose every turn is relayed is served by that very provider.
+///
+/// A written list is the operator's own rule and applies on either path — the
+/// default is the only thing that moves.
+#[test]
+fn the_deny_default_applies_only_to_a_translating_launch() {
+    let unset = Config::default();
+    assert_eq!(
+        unset.client.effective_deny_skills(false),
+        Vec::<String>::new()
+    );
+    assert!(
+        unset.client.settings(false).get("permissions").is_none(),
+        "an all-relay launch has no default deny to carry"
+    );
+
+    let written: Config = toml::from_str(
+        r#"
+        [client]
+        deny_skills = ["claude-api"]
+        "#,
+    )
+    .unwrap();
+    assert_eq!(
+        written.client.settings(false)["permissions"]["deny"],
+        serde_json::json!(["Skill(claude-api)"]),
+        "a written list is the operator's rule on either path"
     );
 }
 
@@ -652,7 +687,7 @@ fn each_half_of_the_client_policy_stands_alone() {
     )
     .unwrap();
     assert_eq!(
-        serde_json::Value::Object(skills_only.client.settings()),
+        serde_json::Value::Object(skills_only.client.settings(true)),
         serde_json::json!({ "permissions": { "deny": ["Skill(claude-api)"] } })
     );
 
@@ -664,7 +699,7 @@ fn each_half_of_the_client_policy_stands_alone() {
     )
     .unwrap();
     assert_eq!(
-        serde_json::Value::Object(connectors_only.client.settings()),
+        serde_json::Value::Object(connectors_only.client.settings(true)),
         serde_json::json!({ "disableClaudeAiConnectors": true })
     );
 }
@@ -684,7 +719,7 @@ fn a_configured_skill_becomes_a_rule_the_client_understands() {
     .unwrap();
 
     assert_eq!(
-        config.client.settings()["permissions"]["deny"],
+        config.client.settings(true)["permissions"]["deny"],
         serde_json::json!(["Skill(claude-api)", "Skill(some-other-skill)"])
     );
 }

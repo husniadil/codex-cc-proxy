@@ -849,7 +849,13 @@ and environment variables mostly cannot — see `proxy-behavior.md` §7.3 for wh
 each default is what it is. `deny_skills` names skills refused for a session
 served here; the proxy writes the `Skill(...)` rule the client understands,
 because a rule built by hand and built wrong denies nothing and reports nothing.
-An empty list allows everything. `disable_connectors` does two things through
+An empty list allows everything. **Left unset, the default is resolved per
+launch**: `claude-api` is denied for a launch whose turns translate, and
+nothing is denied for one whose turns are all relayed — the skill documents
+the second provider's API, the wrong reference for a translated session and
+the right one for a relayed session. A written list is the operator's rule and
+applies on either path. `status` reports the list a launch would actually
+apply. `disable_connectors` does two things through
 one intent: the settings key (`disableClaudeAiConnectors`) suppresses the
 connector notice the client prints whenever an auth token is set, which here is
 always, and the export (`ENABLE_CLAUDEAI_MCP_SERVERS=false`) is the client's
