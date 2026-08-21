@@ -367,7 +367,25 @@ it took the key at the turn endpoint, refused a compressed body there, and
 refused the same key at the model list. Whether a turn completes against it is
 not recorded anywhere here — see §L.
 
-### v0.4.0
+### v0.4.0 — shipped
+
+**A tier mapping that belongs to an account.** One mapping was only ever right
+for the models every stored account has, and that intersection shrinks with each
+account added: two subscriptions on different plans are offered different
+models, and a key account beside a subscription need not overlap at all.
+
+**Done.** `[accounts.<name>.tiers]` and an `effort` beside it, resolved against
+the shared tables for whatever an account does not state. Three things had to
+travel with it, each of them a way for the mapping to be quietly wrong: a switch
+re-resolves it and is refused by one the target account's catalog cannot serve, a
+rename moves the section, and a persisted change is written where the value is
+read from rather than into a table something else shadows.
+
+`disconnect` became `accounts.forget` in the same release, which is why this is
+a minor bump rather than a patch. It is the last rename this exception permits
+if a second caller arrives first — see `api.md` §6.
+
+### v0.5.0
 
 **A graphical front-end.** The control socket was built for exactly this: the
 daemon holds authoritative state, the CLI has no privileged path of its own, and

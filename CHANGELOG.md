@@ -4,7 +4,11 @@ All notable changes to this project are recorded here. This project follows
 [semantic versioning](https://semver.org). The semver-bound surfaces are listed
 in [`docs/api.md`](docs/api.md) §6.
 
-## [Unreleased]
+## [0.4.0]
+
+The tier mapping stopped belonging to the daemon and started belonging to an
+account, and the one socket method whose name did not match its neighbours was
+renamed while nothing but this project's own CLI was there to notice.
 
 ### Added
 

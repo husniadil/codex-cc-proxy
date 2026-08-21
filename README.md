@@ -32,7 +32,7 @@ implementation is wrong in a way that does not fail loudly.
 
 ## Status
 
-**v0.3.0.** Everything here is verified against a local replay server built
+**v0.4.0.** Everything here is verified against a local replay server built
 from the upstream protocol definitions, and the whole suite runs without
 credentials or quota. Every capability probe has since also been answered by a
 live backend — `doctor --live` runs the same probes against the real thing, and
@@ -218,6 +218,25 @@ codex-cc-proxy accounts --use api
 
 `--as` is required here rather than optional: a key carries no account id to be
 named by, and the name is what `accounts --use` takes.
+
+Each account can map the tiers its own way. A catalog is one account's menu, so
+two subscriptions on different plans are offered different models, and a key
+account beside a subscription need not overlap at all:
+
+```toml
+[tiers]
+opus = "gpt-5.6-terra"        # the default for every account
+
+[accounts.api]
+effort = "low"                # replaces the shared ceiling for this account
+
+[accounts.api.tiers]
+opus = "gpt-5.1"              # a tier an account does not name falls through
+```
+
+Switching accounts re-resolves that mapping and refuses the switch if the
+account's catalog cannot serve it, so a turn is never dispatched to a model the
+backend will not answer for. Renaming an account moves its section with it.
 
 A key is spent against a different endpoint with different billing, and one kind
 of credential is refused against the other kind's endpoint before anything

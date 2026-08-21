@@ -877,9 +877,11 @@ project's own CLI has ever spoken the socket — the CLI and the daemon are one
 binary, so a rename lands on both at once. A name that turns out wrong is
 therefore renamed on a minor bump, said in the changelog, and gone rather than
 left beside its replacement. `accounts.forget` arrived that way. The exception
-ends when a second caller exists, which is what v0.4.0 is, and it ends whether
-or not 1.0 has been reached: the moment something else has to be upgraded in
-step, only additions are safe.
+ends when a second caller exists — the graphical front-end is the one planned,
+and any other program that speaks this socket ends it just as well — and it ends
+whether or not 1.0 has been reached: the moment something else has to be
+upgraded in step, only additions are safe. It is a statement about callers, not
+about a version number.
 
 **An unknown method reaches the caller as an unknown method.** The error code
 survives the round trip rather than being flattened into one kind, because
