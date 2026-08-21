@@ -385,7 +385,7 @@ read from rather than into a table something else shadows.
 a minor bump rather than a patch. It is the last rename this exception permits
 if a second caller arrives first — see `api.md` §6.
 
-### v0.5.0
+### v0.5.0 — shipped
 
 **The name stops being half-true.** The next release makes this daemon serve a
 second provider, and the old name — `codex-cc-proxy` — named the first one. The
@@ -400,7 +400,7 @@ what the daemon does and no provider on either side of it.
 credential store written under the old home is either migrated or refused with
 a message that says where it moved.
 
-### v0.6.0
+### v0.6.0 — shipped
 
 **A second provider behind the same surface.** The adapter seam has been unused
 since v0.1. Its first real load is the provider whose API this proxy already
