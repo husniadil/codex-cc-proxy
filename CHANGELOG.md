@@ -107,11 +107,15 @@ now.
   the account just moved off. They are dropped and dial again, each paying one
   full upload.
 
-- **The model catalog says which account it belongs to.** It is fetched once, at
-  startup, for the account selected then, and `status.catalog_stale`,
-  `status.catalog_account`, and `models.stale` report when that is no longer the
-  account serving turns. Nothing refetches it yet; what changed is that the
-  answers stop presenting another account's plan as this one's.
+- **The model catalog follows the account.** It is fetched at startup for the
+  account selected then, and asked for again when `accounts.select` or a
+  `disconnect` that hands over changes who serves turns. That fetch is best
+  effort: a failure keeps the list already in force, because a fetch that did
+  not answer is not evidence that a model went away, and replacing a real list
+  with the fallback would withdraw models the account has. So the list can
+  still belong to somebody else, and `status.catalog_stale`,
+  `status.catalog_account`, and `models.stale` say when it does rather than
+  presenting another account's plan as this one's.
 
 - **An account can hold an API key instead of a subscription grant.**
   `login --key` reads a secret from stdin — never from an argument, which is

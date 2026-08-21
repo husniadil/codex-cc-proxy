@@ -677,11 +677,11 @@ list already in force**: fetch failure is not evidence that a model went away
 (§7.1), and replacing a real list with the fallback would withdraw models the
 account has.
 
-Attribution is what covers the rest. A grant that arrives without the daemon
-being asked — a login completed in the CLI — changes which account serves turns
-without any socket call, and there is nothing to refetch on. The list stays the
-previous account's, and every answer built from it says so (`api.md` §3) rather
-than presenting it as this account's.
+Attribution is what covers the rest. A grant can still arrive without anything
+to refetch on: a login started over the control socket completes in the
+background, and a login made in the CLI while no daemon is running has no socket
+to hand over on. The list stays the previous account's, and every answer built
+from it says so (`api.md` §3) rather than presenting it as this account's.
 
 Each entry contributes an id, a visibility flag, and window metadata: a context
 window, an optional maximum context window, and an optional effective percentage.

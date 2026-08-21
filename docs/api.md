@@ -530,10 +530,12 @@ returns if it comes back.
 §7.0). `accounts.select` and a `disconnect` that hands over to another account
 fetch it again as whoever serves now, and their answers carry
 `catalog_refreshed` — a fetch that failed keeps the previous list in force, and
-everything downstream of it still describes that account. Where the change
-happened without this socket, a login completed in the CLI being the case that
-matters, `status.catalog_stale` and `models.stale` say the list is not this
-account's and `status.catalog_account` names whose it is.
+everything downstream of it still describes that account. A CLI `login` calls
+`accounts.select` when it lands, so that path refetches too. Where nothing
+refetched — a `login` started here and completed in the background, or a CLI
+one made while no daemon was running — `status.catalog_stale` and `models.stale`
+say the list is not this account's and `status.catalog_account` names whose it
+is.
 
 **`status` names the account.** `auth.account` is what this daemon calls the one
 serving turns and is what selects it; `auth.account_id` is what the backend

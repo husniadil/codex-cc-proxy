@@ -238,11 +238,12 @@ fn status(state: &ControlState) -> Value {
         // that cannot tell would report an unvalidated mapping as a validated
         // one.
         "catalog_authoritative": catalog.authoritative,
-        // Whether the list describes the account now serving turns. It is
-        // fetched once, for the account selected then, and nothing refetches
-        // it — so after a switch it is the previous account's menu, and
-        // presenting it as this one's would deny models this account has and
-        // offer models it does not.
+        // Whether the list describes the account now serving turns. A switch
+        // asks for it again, but best effort: a failed fetch keeps the list
+        // already in force rather than withdrawing models the account has, so
+        // it can still be the previous account's menu — and presenting that as
+        // this one's would deny models this account has and offer models it
+        // does not.
         "catalog_stale": catalog.is_stale_for(serving_account(state).as_deref()),
         "catalog_account": catalog.fetched_for.clone(),
         // The build actually serving this socket, which is not necessarily the
