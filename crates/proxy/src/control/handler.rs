@@ -610,20 +610,17 @@ fn set_tiers(state: &ControlState, params: Option<&Value>) -> Result<Value, Prox
     // one entry: its model belongs to the pinned account's menu, so it is
     // excluded here rather than refused over somebody else's list.
     if applies_now {
-        // And only over the tiers this catalog is a menu for. A relayed tier's
-        // id belongs to the second provider (§9.1) and is not on this list by
-        // construction, so measuring it here would refuse a correct mapping.
-        let unpinned = tiers
-            .iter()
-            .filter(|tier| tier.account.is_none())
-            .cloned()
-            .collect::<Vec<_>>();
+        // And only over the tiers this catalog is a menu for: a pinned entry
+        // belongs to another account's list and a relayed one to another
+        // provider's. `validated_models` holds both exclusions, and holding
+        // them in one place is what keeps this door and the daemon's start
+        // from disagreeing about what is valid.
         state
             .catalog
             .current()
             .validate(&crate::upstream::relay::validated_models(
                 &state.credentials.accounts()?,
-                &unpinned,
+                &tiers,
             ))?;
     }
 
@@ -1208,12 +1205,13 @@ fn put_mapping_in_force(state: &ControlState, account: &str) -> Result<(), Proxy
 
     let catalog = state.catalog.current();
     if !catalog.is_stale_for(serving_account(state).as_deref()) {
-        catalog.validate(
-            &tiers
-                .iter()
-                .map(|tier| tier.model.clone())
-                .collect::<Vec<_>>(),
-        )?;
+        // The third door onto the rule the daemon's start and `tiers.set` use,
+        // through the same function: this list is the account being switched
+        // to, and a pinned or relayed tier names another menu entirely.
+        catalog.validate(&crate::upstream::relay::validated_models(
+            &state.credentials.accounts().unwrap_or_default(),
+            &tiers,
+        ))?;
     }
 
     state.policy.set_tiers(tiers);

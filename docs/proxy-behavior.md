@@ -774,6 +774,19 @@ resolves against carries the account beside the two model ids, because that
 table is the only thing a turn resolves against — an account left out of it
 arrives at the transport as no account at all.
 
+**A pinned tier is not validated against the serving account's catalog.** Its
+model belongs to the pinned account's menu (§7.0), and that menu is not the list
+in force — one catalog is held, for the account serving turns. Refusing a spare
+account's model because the serving account is not offered it is the exact case
+per-account mappings exist for, whichever provider either account is on.
+
+The exclusion holds at every door onto the mapping: the daemon's start,
+`tiers.set`, and a switch. It did not always, and the disagreement was silent
+until a restart — the socket accepted a pinned entry and persisted it, and the
+next start refused the daemon over the same entry, which is the failure the
+write-time check exists to prevent rather than to produce. One function answers
+for all three now, so they cannot drift apart again.
+
 A pin naming an account the store does not hold **refuses the turn**, and the
 refusal names the account and lists what is stored. There is no fallback to the
 serving account: the turn would succeed, read identically to a correct one, and
@@ -1274,9 +1287,11 @@ mistake with one message rather than two.
 list is one account's menu (§7.0), and one provider's: an id on this path is
 absent from it by construction, so measuring it there refuses a correct mapping
 with a message naming a menu the id was never offered on. The exclusion holds at
-both places a mapping meets the catalog — the daemon's start and `tiers.set` —
-and the same tier is left out of the withheld-model report (`api.md` §3), which
-otherwise answers a question that list cannot speak to.
+every place a mapping meets the catalog — the daemon's start, `tiers.set`, and a
+switch — beside §7.1's exclusion of a pinned tier, which is the neighbouring
+case with the neighbouring reason. The same tier is left out of the
+withheld-model report (`api.md` §3), which otherwise answers a question that list
+cannot speak to.
 
 ### 9.2 Headers
 

@@ -77,20 +77,30 @@ pub fn relays(accounts: &[crate::auth::store::Account], pinned: Option<&str>) ->
     relayed_by(accounts, pinned).is_some()
 }
 
-/// The mapped models the first provider's catalog can speak for.
+/// The mapped models the catalog in force can speak for.
 ///
-/// **A catalog is one provider's menu** (§7.0), and the ids on the relay path
-/// are not on it — they are the second provider's, absent from the first's by
-/// construction. Measuring them against it would refuse a correct mapping and
-/// name a list the id was never offered on. Both places that validate a mapping
-/// against the catalog — the daemon's start and `tiers.set` — ask this first.
+/// **A catalog is one account's menu, and one provider's** (§7.0). Two kinds of
+/// entry are therefore not its to judge, and both are left out here:
+///
+/// - a tier **pinned** to an account (§7.1), whose model belongs to that
+///   account's menu rather than to the serving account's, whichever provider
+///   either of them is on;
+/// - a tier whose turns are **relayed** (§9.1), whose id is the second
+///   provider's and is absent from this list by construction.
+///
+/// Measuring either against this list refuses a correct mapping and names a
+/// menu the id was never offered on. Both places a mapping meets the catalog —
+/// the daemon's start and `tiers.set` — ask this, so the two cannot disagree
+/// about what is valid. They did once, and the disagreement was silent until a
+/// restart: a pinned mapping written through the socket, accepted there, then
+/// refused at the next start.
 pub fn validated_models(
     accounts: &[crate::auth::store::Account],
     tiers: &[crate::config::ResolvedTier],
 ) -> Vec<String> {
     tiers
         .iter()
-        .filter(|tier| !relays(accounts, tier.account.as_deref()))
+        .filter(|tier| tier.account.is_none() && !relays(accounts, tier.account.as_deref()))
         .map(|tier| tier.model.clone())
         .collect()
 }

@@ -453,14 +453,14 @@ fn relay_bound_tiers_are_left_out_of_the_catalog_validation() {
         .is_empty()
     );
 
-    // A pin to an account of the first provider is unchanged: whether that
-    // belongs on the serving account's menu is a question this rule does not
-    // answer.
-    assert_eq!(
+    // A pin to an account of the first provider is left out too, for the
+    // neighbouring reason (§7.1): a pin names another account's menu, and this
+    // list is the serving account's.
+    assert!(
         proxenos::upstream::relay::validated_models(
             &accounts,
             &[tier("sonnet", "gpt-5.4-mini", Some("acct_serving"))],
-        ),
-        vec!["gpt-5.4-mini".to_owned()]
+        )
+        .is_empty()
     );
 }

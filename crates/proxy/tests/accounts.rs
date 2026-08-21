@@ -60,7 +60,20 @@ impl Daemon {
     }
 
     /// The same daemon, with more written into its configuration file.
+    ///
+    /// A catalog endpoint with nothing behind it: the fetch fails at once and
+    /// the daemon falls back, which is the documented behaviour and keeps this
+    /// offline.
     fn start_with_config(credentials: &serde_json::Value, extra: &str) -> Self {
+        Self::start_with_file(
+            credentials,
+            &format!("{extra}\n[upstream]\ncatalog = \"http://127.0.0.1:1/models\"\n"),
+        )
+    }
+
+    /// The same daemon, on a configuration file written exactly as given —
+    /// for the cases that need the catalog section to say something else.
+    fn start_with_file(credentials: &serde_json::Value, config: &str) -> Self {
         let dir = tempfile::tempdir().unwrap();
         let home = dir.path().join("home");
         std::fs::create_dir_all(&home).unwrap();
@@ -69,14 +82,7 @@ impl Daemon {
             serde_json::to_string_pretty(credentials).unwrap(),
         )
         .unwrap();
-        // A catalog endpoint with nothing behind it: the fetch fails at once
-        // and the daemon falls back, which is the documented behaviour and
-        // keeps this offline.
-        std::fs::write(
-            home.join("config.toml"),
-            format!("{extra}\n[upstream]\ncatalog = \"http://127.0.0.1:1/models\"\n"),
-        )
-        .unwrap();
+        std::fs::write(home.join("config.toml"), config).unwrap();
 
         let process = std::process::Command::new(env!("CARGO_BIN_EXE_proxenos"))
             .args(["run", "--port", "0"])
@@ -511,5 +517,63 @@ fn the_binary_serves_the_selected_accounts_mapping() {
     assert!(
         !status.contains("shared-opus"),
         "the shared mapping should have been replaced: {status}"
+    );
+}
+
+/// §7.1 — a pinned tier names another account's menu, so the catalog fetched
+/// for the serving account does not decide whether it is valid.
+///
+/// The daemon's start and `tiers.set` are two doors onto one rule, and only one
+/// of them held it: `tiers.set` excluded a pinned entry and startup measured it
+/// against the serving account's list anyway. So a mapping written through the
+/// socket and then persisted refused the daemon at the next start — the exact
+/// silent-until-restart failure the write-time check exists to prevent.
+///
+/// Driven against an authoritative catalog, because the fallback list validates
+/// nothing and would pass this whatever the rule was.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_pinned_tier_does_not_have_to_be_on_the_serving_accounts_catalog() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        let app = axum::Router::new().route(
+            "/models",
+            axum::routing::get(|| async {
+                r#"{"data":[{"id":"gpt-5.6-terra","context_window":272000}]}"#
+            }),
+        );
+        let _ = axum::serve(listener, app).await;
+    });
+
+    let daemon = Daemon::start_with_file(
+        &json!({
+            "selected": "work",
+            "accounts": [
+                { "name": "work", "access_token": "access-acct_one",
+                  "refresh_token": "refresh-acct_one", "id_token": id_token("acct_one"),
+                  "account_id": "acct_one", "expires_at": 4_000_000_000_u64 },
+                { "name": "spare", "access_token": "access-acct_two",
+                  "refresh_token": "refresh-acct_two", "id_token": id_token("acct_two"),
+                  "account_id": "acct_two", "expires_at": 4_000_000_000_u64 },
+            ],
+        }),
+        &format!(
+            "cross_account_tiers = true\n\
+             [tiers]\n\
+             opus = \"gpt-5.6-terra\"\n\
+             sonnet = \"gpt-5.6-terra\"\n\
+             fable = \"gpt-5.6-terra\"\n\
+             haiku = {{ account = \"spare\", model = \"gpt-5.5\" }}\n\
+             [upstream]\n\
+             catalog = \"http://{addr}/models\"\n"
+        ),
+    );
+
+    // The daemon answered at all, which is the assertion: `gpt-5.5` is not on
+    // the list this catalog served, and it is not that list's to refuse.
+    let status = daemon.run(&["status"]);
+    assert!(
+        status.contains("gpt-5.5"),
+        "the pinned mapping should be in force: {status}"
     );
 }

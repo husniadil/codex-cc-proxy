@@ -4026,3 +4026,65 @@ async fn a_mixed_mapping_states_no_window_and_keeps_the_long_context_flag() {
         Some("claude-haiku-5")
     );
 }
+
+/// A switch is not refused over a pinned tier either.
+///
+/// The third door onto the same rule (§7.1). The catalog fetched for the
+/// account being switched to is that account's menu, and a pinned tier names
+/// another one — so measuring it here refuses a switch that is correct, and
+/// leaves the daemon on an account the operator asked to leave.
+#[tokio::test]
+async fn a_switch_is_not_refused_over_a_pinned_tiers_model() {
+    let mut config = proxenos::config::Config {
+        cross_account_tiers: true,
+        ..proxenos::config::Config::default()
+    };
+    config.tiers = proxenos::config::Tiers {
+        opus: Some("gpt-5.6-terra".into()),
+        sonnet: Some("gpt-5.6-terra".into()),
+        haiku: Some("gpt-5.6-terra".into()),
+        fable: Some("gpt-5.6-terra".into()),
+    };
+    config.accounts.insert(
+        "acct_one".to_owned(),
+        proxenos::config::AccountConfig {
+            tiers: proxenos::config::Tiers {
+                haiku: Some(proxenos::config::TierValue::Pinned(
+                    proxenos::config::PinnedTier {
+                        account: "acct_two".to_owned(),
+                        model: "a-model-this-catalog-has-not".to_owned(),
+                    },
+                )),
+                ..proxenos::config::Tiers::default()
+            },
+            effort: None,
+        },
+    );
+
+    let harness = Harness::start().await.with_configuration(config).await;
+    harness
+        .store
+        .add(&grant("acct_one", "a-one"), None)
+        .unwrap();
+    harness
+        .store
+        .add(&grant("acct_two", "a-two"), None)
+        .unwrap();
+
+    harness
+        .call_with("accounts.select", json!({ "account": "acct_one" }))
+        .await
+        .expect("a pinned model is not the serving account's catalog to refuse");
+
+    assert_eq!(
+        harness
+            .policy
+            .get()
+            .tiers()
+            .iter()
+            .find(|tier| tier.tier == "haiku")
+            .and_then(|tier| tier.account.as_deref()),
+        Some("acct_two"),
+        "the pinned mapping should be the one in force"
+    );
+}
