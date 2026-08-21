@@ -190,6 +190,16 @@ async fn login(args: cli::LoginArgs) -> Result<()> {
     let store: Arc<dyn proxenos::auth::store::AccountStore> =
         Arc::new(proxenos::auth::store::FileStore::new(credential_path()));
 
+    if args.setup_token {
+        let name = proxenos::auth::setup_token::run(
+            store.as_ref(),
+            &mut proxenos::auth::setup_token::Terminal,
+            args.label.as_deref(),
+        )?;
+        hand_over_to(&name).await;
+        return Ok(());
+    }
+
     if args.key {
         return store_key(&store, args.label.as_deref(), args.provider).await;
     }

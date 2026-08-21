@@ -83,7 +83,8 @@ changing an already-sent status.
 ```
 proxenos run        start the daemon (--detach: in the background)
 proxenos login      authenticate (--as NAME labels it, --key reads one from stdin,
-                    --provider names which provider that key is for)
+                    --provider names which provider that key is for,
+                    --setup-token stores a subscription token, guided)
 proxenos accounts   stored accounts (--use switches, --rename, --forget drops)
 proxenos status     connection, tier mapping, model catalog
 proxenos models     available models
@@ -119,6 +120,21 @@ the name is required, because an account is gone once it returns. All of
 them go through the socket, because the daemon holds the selection: a CLI that
 edited the file directly would leave a running daemon serving the account it
 read at startup.
+
+`--setup-token` is a guided front door over the same stored credential `--key
+--provider anthropic` produces — no new credential kind, and nothing about how
+it is stored changes. What it adds is the part a person needs and a pipe does
+not: it says to run `claude setup-token` in another terminal, reads the token
+from a **hidden prompt** where stdin is a terminal, and refuses anything that
+does not begin with `sk-ant-oat1-` before the store is touched. That refusal
+exists because a credential of the wrong kind stores cleanly and fails later
+naming the account rather than the paste that was wrong; there is no override
+flag. `--as NAME` names the account, and without one the flow asks. Where stdin
+is **not** a terminal the token is read from the pipe exactly as `--key` reads
+it, so `proxenos login --setup-token --as NAME < token` keeps working and
+scripted use does not regress — in that case `--as` is required, because there
+is nobody to ask. It conflicts with `--key` and `--provider`, which describe a
+credential it has already decided.
 
 `login` runs in the CLI **and** in the daemon (§3), and the two are alternatives
 rather than a duplication. The CLI's exists because the daemon need not be

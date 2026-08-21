@@ -4,6 +4,21 @@ All notable changes to this project are recorded here. This project follows
 [semantic versioning](https://semver.org). The semver-bound surfaces are listed
 in [`docs/api.md`](docs/api.md) §6.
 
+## [Unreleased]
+
+### Added
+
+- **`proxenos login --setup-token`: a guided way to store a subscription
+  token.** The same stored credential `--key --provider anthropic` produces,
+  reached without the pipe-and-ctrl-d workflow it required. It says where the
+  token comes from (`claude setup-token`), reads it from a hidden prompt where
+  stdin is a terminal, asks what to call the account when `--as` did not, and
+  refuses anything not beginning with `sk-ant-oat1-` before the store is
+  touched — with no override flag, because a credential of the wrong kind
+  stores cleanly and fails later naming the account rather than the paste. A
+  non-terminal stdin still reads the token from the pipe, so scripted use does
+  not regress.
+
 ## [0.6.0]
 
 The second provider, end to end — and confirmed live: relayed turns round-trip

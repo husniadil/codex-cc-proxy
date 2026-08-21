@@ -62,6 +62,16 @@ pub struct LoginArgs {
     /// visible to every process on the machine and lands in shell history.
     #[arg(long)]
     pub key: bool,
+    /// Store a Claude subscription token, guided.
+    ///
+    /// The same stored credential `--key --provider anthropic` produces, with
+    /// the part a person needs and a pipe does not: where the token comes
+    /// from, an entry that does not echo it, and a refusal before a credential
+    /// of the wrong kind is filed under a name that spends it later. A
+    /// non-terminal stdin still reads the token from the pipe, so nothing
+    /// scripted regresses.
+    #[arg(long = "setup-token", conflicts_with_all = ["key", "provider"])]
+    pub setup_token: bool,
     /// What to call the account this authorization produces.
     ///
     /// Without one it is named by the account id the grant carries. A label is
@@ -288,6 +298,31 @@ mod tests {
                 "x",
                 "--provider",
                 "gemini",
+            ])
+            .is_err()
+        );
+    }
+
+    /// The guided flow is a front door over the same stored credential, so it
+    /// refuses the flags that would describe a different one.
+    #[test]
+    fn login_setup_token_refuses_the_flags_that_contradict_it() {
+        let cli =
+            Cli::try_parse_from(["proxenos", "login", "--setup-token", "--as", "sub"]).unwrap();
+        let Command::Login(args) = cli.command else {
+            panic!("login should parse");
+        };
+        assert!(args.setup_token);
+        assert!(!args.key);
+
+        assert!(Cli::try_parse_from(["proxenos", "login", "--setup-token", "--key"]).is_err());
+        assert!(
+            Cli::try_parse_from([
+                "proxenos",
+                "login",
+                "--setup-token",
+                "--provider",
+                "anthropic",
             ])
             .is_err()
         );
