@@ -39,8 +39,14 @@ pub enum Provenance {
     Authored,
 }
 
-/// The capabilities of `docs/proxy-behavior.md` §1, each of which fails
-/// silently rather than loudly when a translator gets it wrong.
+/// The capabilities of `docs/proxy-behavior.md` §1, plus the transport path of
+/// §9 — each of which fails silently rather than loudly when the proxy gets it
+/// wrong.
+///
+/// §9 is not a harness capability and is not listed in §1's table. It is here
+/// because it shares §1's defining property and the corpus's rule: a path whose
+/// mistake still returns 200 needs an exchange proving it, or nothing catches
+/// the mistake.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Capability {
@@ -52,11 +58,15 @@ pub enum Capability {
     ContextMeter,
     CountTokens,
     ToolCalling,
+    /// A turn forwarded rather than translated (§9). Its silent failure is a
+    /// body round-tripped through this proxy's own types, which drops every
+    /// field they do not model somewhere no test looks.
+    Relay,
 }
 
 impl Capability {
     /// Every capability the corpus must cover.
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 9] = [
         Self::ReadImage,
         Self::ReadDocument,
         Self::WebSearch,
@@ -65,5 +75,6 @@ impl Capability {
         Self::ContextMeter,
         Self::CountTokens,
         Self::ToolCalling,
+        Self::Relay,
     ];
 }

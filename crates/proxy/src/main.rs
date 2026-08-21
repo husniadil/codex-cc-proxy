@@ -140,7 +140,7 @@ fn live_models() -> Result<Arc<Vec<ModelMapping>>> {
 async fn doctor(args: cli::DoctorArgs) -> Result<()> {
     let fixtures = proxenos::doctor::Corpus::resolve(args.fixtures);
 
-    let (outcomes, against) = if args.live {
+    let (outcomes, evidence) = if args.live {
         (
             proxenos::doctor::run_live(
                 &fixtures,
@@ -150,7 +150,18 @@ async fn doctor(args: cli::DoctorArgs) -> Result<()> {
                 Config::load()?.effort_ceiling()?,
             )
             .await?,
-            proxenos::doctor::AGAINST_LIVE.to_owned(),
+            // Named, because the coverage line has to say whose quota this
+            // spent. A run reported without it reads as a statement about the
+            // proxy when it is a statement about one subscription.
+            proxenos::probe::Evidence::Live {
+                // Absent rather than guessed where the store cannot be read:
+                // a coverage line naming the wrong account is worse than one
+                // naming none.
+                account: serving_account(
+                    &(Arc::new(proxenos::auth::store::FileStore::new(credential_path()))
+                        as Arc<dyn proxenos::auth::store::AccountStore>),
+                ),
+            },
         )
     } else {
         (
@@ -158,15 +169,16 @@ async fn doctor(args: cli::DoctorArgs) -> Result<()> {
             // Which corpus answered is part of what the run establishes: a
             // directory can hold a recording made minutes ago, the embedded
             // copy is whatever this binary was built from.
-            format!(
-                "{} — {}",
-                proxenos::doctor::AGAINST_REPLAY,
-                fixtures.describe()
-            ),
+            proxenos::probe::Evidence::Replay {
+                corpus: fixtures.describe(),
+            },
         )
     };
 
-    println!("{}", proxenos::probe::matrix(&outcomes, &against));
+    println!(
+        "{}",
+        proxenos::probe::matrix(&outcomes, &proxenos::probe::Run { evidence })
+    );
 
     let failed = outcomes
         .iter()

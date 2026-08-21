@@ -117,8 +117,8 @@ fn fixture_names_match_their_files() {
     }
 }
 
-/// Every capability in `proxy-behavior.md` §1 has at least one exchange. A
-/// capability with no fixture is one whose silent failure nothing would catch.
+/// Every capability has at least one exchange. One with no fixture is one whose
+/// silent failure nothing would catch.
 #[test]
 fn the_corpus_covers_every_capability() {
     let covered: BTreeSet<Capability> = load_all()

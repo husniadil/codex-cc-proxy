@@ -1,0 +1,53 @@
+{
+  "name": "relay",
+  "capability": "relay",
+  "provenance": "authored",
+  "note": "A turn on the relay path (docs/proxy-behavior.md §9), written rather than captured: the claim this exercises is that the proxy forwards the bytes untouched, and the strongest evidence for that is a body no round trip through this proxy's own request types would reproduce. So the keys are out of order, the whitespace is its own, and the marker N8QP4W lives inside a field the proxy does not model at all — a re-encoding drops it, and drops it silently. The reply is the second provider's own frame shape; the code T5ZJ9C is spoken in a text delta, so it only arrives if the answering bytes reached the client as well.",
+  "request": {
+    "stream": true,
+    "model": "claude-relay-probe",
+    "max_tokens": 64,
+    "messages": [
+      {
+        "role": "user",
+        "content": "Say the code you were given."
+      }
+    ],
+    "an_unmodelled_field": {
+      "z": 1,
+      "marker": "N8QP4W",
+      "a": 2
+    }
+  },
+  "upstream": [
+    {
+      "type": "message_start",
+      "message": {
+        "id": "msg_relay_probe",
+        "type": "message",
+        "role": "assistant",
+        "model": "claude-relay-probe",
+        "content": [],
+        "stop_reason": null,
+        "usage": { "input_tokens": 41, "output_tokens": 1 }
+      }
+    },
+    {
+      "type": "content_block_start",
+      "index": 0,
+      "content_block": { "type": "text", "text": "" }
+    },
+    {
+      "type": "content_block_delta",
+      "index": 0,
+      "delta": { "type": "text_delta", "text": "The code is T5ZJ9C" }
+    },
+    { "type": "content_block_stop", "index": 0 },
+    {
+      "type": "message_delta",
+      "delta": { "stop_reason": "end_turn" },
+      "usage": { "output_tokens": 8 }
+    },
+    { "type": "message_stop" }
+  ]
+}

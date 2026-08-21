@@ -17,6 +17,23 @@ in [`docs/api.md`](docs/api.md) §6.
 
 ### Added
 
+- **`doctor` now says what a run did not touch.** A failed row prints the
+  probe's rationale — what breaks silently without it — while passing rows stay
+  one line. Under `--live` the `count-tokens` row is marked as answered by the
+  proxy: the live header says the backend answered and was billed, which is true
+  of every other row and false of that one. And one line under the matrix names
+  the account the run spent and the paths it left alone, so eight green rows
+  cannot be read as coverage of the WebSocket transport or the relay when
+  neither ran.
+
+- **A probe for the relay path (§9).** `doctor` built its own state with no
+  relay at all, so nothing in the suite drove the branch that forwards a turn
+  instead of translating it — the one path whose entire claim is that the bytes
+  are not touched. The new probe's marker sits inside a field the proxy has no
+  type for, so a body round-tripped through its own types fails it. Replay-only:
+  driving it live needs the account serving turns switched to the second
+  provider for the length of the run, which is not wired.
+
 - **`proxenos usage` now reports the second provider's accounts too.** That
   provider states rate-limit headroom in `anthropic-ratelimit-unified-*` headers
   on the response to every turn, and for a subscription credential it is the

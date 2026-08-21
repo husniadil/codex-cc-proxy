@@ -22,6 +22,15 @@ fn corpus() -> PathBuf {
         .join("fixtures")
 }
 
+/// A replayed run, described the way `doctor` describes one.
+fn replayed(corpus: &str) -> probe::Run {
+    probe::Run {
+        evidence: probe::Evidence::Replay {
+            corpus: corpus.to_owned(),
+        },
+    }
+}
+
 /// Run one probe through `doctor`, which is the path that ships. A test harness
 /// that reimplements the runner proves the harness works, not the tool.
 async fn run_via_doctor(name: &str) -> Outcome {
@@ -104,7 +113,7 @@ async fn a_probe_that_cannot_run_reports_honestly() {
     }
 
     // And a skip is never counted as a pass.
-    let rendered = probe::matrix(&outcomes, "an empty corpus");
+    let rendered = probe::matrix(&outcomes, &replayed("an empty corpus"));
     assert!(rendered.contains("0 passed"), "{rendered}");
 }
 
@@ -247,6 +256,10 @@ fn every_marker_is_absent_from_the_rest_of_the_corpus() {
         ("read-image", "P7K4XR"),
         ("read-document", "V2M9QZ"),
         ("web-fetch", "L9WQ2T"),
+        // The relay's pair: one in a field the proxy does not model, one
+        // spoken back in a delta.
+        ("relay", "N8QP4W"),
+        ("relay", "T5ZJ9C"),
         // The bytes of the image itself, which is what proves the attachment
         // travelled — the code is rendered as pixels and appears nowhere in
         // the encoding.
@@ -285,7 +298,7 @@ async fn the_matrix_states_its_evidence() {
     let outcomes = proxenos::doctor::run(&Corpus::Dir(corpus()), None)
         .await
         .unwrap();
-    let rendered = probe::matrix(&outcomes, proxenos::doctor::AGAINST_REPLAY);
+    let rendered = probe::matrix(&outcomes, &replayed("the checkout's fixtures"));
 
     assert!(
         rendered.contains("the backend was not contacted"),
@@ -336,7 +349,14 @@ async fn a_live_run_uses_the_transport_and_labels_itself() {
     assert_eq!(seen.len(), 1, "the live run should have sent one request");
     assert_eq!(seen[0]["model"], serde_json::json!("gpt-5.6-terra"));
 
-    let rendered = probe::matrix(&outcomes, proxenos::doctor::AGAINST_LIVE);
+    let rendered = probe::matrix(
+        &outcomes,
+        &probe::Run {
+            evidence: probe::Evidence::Live {
+                account: Some("work".to_owned()),
+            },
+        },
+    );
     assert!(rendered.contains("the backend answered"), "{rendered}");
 }
 
@@ -402,7 +422,7 @@ fn fixture_bound_checks_are_marked_as_such() {
     );
 }
 
-/// Every capability in §1 has a probe. One without is a capability whose silent
+/// Every capability has a probe. One without is a capability whose silent
 /// failure nothing would catch.
 #[test]
 fn every_capability_has_a_probe() {
@@ -433,23 +453,185 @@ fn the_matrix_counts_outcomes() {
         Outcome {
             name: "a".to_owned(),
             capability: proxenos_core::fixture::Capability::ReadImage,
+            surface: probe::Surface::Messages,
+            rationale: "a",
             status: Status::Passed,
         },
         Outcome {
             name: "b".to_owned(),
             capability: proxenos_core::fixture::Capability::WebSearch,
+            surface: probe::Surface::Messages,
+            rationale: "b",
             status: Status::Failed("nope".to_owned()),
         },
         Outcome {
             name: "c".to_owned(),
             capability: proxenos_core::fixture::Capability::CountTokens,
+            surface: probe::Surface::CountTokens,
+            rationale: "c",
             status: Status::Skipped("no stream".to_owned()),
         },
     ];
 
-    let rendered = probe::matrix(&outcomes, "replayed fixtures");
+    let rendered = probe::matrix(&outcomes, &replayed("replayed fixtures"));
     assert_eq!(
         rendered.lines().last(),
         Some("1 passed, 1 failed, 1 skipped")
     );
+}
+
+/// A failure names what breaks silently without the probe.
+///
+/// A row that says only "FAIL" and a reason sends whoever reads it to work out
+/// for themselves whether the capability matters. The rationale is already on
+/// every probe; printing it where a failure appears is the difference between a
+/// diagnostic and a verdict. Passes stay one line — eight rows of prose is a
+/// matrix nobody reads.
+#[test]
+fn a_failed_row_prints_its_rationale_and_a_passing_row_does_not() {
+    let outcomes = vec![
+        Outcome {
+            name: "passing".to_owned(),
+            capability: proxenos_core::fixture::Capability::ReadImage,
+            surface: probe::Surface::Messages,
+            rationale: "the rationale of a probe that passed",
+            status: Status::Passed,
+        },
+        Outcome {
+            name: "failing".to_owned(),
+            capability: proxenos_core::fixture::Capability::WebSearch,
+            surface: probe::Surface::Messages,
+            rationale: "the rationale of a probe that failed",
+            status: Status::Failed("nope".to_owned()),
+        },
+    ];
+
+    let rendered = probe::matrix(&outcomes, &replayed("a corpus"));
+
+    assert!(
+        rendered.contains("the rationale of a probe that failed"),
+        "{rendered}"
+    );
+    assert!(
+        !rendered.contains("the rationale of a probe that passed"),
+        "{rendered}"
+    );
+}
+
+/// Under `--live` the header says the backend answered and was billed. That is
+/// not true of `count-tokens`, which never leaves the proxy by design — so the
+/// row says so rather than being quietly dropped from a list whose whole job is
+/// to be complete.
+#[test]
+fn a_live_run_marks_the_probe_that_never_reaches_the_backend() {
+    let outcomes = vec![Outcome {
+        name: "count-tokens".to_owned(),
+        capability: proxenos_core::fixture::Capability::CountTokens,
+        surface: probe::Surface::CountTokens,
+        rationale: "an absent estimate leaves the client sizing nothing",
+        status: Status::Passed,
+    }];
+
+    let live = probe::matrix(
+        &outcomes,
+        &probe::Run {
+            evidence: probe::Evidence::Live {
+                account: Some("work".to_owned()),
+            },
+        },
+    );
+    assert!(live.contains(probe::NEVER_REACHES_THE_BACKEND), "{live}");
+
+    // Replayed, nothing reached the backend anyway, so the mark would say
+    // nothing about this row that the header does not already say about all of
+    // them.
+    let replay = probe::matrix(&outcomes, &replayed("a corpus"));
+    assert!(
+        !replay.contains(probe::NEVER_REACHES_THE_BACKEND),
+        "{replay}"
+    );
+}
+
+/// The matrix names what the run actually exercised.
+///
+/// Eight green rows say nothing about the WebSocket transport or the relay, and
+/// a reader with no line to tell them otherwise will read the green as coverage
+/// of the whole proxy.
+#[tokio::test]
+async fn the_matrix_names_what_the_run_exercised() {
+    let outcomes = proxenos::doctor::run(&Corpus::Dir(corpus()), None)
+        .await
+        .unwrap();
+
+    let rendered = probe::matrix(&outcomes, &replayed("the checkout's fixtures"));
+    assert!(
+        rendered.contains("Not exercised: the WebSocket transport"),
+        "{rendered}"
+    );
+    assert!(rendered.contains("no account was contacted"), "{rendered}");
+    // The relay probe ran, and the line says so rather than leaving §9 unnamed.
+    assert!(
+        rendered.contains("the relay path (§9) was replayed"),
+        "{rendered}"
+    );
+
+    let live = probe::matrix(
+        &outcomes,
+        &probe::Run {
+            evidence: probe::Evidence::Live {
+                account: Some("work".to_owned()),
+            },
+        },
+    );
+    assert!(live.contains("over the HTTP transport"), "{live}");
+    assert!(live.contains("as `work`"), "{live}");
+    assert!(
+        live.contains("Not exercised: the WebSocket transport"),
+        "{live}"
+    );
+}
+
+/// The relay path (§9) has a probe of its own.
+///
+/// `doctor` built its own `AppState` with no relay at all, so nothing in the
+/// suite drove the branch that forwards a turn instead of translating it — the
+/// one path whose entire claim is that the bytes are not touched. The marker is
+/// inside a field this proxy does not model: a body round-tripped through its
+/// own types loses it, and loses it silently.
+#[tokio::test]
+async fn the_relay_probe_drives_the_relay_path() {
+    let outcome = run_via_doctor("relay").await;
+    assert_eq!(outcome.status, Status::Passed, "{outcome:?}");
+}
+
+/// A live relay run is not wired, and the row says so rather than passing on
+/// evidence it does not have.
+///
+/// Driving it live needs the serving account switched to the second provider
+/// for the length of the run, which is a change to what the daemon is serving
+/// while it is serving it. That is left out of this slice deliberately.
+#[tokio::test]
+async fn a_live_run_skips_the_relay_probe() {
+    let server = replay::ReplayServer::start(replay::Behavior::Events(Vec::new())).await;
+    let transport = std::sync::Arc::new(proxenos::upstream::http::HttpTransport::new(
+        server.url.clone(),
+    ));
+
+    let outcomes = proxenos::doctor::run_live(
+        &Corpus::Dir(corpus()),
+        Some("relay"),
+        transport,
+        std::sync::Arc::new(Vec::new()),
+        None,
+    )
+    .await
+    .expect("the probe should be known");
+
+    match &outcomes[0].status {
+        Status::Skipped(reason) => assert!(
+            reason.contains("serving account"),
+            "the skip should say what is missing: {reason}"
+        ),
+        other => panic!("a live relay probe should be skipped, got {other:?}"),
+    }
 }

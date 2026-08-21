@@ -44,6 +44,9 @@ pub enum Surface {
     /// Pre-flight sizing through `/v1/messages/count_tokens`. It never reaches
     /// the backend, which is the whole point of probing it separately.
     CountTokens,
+    /// A turn forwarded rather than translated (§9). Nothing on this path is
+    /// parsed, so what it establishes is that the bytes were not touched.
+    Relay,
 }
 
 #[derive(Debug, Clone)]
@@ -236,6 +239,29 @@ pub fn all() -> Vec<Probe> {
                 pointer: "/input_tokens".to_owned(),
             }],
         },
+        Probe {
+            name: "relay",
+            surface: Surface::Relay,
+            capability: Capability::Relay,
+            fixture: "relay",
+            replay_only: Vec::new(),
+            rationale: "A relayed turn that is re-encoded on the way loses every \
+                        field this proxy does not model, and loses it silently: \
+                        the request still succeeds and the answer still reads \
+                        like one.",
+            checks: vec![
+                // Inside a field the proxy has no type for, so nothing that
+                // parsed and rebuilt the body could carry it here.
+                Check::RequestContains {
+                    pointer: "/an_unmodelled_field/marker".to_owned(),
+                    marker: "N8QP4W".to_owned(),
+                },
+                // And the answering bytes came back as they were sent.
+                Check::ClientReceives {
+                    marker: "T5ZJ9C".to_owned(),
+                },
+            ],
+        },
     ]
 }
 
@@ -254,6 +280,12 @@ pub enum Status {
 pub struct Outcome {
     pub name: String,
     pub capability: Capability,
+    /// Which surface the probe drove. The matrix reads it to mark the row a
+    /// live run did not actually bill for.
+    pub surface: Surface,
+    /// The probe's own rationale, carried so a failure can print it without
+    /// the renderer having to look the probe up again.
+    pub rationale: &'static str,
     pub status: Status,
 }
 
@@ -376,13 +408,97 @@ fn spoken_text(frames: &[Value]) -> String {
         .collect()
 }
 
+/// What a matrix was produced by.
+///
+/// One value rather than a phrase plus a flag: the header, the row marks, and
+/// the coverage line all turn on whether the backend answered, and two
+/// encodings of that would eventually disagree.
+pub enum Evidence {
+    /// Answered from recordings. Carries the corpus in the words the header
+    /// prints, because a directory can hold a recording made minutes ago while
+    /// the embedded copy is whatever the binary was built from.
+    Replay { corpus: String },
+    /// Answered by the real backend, as this account. `None` is the account
+    /// serving turns.
+    Live { account: Option<String> },
+}
+
+/// One probe run, in the terms the matrix has to state.
+pub struct Run {
+    pub evidence: Evidence,
+}
+
+/// The replay header. A matrix built from recordings that reads like one built
+/// from a backend is exactly the plausible output §10.3 exists to prevent.
+pub const AGAINST_REPLAY: &str = "replayed fixtures (the backend was not contacted)";
+
+/// The live counterpart. It spends quota, and the matrix says so.
+pub const AGAINST_LIVE: &str = "a live backend (the backend answered, and was billed)";
+
+/// What a `count-tokens` row is marked with under `--live`.
+///
+/// The header's claim is true of every other row and false of this one, and a
+/// row silently exempt from the header above it is the kind of plausible
+/// output the probes exist to prevent.
+pub const NEVER_REACHES_THE_BACKEND: &str =
+    "(answered by the proxy; this surface never reaches the backend)";
+
+impl Evidence {
+    /// The header line, verbatim.
+    fn describe(&self) -> String {
+        match self {
+            Self::Replay { corpus } => format!("{AGAINST_REPLAY} — {corpus}"),
+            Self::Live { .. } => AGAINST_LIVE.to_owned(),
+        }
+    }
+
+    fn is_live(&self) -> bool {
+        matches!(self, Self::Live { .. })
+    }
+}
+
+/// One line naming what the run exercised, and what it did not.
+///
+/// A green matrix says nothing about the WebSocket transport or the relay, and
+/// a reader with nothing to tell them otherwise reads green as coverage of the
+/// whole proxy. Both absences are named here rather than inferred.
+fn coverage(outcomes: &[Outcome], run: &Run) -> String {
+    let relay = if outcomes
+        .iter()
+        .any(|outcome| outcome.surface == Surface::Relay && outcome.status == Status::Passed)
+    {
+        "the relay path (§9) was replayed"
+    } else {
+        "the relay path (§9) was not exercised"
+    };
+
+    match &run.evidence {
+        Evidence::Replay { corpus } => format!(
+            "Exercised: the translation path, answered from {corpus}; {relay}. \
+             Not exercised: the WebSocket transport, and no account was contacted."
+        ),
+        Evidence::Live { account } => {
+            let whose = match account {
+                Some(account) => format!("as `{account}`"),
+                None => "as the account serving turns".to_owned(),
+            };
+            format!(
+                "Exercised: the translation path over the HTTP transport, {whose}; {relay}. \
+                 Not exercised: the WebSocket transport."
+            )
+        }
+    }
+}
+
 /// Render the capability matrix.
 ///
-/// The header states what the run was against. A matrix built from replayed
-/// fixtures that reads like one built from a live backend is exactly the
-/// plausible-looking output §10.3 exists to prevent.
-pub fn matrix(outcomes: &[Outcome], against: &str) -> String {
-    let mut lines = vec![format!("Capability matrix — {against}"), String::new()];
+/// The header states what the run was against, a failure states why the probe
+/// exists at all, and the line underneath states what the run did not touch.
+pub fn matrix(outcomes: &[Outcome], run: &Run) -> String {
+    let mut lines = vec![
+        format!("Capability matrix — {}", run.evidence.describe()),
+        String::new(),
+    ];
 
     for outcome in outcomes {
         let (mark, detail) = match &outcome.status {
@@ -390,7 +506,19 @@ pub fn matrix(outcomes: &[Outcome], against: &str) -> String {
             Status::Failed(reason) => ("FAIL", format!("  {reason}")),
             Status::Skipped(reason) => ("skip", format!("  {reason}")),
         };
-        lines.push(format!("  {mark:<5} {:<16}{detail}", outcome.name));
+        // §10.3 — the one surface the live header does not describe.
+        let marked = if run.evidence.is_live() && outcome.surface == Surface::CountTokens {
+            format!("{detail}  {NEVER_REACHES_THE_BACKEND}")
+        } else {
+            detail
+        };
+        lines.push(format!("  {mark:<5} {:<16}{marked}", outcome.name));
+
+        // Only where it is needed. A rationale on every row is eight
+        // paragraphs of prose over a matrix nobody would then read.
+        if matches!(outcome.status, Status::Failed(_)) {
+            lines.push(format!("        {}", outcome.rationale));
+        }
     }
 
     let failures = outcomes
@@ -402,6 +530,8 @@ pub fn matrix(outcomes: &[Outcome], against: &str) -> String {
         .filter(|outcome| matches!(outcome.status, Status::Skipped(_)))
         .count();
 
+    lines.push(String::new());
+    lines.push(coverage(outcomes, run));
     lines.push(String::new());
     lines.push(format!(
         "{} passed, {failures} failed, {skipped} skipped",

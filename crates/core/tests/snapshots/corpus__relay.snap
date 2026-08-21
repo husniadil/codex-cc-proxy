@@ -1,0 +1,32 @@
+---
+source: crates/core/tests/corpus.rs
+expression: replay(&fixture)
+---
+--- request ---
+{
+  "model": "claude-relay-probe",
+  "input": [
+    {
+      "type": "message",
+      "role": "user",
+      "content": [
+        {
+          "type": "input_text",
+          "text": "Say the code you were given."
+        }
+      ]
+    }
+  ],
+  "reasoning": {
+    "summary": "auto"
+  },
+  "include": [
+    "reasoning.encrypted_content"
+  ],
+  "parallel_tool_calls": true,
+  "store": false,
+  "stream": true,
+  "prompt_cache_key": "fixture-relay"
+}
+
+--- frames ---

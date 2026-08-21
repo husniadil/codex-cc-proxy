@@ -178,6 +178,31 @@ output the probes exist to prevent. A probe that could not run is reported as
 skipped and never counted as a pass: a probe that established nothing while
 reporting success is the same failure in miniature.
 
+A failed row prints the probe's rationale beneath it — what breaks silently
+without that probe. Passing rows stay one line, because a rationale on every
+row is a page of prose over a matrix nobody would then read.
+
+Under `--live` the `count-tokens` row is marked as answered by the proxy. The
+live header says the backend answered and was billed, and that is true of every
+other row and false of this one: pre-flight sizing never leaves the proxy by
+design. The row is marked rather than dropped, because a list whose job is to
+be complete cannot quietly omit the surface it cannot vouch for.
+
+One line under the matrix names what the run exercised and what it did not: the
+account whose credential was spent, and — always — that the WebSocket transport
+was not among it. A live run is HTTP only, since a probe is one turn with no
+continuation and the socket's value is entirely in the incremental path. The
+same line says whether the relay path (§9) was exercised. Green rows say
+nothing about a path no probe drove, and a reader with no line to tell them
+otherwise reads green as coverage of the whole proxy.
+
+The relay path has a probe of its own, and it is replay-only. It drives the §9
+branch against a recording whose marker sits inside a field the proxy does not
+model, so a body round-tripped through the proxy's own types fails it. `--live`
+skips that row: driving the relay against the real backend needs the account
+serving turns switched to the second provider for the length of the run, and
+that is not wired.
+
 `--probe <name>` runs one at a time, and naming an unknown one lists the
 known ones.
 
@@ -189,7 +214,7 @@ the probe rather than falling back. With no `--fixtures`, a `fixtures/`
 directory in the working directory wins if there is one, and otherwise the
 corpus compiled into the binary answers. That last case is the one an installed
 binary is in: `doctor` has to establish something on a first run, and a run that
-skipped all eight probes for want of a checkout would establish nothing at the
+skipped every probe for want of a checkout would establish nothing at the
 moment it is most likely to be run.
 
 `usage` reports the serving account's quota as of its last turn. It costs

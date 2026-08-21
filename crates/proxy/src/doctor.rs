@@ -20,9 +20,6 @@ use serde_json::Value;
 use std::sync::Arc;
 use std::sync::Mutex;
 
-/// What the probes ran against, in words the matrix prints verbatim.
-pub const AGAINST_REPLAY: &str = "replayed fixtures (the backend was not contacted)";
-
 /// The corpus compiled into the binary, one entry per fixture.
 ///
 /// `include_str!` rather than a build script, so the compiler tracks the files
@@ -38,6 +35,7 @@ const EMBEDDED: &[(&str, &str)] = &[
         "count-tokens",
         include_str!("../../../fixtures/count-tokens.json"),
     ),
+    ("relay", include_str!("../../../fixtures/relay.json")),
     (
         "read-document",
         include_str!("../../../fixtures/read-document.json"),
@@ -124,9 +122,6 @@ impl Corpus {
         }
     }
 }
-
-/// The live counterpart. It spends quota, and the matrix says so.
-pub const AGAINST_LIVE: &str = "a live backend (the backend answered, and was billed)";
 
 /// A transport that forwards to the real one and remembers the request.
 ///
@@ -243,6 +238,8 @@ async fn run_against(
                 outcomes.push(Outcome {
                     name: probe.name.to_owned(),
                     capability: probe.capability,
+                    surface: probe.surface,
+                    rationale: probe.rationale,
                     status: Status::Skipped(reason),
                 });
                 continue;
@@ -255,11 +252,34 @@ async fn run_against(
                 outcomes.push(Outcome {
                     name: probe.name.to_owned(),
                     capability: probe.capability,
+                    surface: probe.surface,
+                    rationale: probe.rationale,
                     status: Status::Skipped(format!("the fixture will not parse: {error}")),
                 });
                 continue;
             }
         };
+
+        // §9 live is not wired. Driving the relay against the real backend
+        // needs the account serving turns switched to the second provider for
+        // the length of the run — a change to what the daemon is serving while
+        // it is serving it. Skipped rather than run against the translating
+        // path, which would report the wrong path's health under this name.
+        if matches!(backend, Backend::Live { .. }) && probe.surface == crate::probe::Surface::Relay
+        {
+            outcomes.push(Outcome {
+                name: probe.name.to_owned(),
+                capability: probe.capability,
+                surface: probe.surface,
+                rationale: probe.rationale,
+                status: Status::Skipped(
+                    "a live relay run needs the serving account switched to the second \
+                     provider, which is not wired"
+                        .to_owned(),
+                ),
+            });
+            continue;
+        }
 
         // Only a replayed run needs the recording. Live, the backend supplies
         // the stream and the fixture is only there for its request.
@@ -270,6 +290,8 @@ async fn run_against(
             outcomes.push(Outcome {
                 name: probe.name.to_owned(),
                 capability: probe.capability,
+                surface: probe.surface,
+                rationale: probe.rationale,
                 status: Status::Skipped(
                     "the fixture carries no upstream stream; this path never reaches the backend"
                         .to_owned(),
@@ -297,6 +319,10 @@ async fn run_against(
 }
 
 async fn run_one(probe: &probe::Probe, fixture: &Fixture, backend: &Backend) -> Outcome {
+    if probe.surface == crate::probe::Surface::Relay {
+        return run_relay(probe, fixture).await;
+    }
+
     // Both arms watch the request, because half the checks are about what the
     // backend was sent rather than about what it said.
     let (transport, models, effort_ceiling) = match backend {
@@ -361,6 +387,8 @@ async fn run_one(probe: &probe::Probe, fixture: &Fixture, backend: &Backend) -> 
         return Outcome {
             name: probe.name.to_owned(),
             capability: probe.capability,
+            surface: probe.surface,
+            rationale: probe.rationale,
             status: Status::Skipped("could not bind a loopback port".to_owned()),
         };
     };
@@ -368,6 +396,8 @@ async fn run_one(probe: &probe::Probe, fixture: &Fixture, backend: &Backend) -> 
         return Outcome {
             name: probe.name.to_owned(),
             capability: probe.capability,
+            surface: probe.surface,
+            rationale: probe.rationale,
             status: Status::Skipped("could not read the bound port".to_owned()),
         };
     };
@@ -378,6 +408,8 @@ async fn run_one(probe: &probe::Probe, fixture: &Fixture, backend: &Backend) -> 
     let path = match probe.surface {
         crate::probe::Surface::Messages => "/v1/messages",
         crate::probe::Surface::CountTokens => "/v1/messages/count_tokens",
+        // Answered above, before any of this was built.
+        crate::probe::Surface::Relay => "/v1/messages",
     };
 
     let response = reqwest::Client::new()
@@ -392,6 +424,8 @@ async fn run_one(probe: &probe::Probe, fixture: &Fixture, backend: &Backend) -> 
             return Outcome {
                 name: probe.name.to_owned(),
                 capability: probe.capability,
+                surface: probe.surface,
+                rationale: probe.rationale,
                 status: Status::Failed(format!("the proxy did not answer: {error}")),
             };
         }
@@ -408,6 +442,7 @@ async fn run_one(probe: &probe::Probe, fixture: &Fixture, backend: &Backend) -> 
                 vec![value]
             })
             .unwrap_or_default(),
+        crate::probe::Surface::Relay => Vec::new(),
     };
     let sent = transport
         .seen
@@ -425,6 +460,8 @@ async fn run_one(probe: &probe::Probe, fixture: &Fixture, backend: &Backend) -> 
     Outcome {
         name: probe.name.to_owned(),
         capability: probe.capability,
+        surface: probe.surface,
+        rationale: probe.rationale,
         status,
     }
 }
@@ -438,4 +475,260 @@ fn frames_of(body: &str) -> Vec<Value> {
                 .and_then(|data| serde_json::from_str(data).ok())
         })
         .collect()
+}
+
+/// One account, holding a key for the second provider and selected.
+///
+/// The relay reads the store per request to decide whether a turn belongs on
+/// its path, so a probe of that path needs a store — but not a real one, and
+/// not a file: the value below is a placeholder that never leaves loopback,
+/// and everything a login would write is refused rather than written.
+struct ProbeStore;
+
+const PROBE_ACCOUNT: &str = "the relay probe";
+
+fn probe_only(verb: &str) -> ProxyError {
+    ProxyError::invalid_request(format!("the relay probe's store cannot {verb}"))
+}
+
+impl crate::auth::store::CredentialStore for ProbeStore {
+    fn load(&self) -> Result<Option<crate::auth::store::Credentials>, ProxyError> {
+        Ok(None)
+    }
+    fn save(&self, _credentials: &crate::auth::store::Credentials) -> Result<(), ProxyError> {
+        Err(probe_only("save a grant"))
+    }
+    fn clear(&self) -> Result<(), ProxyError> {
+        Err(probe_only("clear"))
+    }
+}
+
+impl crate::auth::store::AccountStore for ProbeStore {
+    fn accounts(&self) -> Result<Vec<crate::auth::store::Account>, ProxyError> {
+        Ok(vec![crate::auth::store::Account {
+            name: PROBE_ACCOUNT.to_owned(),
+            kind: "key",
+            provider: crate::auth::store::Provider::Anthropic.as_str(),
+            account_id: None,
+            email: None,
+            plan: None,
+            expires_at: None,
+            selected: true,
+        }])
+    }
+    fn add(
+        &self,
+        _credentials: &crate::auth::store::Credentials,
+        _label: Option<&str>,
+    ) -> Result<String, ProxyError> {
+        Err(probe_only("add an account"))
+    }
+    fn select(&self, _name: &str) -> Result<(), ProxyError> {
+        Err(probe_only("select an account"))
+    }
+    fn remove(&self, _name: &str) -> Result<(), ProxyError> {
+        Err(probe_only("remove an account"))
+    }
+    fn credential(&self) -> Result<Option<crate::auth::store::Credential>, ProxyError> {
+        Ok(None)
+    }
+    fn credential_for(&self, name: &str) -> Result<crate::auth::store::Credential, ProxyError> {
+        Err(probe_only(&format!("resolve the credential of `{name}`")))
+    }
+    fn add_key(
+        &self,
+        _name: &str,
+        _key: &str,
+        _provider: crate::auth::store::Provider,
+    ) -> Result<(), ProxyError> {
+        Err(probe_only("add a key"))
+    }
+    fn save_for(
+        &self,
+        _name: &str,
+        _credentials: &crate::auth::store::Credentials,
+    ) -> Result<(), ProxyError> {
+        Err(probe_only("save a grant"))
+    }
+    fn rename(&self, _from: &str, _to: &str) -> Result<(), ProxyError> {
+        Err(probe_only("rename an account"))
+    }
+}
+
+/// The header a key would put on the relayed request.
+///
+/// A placeholder value, because the stand-in backend below authenticates
+/// nothing. What the probe is measuring is the body, and the body is the one
+/// thing this must not touch.
+struct ProbeAuthorizer;
+
+#[async_trait::async_trait]
+impl crate::auth::authorize::Authorizer for ProbeAuthorizer {
+    async fn authorize(
+        &self,
+        _account: Option<&str>,
+    ) -> Result<crate::auth::authorize::Authorization, ProxyError> {
+        Ok(crate::auth::authorize::Authorization {
+            kind: crate::auth::authorize::Kind::Key,
+            account: Some(PROBE_ACCOUNT.to_owned()),
+            headers: vec![("x-api-key".to_owned(), "probe-placeholder".to_owned())],
+        })
+    }
+}
+
+/// Drive the §9 relay branch against a recording.
+///
+/// Everything else here goes through `AppState` with `relay: None`, so the
+/// branch that forwards a turn instead of translating it was reached by
+/// nothing in the suite. The stand-in backend records the bytes it was sent
+/// and answers the fixture's own stream, which is what lets the same checks
+/// ask both halves of the question the relay's claim rests on: that what left
+/// the client arrived unaltered, and that what the backend said came back the
+/// same way.
+async fn run_relay(probe: &probe::Probe, fixture: &Fixture) -> Outcome {
+    let skipped = |reason: &str| Outcome {
+        name: probe.name.to_owned(),
+        capability: probe.capability,
+        surface: probe.surface,
+        rationale: probe.rationale,
+        status: Status::Skipped(reason.to_owned()),
+    };
+
+    // The id the client sends is the id the backend sees: this path never
+    // rewrites the model (§9), so the mapping names it on both sides.
+    let Some(model) = fixture
+        .request
+        .get("model")
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+    else {
+        return skipped("the fixture's request carries no model to route on");
+    };
+
+    // The stream as the second provider would write it. Rebuilt from the
+    // fixture's events rather than stored as text, so one corpus format
+    // answers both paths.
+    let stream = fixture
+        .upstream
+        .iter()
+        .map(|event| {
+            let name = event
+                .get("type")
+                .and_then(Value::as_str)
+                .unwrap_or("message");
+            format!("event: {name}\ndata: {event}\n\n")
+        })
+        .collect::<String>();
+
+    let seen: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+    let sink = Arc::clone(&seen);
+    let backend = axum::Router::new().route(
+        "/v1/messages",
+        axum::routing::post(move |body: String| {
+            if let Ok(mut sink) = sink.lock() {
+                *sink = Some(body);
+            }
+            async move {
+                (
+                    [(axum::http::header::CONTENT_TYPE, "text/event-stream")],
+                    stream,
+                )
+            }
+        }),
+    );
+
+    let Ok(backend_listener) = tokio::net::TcpListener::bind("127.0.0.1:0").await else {
+        return skipped("could not bind a loopback port for the stand-in backend");
+    };
+    let Ok(backend_addr) = backend_listener.local_addr() else {
+        return skipped("could not read the stand-in backend's port");
+    };
+    tokio::spawn(async move {
+        let _ = axum::serve(backend_listener, backend).await;
+    });
+
+    let state = AppState {
+        policy: Arc::new(crate::policy::Policy::new(
+            crate::policy::Snapshot::routing_only(
+                vec![ModelMapping {
+                    requested: model.clone(),
+                    upstream: model,
+                    account: Some(PROBE_ACCOUNT.to_owned()),
+                }],
+                None,
+            ),
+        )),
+        catalog: Arc::new(crate::catalog::CatalogSource::fixed(
+            crate::catalog::Catalog::fallback(),
+        )),
+        // Deliberately unreachable. A turn that took the translating path
+        // would fail to connect rather than quietly answer, so a routing
+        // mistake cannot pass as a relayed success.
+        transport: Arc::new(crate::upstream::http::HttpTransport::new(
+            "http://127.0.0.1:1/unused",
+        )),
+        conduits: None,
+        recorder: None,
+        capture: Arc::new(crate::recorder::Switches::default()),
+        usage: Arc::new(crate::usage::UsageStore::default()),
+        instructions: Arc::new(crate::config::InstructionsConfig {
+            identity: false,
+            append: None,
+            working_budget: false,
+        }),
+        sessions: Arc::new(crate::session::SessionStore::new()),
+        relay: Some(Arc::new(crate::upstream::relay::Relay::new(
+            format!("http://{backend_addr}/v1/messages"),
+            Arc::new(ProbeStore) as Arc<dyn crate::auth::store::AccountStore>,
+            Arc::new(ProbeAuthorizer) as Arc<dyn crate::auth::authorize::Authorizer>,
+        ))),
+    };
+
+    let Ok(listener) = tokio::net::TcpListener::bind("127.0.0.1:0").await else {
+        return skipped("could not bind a loopback port");
+    };
+    let Ok(addr) = listener.local_addr() else {
+        return skipped("could not read the bound port");
+    };
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, router(state)).await;
+    });
+
+    let response = reqwest::Client::new()
+        .post(format!("http://{addr}/v1/messages"))
+        .header(axum::http::header::CONTENT_TYPE, "application/json")
+        .body(fixture.request.to_string())
+        .send()
+        .await;
+
+    let body = match response {
+        Ok(response) => response.text().await.unwrap_or_default(),
+        Err(error) => {
+            return Outcome {
+                name: probe.name.to_owned(),
+                capability: probe.capability,
+                surface: probe.surface,
+                rationale: probe.rationale,
+                status: Status::Failed(format!("the proxy did not answer: {error}")),
+            };
+        }
+    };
+
+    // What the backend was sent, as it was sent. Parsed only to apply the
+    // checks: a body this probe re-encoded before checking it would be exactly
+    // the mistake the probe exists to catch.
+    let sent = seen
+        .lock()
+        .ok()
+        .and_then(|seen| seen.clone())
+        .and_then(|raw| serde_json::from_str::<Value>(&raw).ok())
+        .unwrap_or(Value::Null);
+
+    Outcome {
+        name: probe.name.to_owned(),
+        capability: probe.capability,
+        surface: probe.surface,
+        rationale: probe.rationale,
+        status: probe::evaluate(probe, &sent, &frames_of(&body)),
+    }
 }

@@ -1285,6 +1285,13 @@ and every field they do not model would go missing somewhere no test looks. So
 the routing decision is made from the raw bytes, before anything is parsed, and
 the bytes that arrive are the bytes that leave.
 
+The `relay` probe (§10.3) holds that rule. Its marker sits inside a field this
+proxy has no type for, so a body round-tripped through those types fails it,
+and fails it on the one thing a re-encoded body still gets right: the turn
+succeeds and the answer reads correct. It is replay-only. Driving it against
+the real endpoint needs the account serving turns switched to the second
+provider for the length of the run, which is not wired.
+
 Everything §2 does on the translating path is therefore absent here: no
 instructions lead, no tier name rewritten into a model id, no tool flattening,
 no effort cap, no window guard. So is §3: no baseline, no delta, no previous
@@ -1460,6 +1467,14 @@ A capability test must turn on content the model could not infer — random code
 verbatim strings. A model handed nothing at all describes a file confidently from
 its name, and that output is indistinguishable from success. Plausibility is never
 evidence.
+
+The matrix these produce says what it did not touch as well as what it did. A
+failed row prints the probe's rationale; a live run marks the `count-tokens`
+row, whose surface never reaches the backend the live header speaks for; and one
+line names the account the run spent and the paths it left alone — the WebSocket
+transport always, and the relay where no relay probe ran. Green rows say nothing
+about a path nothing drove, and a reader with no line to tell them otherwise
+reads green as coverage of the whole proxy.
 
 ### 10.4 Transport and sessions
 
