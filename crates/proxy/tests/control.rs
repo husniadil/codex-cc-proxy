@@ -11,6 +11,7 @@ use proxenos::auth::store::AccountStore;
 use proxenos::auth::store::CredentialStore;
 use proxenos::auth::store::Credentials;
 use proxenos::auth::store::FileStore;
+use proxenos::auth::store::Provider;
 use proxenos::catalog::Catalog;
 use proxenos::catalog::CatalogSource;
 use proxenos::config::ResolvedTier;
@@ -3047,7 +3048,10 @@ async fn accounts_and_status_say_what_kind_each_account_is() {
         .store
         .add(&grant("acct_one", "a-one"), None)
         .unwrap();
-    harness.store.add_key("billing", "key-secret").unwrap();
+    harness
+        .store
+        .add_key("billing", "key-secret", Provider::Codex)
+        .unwrap();
 
     let listed = harness.call("accounts").await.unwrap();
     assert_eq!(listed["accounts"][0]["kind"], json!("grant"));
@@ -3076,7 +3080,10 @@ async fn accounts_and_status_say_what_kind_each_account_is() {
 #[tokio::test]
 async fn status_reports_a_key_account_as_connected() {
     let harness = Harness::start().await;
-    harness.store.add_key("billing", "key-secret").unwrap();
+    harness
+        .store
+        .add_key("billing", "key-secret", Provider::Codex)
+        .unwrap();
 
     let status = harness.call("status").await.unwrap();
 
@@ -3102,7 +3109,10 @@ async fn status_reports_a_key_account_as_connected() {
 #[tokio::test]
 async fn a_key_account_reports_no_plan_and_no_source_for_one() {
     let harness = Harness::start().await;
-    harness.store.add_key("billing", "key-secret").unwrap();
+    harness
+        .store
+        .add_key("billing", "key-secret", Provider::Codex)
+        .unwrap();
 
     let status = harness.call("status").await.unwrap();
     assert_eq!(status["auth"]["plan"], Value::Null);

@@ -191,7 +191,20 @@ async fn login(args: cli::LoginArgs) -> Result<()> {
         Arc::new(proxenos::auth::store::FileStore::new(credential_path()));
 
     if args.key {
-        return store_key(&store, args.label.as_deref()).await;
+        return store_key(&store, args.label.as_deref(), args.provider).await;
+    }
+
+    // An authorization is performed against one provider's server, so a flag
+    // naming another has nowhere to go. Refused rather than ignored: storing
+    // the grant under the named provider would route turns to an endpoint this
+    // credential was never issued for, and ignoring the flag would report a
+    // login for a provider that did not happen.
+    if args.provider != proxenos::auth::store::Provider::Codex {
+        anyhow::bail!(
+            "`--provider {}` is only meaningful with `--key`; the authorization flow \
+             runs against one provider's server, so a grant has no provider to choose",
+            args.provider.as_str()
+        );
     }
 
     let credentials =
@@ -235,6 +248,7 @@ async fn login(args: cli::LoginArgs) -> Result<()> {
 async fn store_key(
     store: &Arc<dyn proxenos::auth::store::AccountStore>,
     label: Option<&str>,
+    provider: proxenos::auth::store::Provider,
 ) -> Result<()> {
     let Some(name) = label else {
         anyhow::bail!(
@@ -251,8 +265,11 @@ async fn store_key(
         anyhow::bail!("no key on stdin; pipe it in, or paste it and end with ctrl-d");
     }
 
-    store.add_key(name, key)?;
-    println!("Stored a key as {name}. It serves turns from now on.");
+    store.add_key(name, key, provider)?;
+    println!(
+        "Stored a {} key as {name}. It serves turns from now on.",
+        provider.as_str()
+    );
     hand_over_to(name).await;
     Ok(())
 }

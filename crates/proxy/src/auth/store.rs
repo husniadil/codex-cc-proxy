@@ -75,7 +75,7 @@ impl std::fmt::Debug for ApiKey {
 /// the other's fails with a message about the credential rather than the
 /// destination. The default is the provider this project started with, so
 /// every credential file written before the field existed reads unchanged.
-#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq, clap::ValueEnum)]
 #[serde(rename_all = "snake_case")]
 pub enum Provider {
     #[default]
@@ -227,7 +227,13 @@ pub trait AccountStore: CredentialStore {
     ///
     /// Separate from `add`, which takes what an authorization produced. A key
     /// is handed over rather than granted, and there is no flow behind it.
-    fn add_key(&self, name: &str, key: &str) -> Result<(), ProxyError>;
+    ///
+    /// `provider` is which provider's endpoints the key is spent against, and
+    /// it is a parameter rather than a default because the two endpoints
+    /// refuse each other's credentials: a key that silently claimed the wrong
+    /// provider fails as an authentication error naming the credential, which
+    /// is not the half that is wrong.
+    fn add_key(&self, name: &str, key: &str, provider: Provider) -> Result<(), ProxyError>;
 
     /// Write one named account's grant, whether or not it is selected.
     ///
@@ -809,7 +815,7 @@ impl AccountStore for FileStore {
         })
     }
 
-    fn add_key(&self, name: &str, key: &str) -> Result<(), ProxyError> {
+    fn add_key(&self, name: &str, key: &str, provider: Provider) -> Result<(), ProxyError> {
         self.update(|file| {
             // The same collision `add` refuses. A key stored over a grant
             // would retire it with nothing said, and only a re-login brings a
@@ -829,14 +835,16 @@ impl AccountStore for FileStore {
                 .index_of(name)
                 .and_then(|index| file.accounts.get_mut(index))
             {
-                Some(entry) => entry.credential = Credential::Key(ApiKey::new(key)),
+                // A re-store carries the provider too. A key rotated into an
+                // entry that kept the old provider would route by one thing
+                // and authenticate with another.
+                Some(entry) => {
+                    entry.provider = provider;
+                    entry.credential = Credential::Key(ApiKey::new(key));
+                }
                 None => file.accounts.push(Entry {
                     name: name.to_owned(),
-                    // `login --key` has no provider flag yet; a key stored
-                    // through it is for the provider the verb has always
-                    // meant. The flag arrives with the path that spends the
-                    // other kind.
-                    provider: Provider::Codex,
+                    provider,
                     credential: Credential::Key(ApiKey::new(key)),
                 }),
             }

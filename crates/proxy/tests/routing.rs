@@ -14,6 +14,7 @@ use proxenos::auth::store::AccountStore;
 use proxenos::auth::store::CredentialStore;
 use proxenos::auth::store::Credentials;
 use proxenos::auth::store::FileStore;
+use proxenos::auth::store::Provider;
 use proxenos::config::ResolvedTier;
 use proxenos::ingress::AppState;
 use proxenos::ingress::router;
@@ -261,7 +262,9 @@ async fn a_pin_the_store_cannot_answer_for_refuses_the_turn_by_name() {
 async fn a_pinned_credential_of_the_wrong_kind_is_refused_by_name() {
     let dir = tempfile::tempdir().unwrap();
     let store = store_with_two_accounts(&dir);
-    store.add_key("billing", "key-secret-value").unwrap();
+    store
+        .add_key("billing", "key-secret-value", Provider::Codex)
+        .unwrap();
     store.select("acct_serving").unwrap();
 
     let (base, seen) = daemon(

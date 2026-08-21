@@ -68,6 +68,14 @@ pub struct LoginArgs {
     /// a local name for the account and never reaches the backend.
     #[arg(long = "as", value_name = "NAME")]
     pub label: Option<String>,
+    /// Which provider's endpoints the stored key is spent against.
+    ///
+    /// Only meaningful with `--key`: an authorization is performed against one
+    /// provider's server, so the grant it produces has nothing to choose. The
+    /// default is the provider this project started with, so a login that
+    /// names none stores what it always stored.
+    #[arg(long, value_enum, default_value_t = proxenos::auth::store::Provider::Codex)]
+    pub provider: proxenos::auth::store::Provider,
 }
 
 #[derive(Debug, clap::Args)]
@@ -236,6 +244,53 @@ mod tests {
 
         // There is nowhere to put a secret on the command line.
         assert!(Cli::try_parse_from(["proxenos", "login", "--key", "sk-secret"]).is_err());
+    }
+
+    /// A stored key names the provider it is spent against, and defaults to
+    /// the one this project started with.
+    ///
+    /// `roadmap.md` v0.6.0 — routing reads the provider off the account, so
+    /// this flag is what puts an account on the second provider's path at all.
+    /// The secret still has nowhere to go on the command line: the provider is
+    /// a name, and the key stays on stdin.
+    #[test]
+    fn login_key_names_the_provider_it_is_for() {
+        let cli = Cli::try_parse_from([
+            "proxenos",
+            "login",
+            "--key",
+            "--as",
+            "relay",
+            "--provider",
+            "anthropic",
+        ])
+        .unwrap();
+        let Command::Login(args) = cli.command else {
+            panic!("login should parse");
+        };
+        assert_eq!(args.provider, proxenos::auth::store::Provider::Anthropic);
+
+        // Naming none is the provider this verb has always meant.
+        let cli = Cli::try_parse_from(["proxenos", "login", "--key", "--as", "billing"]).unwrap();
+        let Command::Login(args) = cli.command else {
+            panic!("login should parse");
+        };
+        assert_eq!(args.provider, proxenos::auth::store::Provider::Codex);
+
+        // A provider this proxy has no path for is refused at the boundary
+        // rather than stored and discovered on the first turn.
+        assert!(
+            Cli::try_parse_from([
+                "proxenos",
+                "login",
+                "--key",
+                "--as",
+                "x",
+                "--provider",
+                "gemini",
+            ])
+            .is_err()
+        );
     }
 
     /// A login names the account it produces, so an operator holding two of

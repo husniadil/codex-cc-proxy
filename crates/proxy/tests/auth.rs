@@ -7,6 +7,7 @@ use proxenos::auth::pkce::Pkce;
 use proxenos::auth::store::CredentialStore;
 use proxenos::auth::store::Credentials;
 use proxenos::auth::store::FileStore;
+use proxenos::auth::store::Provider;
 use proxenos::auth::store::WritePoint;
 use serde_json::Value;
 
@@ -1813,7 +1814,9 @@ fn a_key_is_stored_as_an_account_of_its_own_kind() {
     let dir = tempfile::tempdir().unwrap();
     let store = FileStore::new(dir.path().join("credentials.json"));
 
-    store.add_key("billing", "key-secret-value").unwrap();
+    store
+        .add_key("billing", "key-secret-value", Provider::Codex)
+        .unwrap();
 
     let accounts = store.accounts().unwrap();
     assert_eq!(accounts.len(), 1);
@@ -1853,7 +1856,9 @@ fn a_key_and_a_grant_are_two_accounts() {
     let dir = tempfile::tempdir().unwrap();
     let store = FileStore::new(dir.path().join("credentials.json"));
     store.add(&sample(), None).unwrap();
-    store.add_key("billing", "key-secret-value").unwrap();
+    store
+        .add_key("billing", "key-secret-value", Provider::Codex)
+        .unwrap();
 
     let accounts = store.accounts().unwrap();
     assert_eq!(accounts.len(), 2);
@@ -1922,7 +1927,9 @@ fn the_account_verbs_work_on_a_key() {
     let dir = tempfile::tempdir().unwrap();
     let store = FileStore::new(dir.path().join("credentials.json"));
     store.add(&sample(), None).unwrap();
-    store.add_key("billing", "key-secret-value").unwrap();
+    store
+        .add_key("billing", "key-secret-value", Provider::Codex)
+        .unwrap();
 
     store.rename("billing", "spend").unwrap();
     assert_eq!(store.accounts().unwrap()[1].name, "spend");
@@ -1994,7 +2001,9 @@ async fn each_kind_authorizes_with_the_headers_its_endpoint_expects() {
     );
     assert!(header(&grant, "originator").is_some());
 
-    store.add_key("billing", "key-secret-value").unwrap();
+    store
+        .add_key("billing", "key-secret-value", Provider::Codex)
+        .unwrap();
 
     let key = authorizer.authorize(None).await.unwrap();
     assert_eq!(key.kind, Kind::Key);
@@ -2028,7 +2037,7 @@ fn a_key_cannot_be_stored_over_a_grant() {
     store.add(&sample(), Some("work")).unwrap();
 
     let error = store
-        .add_key("work", "key-secret-value")
+        .add_key("work", "key-secret-value", Provider::Codex)
         .unwrap_err()
         .to_string();
     assert!(error.contains("work"), "{error}");
@@ -2040,8 +2049,8 @@ fn a_key_cannot_be_stored_over_a_grant() {
 
     // Replacing a key with another key is not a collision: that is how a
     // rotated secret is stored.
-    store.add_key("billing", "first").unwrap();
-    store.add_key("billing", "second").unwrap();
+    store.add_key("billing", "first", Provider::Codex).unwrap();
+    store.add_key("billing", "second", Provider::Codex).unwrap();
     assert_eq!(store.accounts().unwrap().len(), 2);
 }
 
@@ -2056,7 +2065,9 @@ fn a_key_cannot_be_stored_over_a_grant() {
 fn a_rotation_that_belongs_to_no_stored_account_is_refused() {
     let dir = tempfile::tempdir().unwrap();
     let store = FileStore::new(dir.path().join("credentials.json"));
-    store.add_key("billing", "key-secret-value").unwrap();
+    store
+        .add_key("billing", "key-secret-value", Provider::Codex)
+        .unwrap();
 
     let error = store
         .save(&Credentials {
@@ -2356,4 +2367,34 @@ async fn two_accounts_serving_at_once_keep_separate_refresh_state() {
     // And the refused grant is not retried.
     authorizer.authorize(Some("spare")).await.unwrap_err();
     assert_eq!(server.bodies().len(), 1, "a refused grant is not retried");
+}
+
+/// A key states which provider it is spent against, and the store keeps it.
+///
+/// `roadmap.md` v0.6.0 — routing reads the provider off the account, so a key
+/// stored without one is a key that can only ever reach the first provider's
+/// endpoint. The provider is a parameter rather than a default because the two
+/// endpoints refuse each other's credentials, and a key that silently claimed
+/// the wrong one would surface as an authentication failure naming the
+/// credential rather than the destination.
+#[test]
+fn a_key_states_the_provider_it_is_spent_against() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = FileStore::new(dir.path().join("credentials.json"));
+
+    store
+        .add_key("work", "key-secret-value", Provider::Codex)
+        .unwrap();
+    store
+        .add_key("relay", "key-secret-value", Provider::Anthropic)
+        .unwrap();
+
+    let accounts = store.accounts().unwrap();
+    assert_eq!(accounts[0].provider, "codex");
+    assert_eq!(accounts[1].provider, "anthropic");
+
+    // And it survives a reload: the field is written, not held in memory.
+    let reopened = FileStore::new(dir.path().join("credentials.json"));
+    let accounts = reopened.accounts().unwrap();
+    assert_eq!(accounts[1].provider, "anthropic");
 }

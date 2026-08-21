@@ -17,6 +17,7 @@ use proxenos::auth::authorize::Kind;
 use proxenos::auth::store::AccountStore;
 use proxenos::auth::store::CredentialStore;
 use proxenos::auth::store::FileStore;
+use proxenos::auth::store::Provider;
 use proxenos::auth::tokens::SystemClock;
 use proxenos::auth::tokens::TokenSource;
 use proxenos::upstream::Transport;
@@ -40,7 +41,7 @@ fn request() -> proxenos_core::responses::ResponsesRequest {
 
 fn store_with_key(dir: &tempfile::TempDir) -> Arc<FileStore> {
     let store = Arc::new(FileStore::new(dir.path().join("credentials.json")));
-    store.add_key("billing", KEY).unwrap();
+    store.add_key("billing", KEY, Provider::Codex).unwrap();
     store
 }
 
