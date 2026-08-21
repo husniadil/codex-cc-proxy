@@ -572,3 +572,89 @@ fn a_configured_skill_becomes_a_rule_the_client_understands() {
         serde_json::json!(["Skill(claude-api)", "Skill(some-other-skill)"])
     );
 }
+
+/// A per-account section overrides only the tiers it names.
+///
+/// Two accounts on different plans are offered different models, so one mapping
+/// cannot be right for both — and with a key account beside a subscription the
+/// two menus need not overlap at all. What an account does not state falls
+/// through to the shared table, because the common case is one or two tiers
+/// differing rather than a whole second mapping.
+#[test]
+fn an_account_section_overrides_only_the_tiers_it_names() {
+    let config: Config = toml::from_str(
+        r#"
+        [tiers]
+        opus   = "shared-opus"
+        sonnet = "shared-sonnet"
+        haiku  = "shared-haiku"
+        fable  = "shared-fable"
+
+        [accounts.api.tiers]
+        opus = "key-opus"
+        "#,
+    )
+    .unwrap();
+
+    let model = |account: Option<&str>, tier: &str| {
+        config
+            .tiers_for(account)
+            .resolve()
+            .unwrap()
+            .into_iter()
+            .find(|resolved| resolved.tier == tier)
+            .unwrap()
+            .model
+    };
+
+    assert_eq!(model(Some("api"), "opus"), "key-opus");
+    assert_eq!(model(Some("api"), "sonnet"), "shared-sonnet");
+    assert_eq!(model(Some("work"), "opus"), "shared-opus");
+    assert_eq!(model(None, "opus"), "shared-opus");
+}
+
+/// The effort ceiling follows the same rule.
+///
+/// Which efforts a model offers is a property of the catalog, and the catalog
+/// is one account's menu — so a ceiling that is right for one account can name
+/// an effort another account's model does not accept.
+#[test]
+fn an_account_section_overrides_the_effort_ceiling() {
+    let config: Config = toml::from_str(
+        r#"
+        effort = "high"
+
+        [accounts.api]
+        effort = "low"
+        "#,
+    )
+    .unwrap();
+
+    use codex_cc_proxy_core::responses::Effort;
+    assert_eq!(
+        config.effort_ceiling_for(Some("api")).unwrap(),
+        Some(Effort::Low)
+    );
+    assert_eq!(
+        config.effort_ceiling_for(Some("work")).unwrap(),
+        Some(Effort::High)
+    );
+    assert_eq!(config.effort_ceiling_for(None).unwrap(), Some(Effort::High));
+}
+
+/// A misspelled key inside an account section is refused, for the reason every
+/// other unknown key is: one that does nothing is worse than one that is
+/// refused, because only one of them says so.
+#[test]
+fn an_unknown_key_in_an_account_section_is_refused() {
+    let error = toml::from_str::<Config>(
+        r#"
+        [accounts.api]
+        efort = "low"
+        "#,
+    )
+    .unwrap_err()
+    .to_string();
+
+    assert!(error.contains("efort"), "{error}");
+}

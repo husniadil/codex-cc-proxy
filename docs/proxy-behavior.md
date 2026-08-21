@@ -725,6 +725,22 @@ accepts the default, a blank is a mistake.
 If the catalog cannot be fetched, validation is skipped rather than failed. An
 unreachable catalog is not evidence that a model went away.
 
+**The mapping belongs to an account.** A catalog is one account's menu (§7.0),
+so a single mapping is only ever right for the models every stored account has,
+and that intersection shrinks with each account added: two subscriptions on
+different plans are offered different models, and a key account beside a
+subscription need not overlap at all. An account therefore states what differs
+for it — the tiers it names and nothing else, plus its own effort ceiling — and
+the shared tables answer for everything it does not state. Keyed by the name the
+store files it under, because that is what every account verb takes and a key
+account carries no id to be named by.
+
+An account's ceiling **replaces** the shared one rather than being capped by it.
+Capping would make an account section unable to raise, and an operator who
+writes a different ceiling for one account means that one. The cap that is not
+negotiable is the model's own (§2.7), and that one is derived from the catalog
+rather than from either line.
+
 ### 7.2 Context window
 
 A mapped model id must not contain a `[1m]` marker; the daemon rejects one that

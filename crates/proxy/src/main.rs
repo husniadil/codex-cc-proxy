@@ -813,13 +813,24 @@ async fn run_with(args: RunArgs, capture: Capture) -> Result<()> {
     // clamped — a clamp makes an operator's mistake look like it was accepted.
     config.validate()?;
 
+    let credentials: Arc<dyn codex_cc_proxy::auth::store::AccountStore> = Arc::new(
+        codex_cc_proxy::auth::store::FileStore::new(credential_path()),
+    );
+
+    // Which account's mapping is in force. Read before the mapping is resolved
+    // rather than after, because a catalog is one account's menu (§7.0) and a
+    // mapping written for one account can name a model another is not offered.
+    // Nothing selected — no login yet — takes the shared tables, which is the
+    // only answer available and the one a first run wants.
+    let serving = serving_account(&credentials);
+
     // Refused before binding: a daemon that starts with an incomplete mapping
     // breaks WebFetch in a way that looks unrelated to tier mapping (§7.1).
-    let mut tiers = config.tiers.resolve()?;
+    let mut tiers = config.tiers_for(serving.as_deref()).resolve()?;
 
     // Also refused before binding, so a mistyped ceiling is caught at startup
     // rather than silently spending at full rate.
-    let effort_ceiling = config.effort_ceiling()?;
+    let effort_ceiling = config.effort_ceiling_for(serving.as_deref())?;
     match effort_ceiling {
         Some(effort) => tracing::info!(?effort, "reasoning effort is capped"),
         None => tracing::info!("reasoning effort is whatever the client asks for"),
@@ -828,10 +839,6 @@ async fn run_with(args: RunArgs, capture: Capture) -> Result<()> {
     let listener = daemon::bind(port).await?;
     let addr = listener.local_addr()?;
     tracing::info!(%addr, "listening");
-
-    let credentials: Arc<dyn codex_cc_proxy::auth::store::AccountStore> = Arc::new(
-        codex_cc_proxy::auth::store::FileStore::new(credential_path()),
-    );
 
     let tokens = Arc::new(codex_cc_proxy::auth::tokens::TokenSource::new(
         Arc::clone(&credentials) as Arc<dyn codex_cc_proxy::auth::store::CredentialStore>,
@@ -1018,6 +1025,20 @@ async fn run_with(args: RunArgs, capture: Capture) -> Result<()> {
         () = shutdown.wait() => tracing::info!("stopping, as asked over the control socket"),
     }
     Ok(())
+}
+
+/// The name of the account serving turns, which is what an account section in
+/// the configuration is keyed by.
+///
+/// The name rather than the account id: a key account has no id, and the name
+/// is the string every account verb already takes.
+fn serving_account(store: &Arc<dyn codex_cc_proxy::auth::store::AccountStore>) -> Option<String> {
+    store
+        .accounts()
+        .ok()?
+        .into_iter()
+        .find(|account| account.selected)
+        .map(|account| account.name)
 }
 
 /// Where credentials live. Never the configuration file (§8).

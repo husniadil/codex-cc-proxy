@@ -56,6 +56,11 @@ struct Daemon {
 
 impl Daemon {
     fn start(credentials: &serde_json::Value) -> Self {
+        Self::start_with_config(credentials, "")
+    }
+
+    /// The same daemon, with more written into its configuration file.
+    fn start_with_config(credentials: &serde_json::Value, extra: &str) -> Self {
         let dir = tempfile::tempdir().unwrap();
         let home = dir.path().join("home");
         std::fs::create_dir_all(&home).unwrap();
@@ -69,7 +74,7 @@ impl Daemon {
         // keeps this offline.
         std::fs::write(
             home.join("config.toml"),
-            "[upstream]\ncatalog = \"http://127.0.0.1:1/models\"\n",
+            format!("{extra}\n[upstream]\ncatalog = \"http://127.0.0.1:1/models\"\n"),
         )
         .unwrap();
 
@@ -415,5 +420,41 @@ fn a_live_probe_run_without_a_credential_refuses_rather_than_reporting_failures(
     assert!(
         !said.contains("billed"),
         "nothing was sent, so nothing was billed: {said}"
+    );
+}
+
+/// §4 — the mapping the daemon serves is the selected account's, through the
+/// shipping binary.
+///
+/// A catalog is one account's menu, so a mapping written for one account can
+/// name a model another is not offered. This is the wiring half of that: the
+/// override is in the file, the account it names is the one selected, and what
+/// `status` reports has to be the override rather than the shared table.
+#[test]
+fn the_binary_serves_the_selected_accounts_mapping() {
+    let daemon = Daemon::start_with_config(
+        &json!({
+            "selected": "acct_two",
+            "accounts": [
+                { "name": "acct_one", "access_token": "access-acct_one",
+                  "refresh_token": "refresh-acct_one", "id_token": id_token("acct_one"),
+                  "account_id": "acct_one", "expires_at": 4_000_000_000_u64 },
+                { "name": "acct_two", "access_token": "access-acct_two",
+                  "refresh_token": "refresh-acct_two", "id_token": id_token("acct_two"),
+                  "account_id": "acct_two", "expires_at": 4_000_000_000_u64 },
+            ],
+        }),
+        "[tiers]\nopus = \"shared-opus\"\n\n[accounts.acct_two.tiers]\nopus = \"only-for-two\"\n",
+    );
+
+    let status = daemon.run(&["status"]);
+
+    assert!(
+        status.contains("only-for-two"),
+        "the selected account's override should be what serves turns: {status}"
+    );
+    assert!(
+        !status.contains("shared-opus"),
+        "the shared mapping should have been replaced: {status}"
     );
 }

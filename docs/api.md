@@ -617,6 +617,13 @@ sonnet = "..."
 haiku  = "..."
 fable  = "..."
 
+# Optional, one per account, keyed by the name `accounts` lists it under.
+[accounts.spare]
+effort = "low"
+
+[accounts.spare.tiers]
+opus = "..."
+
 [transport]
 websocket   = true
 compression = true
@@ -669,6 +676,18 @@ configuration is a first run, not a failure: the daemon logs where the file woul
 go and starts on the defaults. A file that is present but unparseable is still an
 error — falling back there would run a daemon that ignores what the operator
 wrote.
+
+**An account section states what differs for one account.** A catalog is one
+account's menu (`proxy-behavior.md` §7.0), so a mapping is only ever right for
+the models every account has: two subscriptions on different plans are offered
+different models, and a key account beside a subscription need not overlap at
+all. `[accounts.<name>.tiers]` replaces the tiers it names and no others, and
+`effort` under `[accounts.<name>]` replaces the shared ceiling rather than being
+capped by it — an operator who writes a different one for an account means that
+one. The key is the name `accounts` lists, because that is the string every
+account verb takes and a key account has no id to be named by. An account with
+no section takes the shared tables, which is also what a daemon with nothing
+selected uses.
 
 The four tiers default to the mapping above. An omitted tier takes its default; a
 tier written blank is refused, because an omission accepts the shipped answer

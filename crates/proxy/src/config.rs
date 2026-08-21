@@ -4,6 +4,7 @@
 
 use crate::error::ProxyError;
 use serde::Deserialize;
+use std::collections::BTreeMap;
 pub mod edit;
 
 use serde::Serialize;
@@ -62,6 +63,19 @@ opus   = "gpt-5.6-terra"
 sonnet = "gpt-5.6-luna"
 haiku  = "gpt-5.6-luna"
 fable  = "gpt-5.6-sol"
+
+# What differs for one account, keyed by the name `accounts` lists it under.
+# Two subscriptions on different plans are offered different models, and a key
+# account beside a subscription need not overlap at all — so one mapping is only
+# ever right for the models every account has. A tier an account does not name
+# falls through to [tiers] above, and an `effort` here replaces the one above
+# rather than being capped by it.
+#
+# [accounts.spare]
+# effort = "low"
+#
+# [accounts.spare.tiers]
+# opus = "gpt-5.5"
 
 [transport]
 websocket   = true
@@ -165,6 +179,27 @@ pub struct Config {
     pub client: ClientConfig,
     #[serde(default)]
     pub upstream: UpstreamConfig,
+    /// What differs for one account, keyed by the name it is filed under.
+    ///
+    /// A catalog is one account's menu (§7.0), so a mapping that is right for
+    /// one account can name a model another account is not offered — two
+    /// subscriptions on different plans is enough for that, and a key account
+    /// beside a subscription need not overlap at all. What an account does not
+    /// state falls through to the shared tables above, because the common case
+    /// is a tier or two differing rather than a second mapping entire.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub accounts: BTreeMap<String, AccountConfig>,
+}
+
+/// One account's overrides. Every field is what the shared table holds, and
+/// every field is optional.
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct AccountConfig {
+    #[serde(default)]
+    pub tiers: Tiers,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort: Option<String>,
 }
 
 /// Where the backend is, and what this client says it is.
@@ -517,10 +552,46 @@ impl Config {
     pub fn effort_ceiling(
         &self,
     ) -> Result<Option<codex_cc_proxy_core::responses::Effort>, ProxyError> {
-        let Some(effort) = &self.effort else {
+        self.effort_ceiling_for(None)
+    }
+
+    /// The ceiling in force for one account: its own where it states one, the
+    /// shared one otherwise.
+    ///
+    /// An account section that states `effort` replaces the shared value rather
+    /// than being capped by it. The shared line is a default for accounts that
+    /// say nothing, and an operator who writes a different one for an account
+    /// means that one.
+    pub fn effort_ceiling_for(
+        &self,
+        account: Option<&str>,
+    ) -> Result<Option<codex_cc_proxy_core::responses::Effort>, ProxyError> {
+        let effort = self
+            .for_account(account)
+            .and_then(|overrides| overrides.effort.as_ref())
+            .or(self.effort.as_ref());
+        let Some(effort) = effort else {
             return Ok(None);
         };
         parse_effort(effort).map(Some)
+    }
+
+    /// The tier mapping in force for one account: the shared table, with every
+    /// tier the account names replacing it.
+    pub fn tiers_for(&self, account: Option<&str>) -> Tiers {
+        let Some(overrides) = self.for_account(account) else {
+            return self.tiers.clone();
+        };
+        Tiers {
+            opus: overrides.tiers.opus.clone().or(self.tiers.opus.clone()),
+            sonnet: overrides.tiers.sonnet.clone().or(self.tiers.sonnet.clone()),
+            haiku: overrides.tiers.haiku.clone().or(self.tiers.haiku.clone()),
+            fable: overrides.tiers.fable.clone().or(self.tiers.fable.clone()),
+        }
+    }
+
+    fn for_account(&self, account: Option<&str>) -> Option<&AccountConfig> {
+        self.accounts.get(account?)
     }
 
     /// Check the values that parse but cannot work.
@@ -594,6 +665,7 @@ impl Default for Config {
             instructions: InstructionsConfig::default(),
             client: ClientConfig::default(),
             upstream: UpstreamConfig::default(),
+            accounts: BTreeMap::new(),
         }
     }
 }
