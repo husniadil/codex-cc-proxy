@@ -1031,7 +1031,11 @@ could cross them. The endpoint would otherwise answer
 with something about an invalid token, which sends whoever reads it looking for
 the wrong problem.
 
-Two things follow from that pairing rather than being decided separately. A key
+Three things follow from that pairing rather than being decided separately. A
+key request is **never compressed**: zstd on a request body is measured against
+the subscription backend (§4.4) and nowhere else, and an endpoint that does not
+decompress it parses the bytes as JSON and rejects them — observed live as a
+unicode decode error naming neither compression nor the endpoint. A key
 account uses **HTTP only**: the WebSocket protocol here belongs to the
 subscription backend, and nothing has been observed about a key endpoint
 speaking it, so there is no socket to fall back from. And a key account has

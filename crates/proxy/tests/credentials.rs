@@ -131,3 +131,57 @@ async fn a_credential_is_refused_against_the_other_kinds_endpoint() {
         "the refusal must happen before anything is sent"
     );
 }
+
+/// A key endpoint is sent an uncompressed body.
+///
+/// zstd on the request body is measured against the subscription backend
+/// (§4.4) and nothing else. Sent to an endpoint that does not decompress it,
+/// the bytes are parsed as JSON and rejected — observed live as
+/// `400 invalid_json`, "encountered a unicode decode error when parsing this
+/// JSON value", which names neither compression nor the endpoint.
+#[tokio::test]
+async fn a_key_endpoint_is_never_sent_a_compressed_body() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = store_with_key(&dir);
+    let server = replay::ReplayServer::start(replay::Behavior::Events(vec![serde_json::json!({
+        "type": "response.completed",
+        "response": { "id": MARKER },
+    })]))
+    .await;
+
+    // Well past the size that would be compressed on the subscription path.
+    let bulky = codex_cc_proxy_core::responses::ResponsesRequest {
+        model: "gpt-5.6-terra".to_owned(),
+        instructions: Some("x".repeat(8_000)),
+        ..codex_cc_proxy_core::responses::ResponsesRequest::default()
+    };
+
+    let transport = HttpTransport::new(server.url.clone())
+        .for_endpoint(Kind::Key)
+        .with_credentials(authorizer(&store))
+        .with_compression(true);
+
+    let events: Vec<String> = transport
+        .stream(&bulky, None)
+        .await
+        .expect("the turn should open")
+        .filter_map(|event| async move { event.ok() })
+        .collect()
+        .await;
+    assert!(events.iter().any(|event| event.contains(MARKER)));
+
+    let sent = server.headers();
+    let sent = sent.first().expect("one request should have arrived");
+    assert_eq!(
+        sent.get("content-encoding"),
+        None,
+        "a key endpoint was sent a compressed body: {sent:?}"
+    );
+    // And the body arrived as the JSON it is.
+    assert!(
+        server.requests()[0]["instructions"]
+            .as_str()
+            .is_some_and(|instructions| instructions.len() == 8_000),
+        "the body did not arrive intact"
+    );
+}

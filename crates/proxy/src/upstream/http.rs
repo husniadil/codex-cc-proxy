@@ -98,7 +98,15 @@ impl Transport for HttpTransport {
 
         // The header is the whole mechanism. Compressed bytes without it are
         // just bytes the backend cannot parse.
-        builder = if self.compression && super::compression::worth_compressing(&body) {
+        // §4.4 — zstd on a request body is measured against the subscription
+        // backend and nowhere else. An endpoint that does not decompress it
+        // parses the bytes as JSON and rejects them, which was observed live
+        // as a unicode decode error naming neither compression nor the
+        // endpoint. Compression saves bandwidth; it is not worth an error that
+        // points at nothing.
+        let compressible =
+            self.compression && matches!(self.kind, crate::auth::authorize::Kind::Subscription);
+        builder = if compressible && super::compression::worth_compressing(&body) {
             builder
                 .header(axum::http::header::CONTENT_ENCODING, "zstd")
                 .body(super::compression::zstd(&body)?)
