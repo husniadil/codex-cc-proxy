@@ -1633,7 +1633,7 @@ async fn a_window_above_what_the_client_accepts_is_not_emitted() {
 
 /// A tier mapping can be set on a running daemon, and it moves what routes turns.
 ///
-/// Asserted on the policy the ingress reads, not only on what `tiers.get`
+/// Asserted on the policy the ingress reads, not only on what `tiers`
 /// echoes back. A method that reported a new mapping while turns kept going to
 /// the old model would be the exact failure this project refuses everywhere
 /// else — and only the first of these two assertions can catch it.
@@ -4521,5 +4521,26 @@ async fn forgetting_an_account_drops_that_accounts_figure() {
     assert!(
         harness.usage.latest_for("main").is_some(),
         "the serving account's figure went with someone else's removal"
+    );
+}
+
+/// The read of the tier mapping is named like every other read on this socket.
+/// `status`, `models`, `accounts`, `usage`, and `env` are all bare nouns, and a
+/// lone `.get` among them is a name a caller has to remember separately.
+#[tokio::test]
+async fn the_tier_mapping_is_read_under_a_bare_noun() {
+    let harness = Harness::start().await;
+
+    let mapping = harness.call("tiers").await.expect("tiers answers");
+    assert!(mapping["tiers"].is_object(), "answered {mapping}");
+
+    let gone = harness
+        .call("tiers.get")
+        .await
+        .expect_err("no longer a method");
+    assert!(
+        gone.message.contains("unknown method"),
+        "answered {}",
+        gone.message
     );
 }

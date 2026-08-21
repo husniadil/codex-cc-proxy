@@ -78,7 +78,7 @@ pub async fn dispatch(
     match method {
         "status" => Ok(status(state)),
         "models" => Ok(models(state)),
-        "tiers.get" => Ok(tiers(state)),
+        "tiers" => Ok(tiers(state)),
         // Two halves, because the client has two configuration surfaces and
         // only one of them is the environment. `variables` keeps the shape it
         // has always had; `settings` is additive, and **always present** — an

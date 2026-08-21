@@ -6,6 +6,15 @@ in [`docs/api.md`](docs/api.md) §6.
 
 ## [Unreleased]
 
+### Changed
+
+- **The control socket's `tiers.get` is now `tiers`.** Every other read on the
+  socket is a bare noun, and each coexists with namespaced writers under the
+  same noun; a lone `.get` bought no capability. Renamed with no alias while
+  nothing outside this repository's own CLI speaks the socket — `docs/api.md`
+  §6 now names the nineteen methods that are bound from v0.7.0 on, which is
+  when that freedom ends.
+
 ### Added
 
 - **`proxenos login --setup-token`: a guided way to store a subscription

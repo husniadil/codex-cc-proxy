@@ -554,7 +554,7 @@ A Unix domain socket, or a named pipe on Windows, carrying JSON-RPC:
 | `accounts.select` | `{"account": name}`, the account every following turn is made as, whether the catalog was refetched for it, and the tier mapping now in force; refuses, and moves nothing, where that account's mapping names a model its catalog does not have | no — v0.3 |
 | `accounts.rename` | `{"account": from, "name": to}`, the name this daemon calls an account by, and whether an account section moved with it; the grant and the account id are untouched | no — v0.3 |
 | `models` | catalog, whether it is the fallback list, and whether it was fetched for an account other than the one serving turns | yes |
-| `tiers.get` | tier mapping | yes |
+| `tiers` | tier mapping | no — was `tiers.get` |
 | `usage` | the serving account's quota as of its last turn, or that no turn has been made, plus `models` — the ids this daemon serves — and `accounts`, one entry per stored account with its own figure, its freshness, and `unavailable` where it has none | yes |
 | `usage.refresh` | asks the backend for a figure now, for a front-end with nothing to show on a daemon that has served no turn | yes |
 | `env` | the §2.2 block: `variables`, and `settings` always present | yes |
@@ -566,6 +566,13 @@ A Unix domain socket, or a named pipe on Windows, carrying JSON-RPC:
 | `effort.set` | the effort ceiling, or `null` to remove it; in effect until the daemon stops; `{"account": name}` as for `tiers.set` | yes |
 | `cross_account_tiers.set` | `{"enabled": bool}` — consent for pinned tiers. **Always persisted**, unlike the setters above: consent is the operator changing what the daemon is, and a grant that evaporated at restart would leave the file refusing a mapping the operator permitted. Granting applies to the next call, not the next restart; revoking is refused by name while any tier still pins an account, because the write would produce a file the daemon refuses to start from | yes |
 | `doctor` | probe results | no — `doctor` runs in the CLI, which is where `--live` can be given credentials without a daemon already holding them |
+
+**`tiers.get` is gone and `tiers` replaces it.** Every other read on this
+socket is a bare noun — `status`, `models`, `accounts`, `usage`, `env` — and each
+of them coexists with namespaced writers under the same noun, `accounts.select`
+and `usage.refresh` among them. A lone `.get` was one name a caller had to
+remember separately for no capability it bought. Renamed rather than aliased,
+for the reason below.
 
 **`disconnect` is gone and `accounts.forget` replaces it**, and the answer's
 `disconnected` field is `forgotten`. The old name shipped in v0.1, when there
@@ -1031,6 +1038,18 @@ and any other program that speaks this socket ends it just as well — and it en
 whether or not 1.0 has been reached: the moment something else has to be
 upgraded in step, only additions are safe. It is a statement about callers, not
 about a version number.
+
+**The bound method set is the whole of §3's table, named here so the freeze is
+a contract rather than folklore.** From v0.7.0 — the release that ships the
+graphical front-end, and with it the second caller the exception above is a
+statement about — these nineteen names are fixed: `status`, `shutdown`, `login`,
+`login.cancel`, `accounts`, `accounts.select`, `accounts.rename`,
+`accounts.forget`, `models`, `tiers`, `tiers.set`, `effort.set`,
+`cross_account_tiers.set`, `usage`, `usage.refresh`, `env`, `doctor`,
+`record.start`, `record.stop`. `doctor` is bound although it is not implemented:
+a reserved name that appears later must mean what its name said all along. The
+same list is a constant in the daemon, so removing or renaming one is a visible
+change to the code and not only to this document.
 
 **An unknown method reaches the caller as an unknown method.** The error code
 survives the round trip rather than being flattened into one kind, because

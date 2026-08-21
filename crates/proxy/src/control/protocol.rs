@@ -93,7 +93,7 @@ pub const METHODS: [&str; 19] = [
     "accounts.rename",
     "accounts.forget",
     "models",
-    "tiers.get",
+    "tiers",
     "tiers.set",
     "effort.set",
     "cross_account_tiers.set",
