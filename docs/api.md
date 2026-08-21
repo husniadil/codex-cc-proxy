@@ -781,6 +781,15 @@ absence refuses the daemon at startup rather than falling back to the serving
 account. Falling back would spend the wrong account's quota invisibly. The
 bare-string form is ungated and keeps the meaning it has always had.
 
+The pin decides which credential authenticates: every upstream request that tier
+produces goes up as the pinned account, and unpinned tiers are unchanged. A pin
+naming an account the store does not hold refuses the turn with
+`invalid_request_error`, naming the account and listing what is stored, and
+nothing reaches the backend as somebody else. A pinned account holding a
+credential the endpoint does not take is refused the same way, naming the pinned
+account. `proxy-behavior.md` §7.1 carries the rest, including what a refresh on
+a pinned grant does.
+
 `[client]` is policy the client applies to itself, which settings mostly carry
 and environment variables mostly cannot — see `proxy-behavior.md` §7.3 for why
 each default is what it is. `deny_skills` names skills refused for a session

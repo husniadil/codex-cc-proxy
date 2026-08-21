@@ -139,14 +139,20 @@ impl WebSocketTransport {
     pub async fn connect(
         &self,
         session_id: Option<&str>,
+        account: Option<&str>,
     ) -> Result<super::pool::PooledConnection, ProxyError> {
         Ok(super::pool::PooledConnection::new(
-            self.dial(session_id).await?,
+            self.dial(session_id, account).await?,
+            account,
         ))
     }
 
     /// Open the socket, with the identity headers and the negotiated options.
-    async fn dial(&self, session_id: Option<&str>) -> Result<yawc::TcpWebSocket, ProxyError> {
+    async fn dial(
+        &self,
+        session_id: Option<&str>,
+        account: Option<&str>,
+    ) -> Result<yawc::TcpWebSocket, ProxyError> {
         let url: url::Url = self.endpoint.parse().map_err(|error| {
             ProxyError::invalid_request(format!("`{}` is not a usable url: {error}", self.endpoint))
         })?;
@@ -162,7 +168,7 @@ impl WebSocketTransport {
 
         yawc::WebSocket::connect(url)
             .with_options(self.options())
-            .with_request(self.request_builder(session_id).await?)
+            .with_request(self.request_builder(session_id, account).await?)
             .await
             .map_err(|error| {
                 // A connection that never opened is not a failed turn: the
@@ -185,6 +191,7 @@ impl WebSocketTransport {
     async fn request_builder(
         &self,
         session_id: Option<&str>,
+        account: Option<&str>,
     ) -> Result<yawc::HttpRequestBuilder, ProxyError> {
         let mut builder = yawc::HttpRequestBuilder::new()
             .header("openai-beta", BETA_HEADER)
@@ -212,7 +219,7 @@ impl WebSocketTransport {
         // with something that names neither half.
         if let Some(credentials) = &self.credentials {
             let authorization = credentials
-                .authorize(None)
+                .authorize(account)
                 .await?
                 .for_endpoint(crate::auth::authorize::Kind::Subscription)?;
             for (name, value) in authorization.headers {
@@ -233,13 +240,19 @@ impl WebSocketTransport {
     /// Built on the pooled connection so there is one frame reader rather than
     /// two. The difference between this and the pooled path is only what
     /// happens to the socket afterwards.
+    ///
+    /// It dials as the account serving turns. Nothing that routes a client's
+    /// traffic reaches here — the conduit's pooled path is what serves turns,
+    /// and it carries the account a pinned tier named (§7.1) — so there is no
+    /// pin for this to drop.
     pub async fn open(
         &self,
         request: &ResponsesRequest,
         previous_response_id: Option<String>,
         session_id: Option<&str>,
     ) -> Result<Connection, ProxyError> {
-        let mut connection = super::pool::PooledConnection::new(self.dial(session_id).await?);
+        let mut connection =
+            super::pool::PooledConnection::new(self.dial(session_id, None).await?, None);
         connection.send(request, previous_response_id, true).await?;
 
         // The first event is read here rather than left to the caller.

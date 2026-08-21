@@ -144,11 +144,12 @@ impl Transport for WatchingTransport {
         &self,
         request: &ResponsesRequest,
         session_id: Option<&str>,
+        account: Option<&str>,
     ) -> Result<crate::upstream::EventStream, ProxyError> {
         if let Ok(mut seen) = self.seen.lock() {
             *seen = Some(request.clone());
         }
-        self.inner.stream(request, session_id).await
+        self.inner.stream(request, session_id, account).await
     }
 }
 
@@ -164,6 +165,7 @@ impl Transport for ReplayTransport {
         &self,
         _request: &ResponsesRequest,
         _session_id: Option<&str>,
+        _account: Option<&str>,
     ) -> Result<crate::upstream::EventStream, ProxyError> {
         let payloads: Vec<Result<String, ProxyError>> = self
             .events

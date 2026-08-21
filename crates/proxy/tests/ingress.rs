@@ -1749,7 +1749,7 @@ async fn upstream_requests_carry_the_access_token() {
         model: "gpt-5.6-terra".to_owned(),
         ..Default::default()
     };
-    let _ = proxenos::upstream::Transport::stream(&transport, &request, None)
+    let _ = proxenos::upstream::Transport::stream(&transport, &request, None, None)
         .await
         .expect("the request should reach the replay server");
 
@@ -2416,7 +2416,7 @@ async fn a_large_body_is_compressed_and_announced() {
         ..Default::default()
     };
 
-    let _ = proxenos::upstream::Transport::stream(&transport, &request, None)
+    let _ = proxenos::upstream::Transport::stream(&transport, &request, None, None)
         .await
         .expect("the replay server should accept it");
 
@@ -2449,7 +2449,7 @@ async fn a_small_body_is_not_compressed() {
         ..Default::default()
     };
 
-    let _ = proxenos::upstream::Transport::stream(&transport, &request, None)
+    let _ = proxenos::upstream::Transport::stream(&transport, &request, None, None)
         .await
         .unwrap();
 

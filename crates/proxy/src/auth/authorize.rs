@@ -35,6 +35,14 @@ impl Kind {
 #[derive(Clone, Debug)]
 pub struct Authorization {
     pub kind: Kind,
+    /// The account this resolved, where a pinned tier named one. `None` is the
+    /// account serving turns.
+    ///
+    /// Carried so a refusal can name it. A mismatch message that says "the
+    /// account serving turns" when a tier pinned a different one sends whoever
+    /// reads it to check the selection, and the selection is not the half that
+    /// is wrong.
+    pub account: Option<String>,
     /// Every header this credential requires, including the one identifying
     /// the client where the endpoint expects it. `Debug` is derived, so this
     /// carries a bearer token: it is never logged, and the two types it is
@@ -57,12 +65,22 @@ impl Authorization {
     /// comes back as a message about an invalid token, which sends whoever
     /// reads it looking for the wrong problem. Both halves are named, because
     /// either one could be the half that is wrong.
+    /// The same authorization, remembering which account produced it.
+    fn named(mut self, account: &str) -> Self {
+        self.account = Some(account.to_owned());
+        self
+    }
+
     pub fn for_endpoint(self, expected: Kind) -> Result<Self, ProxyError> {
         if self.kind == expected {
             return Ok(self);
         }
+        let whose = match &self.account {
+            Some(account) => format!("the account `{account}` this tier is pinned to"),
+            None => "the account serving turns".to_owned(),
+        };
         Err(ProxyError::invalid_request(format!(
-            "the account serving turns holds a {} credential, and this endpoint takes a {} one; \
+            "{whose} holds a {} credential, and this endpoint takes a {} one; \
              select an account of the other kind, or point the {} endpoint somewhere it belongs",
             self.kind.as_str(),
             expected.as_str(),
@@ -157,8 +175,12 @@ impl Authorizer for AccountAuthorizer {
         // the two is wrong.
         if let Some(account) = account {
             return match self.store.credential_for(account)? {
-                Credential::Grant(_) => self.grants_for(account).authorize(None).await,
-                Credential::Key(key) => Ok(key_authorization(&key)),
+                Credential::Grant(_) => self
+                    .grants_for(account)
+                    .authorize(None)
+                    .await
+                    .map(|authorization| authorization.named(account)),
+                Credential::Key(key) => Ok(key_authorization(&key).named(account)),
             };
         }
 
@@ -177,6 +199,7 @@ impl Authorizer for AccountAuthorizer {
 fn key_authorization(key: &super::store::ApiKey) -> Authorization {
     Authorization {
         kind: Kind::Key,
+        account: None,
         headers: vec![(
             axum::http::header::AUTHORIZATION.to_string(),
             format!("Bearer {}", key.value()),
@@ -207,6 +230,7 @@ impl Authorizer for TokenSource {
 
         Ok(Authorization {
             kind: Kind::Subscription,
+            account: None,
             headers,
         })
     }

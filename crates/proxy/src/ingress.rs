@@ -167,11 +167,15 @@ async fn messages(
     // being prepared for.
     let policy = state.policy.get();
 
-    let upstream_model = policy
+    let routed = policy
         .models()
         .iter()
-        .find(|mapping| mapping.requested == request.model)
-        .map(|mapping| mapping.upstream.clone());
+        .find(|mapping| mapping.requested == request.model);
+    let upstream_model = routed.map(|mapping| mapping.upstream.clone());
+    // §7.1 — the account this tier's turns are made as, where the entry pinned
+    // one. Taken from the same snapshot as the model, so a turn cannot be
+    // translated for one tier's model and authenticated as another's account.
+    let account = routed.and_then(|mapping| mapping.account.clone());
 
     // Translated once with no session knowledge, purely to derive the item
     // sequence this conversation is identified by (§3.1).
@@ -332,6 +336,7 @@ async fn messages(
                     &baseline_before_turn,
                     previous_request.as_ref(),
                     previous_response_id.as_deref(),
+                    account.as_deref(),
                 )
                 .await
             {
@@ -341,7 +346,7 @@ async fn messages(
         }
         None => match state
             .transport
-            .stream(&translated, Some(&session.cache_key))
+            .stream(&translated, Some(&session.cache_key), account.as_deref())
             .await
         {
             Ok(events) => events,

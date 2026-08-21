@@ -473,6 +473,7 @@ async fn a_policy_close_falls_back_without_losing_the_turn() {
             &Baseline::new(),
             None,
             None,
+            None,
         )
         .await
         .expect("the turn should complete over HTTP");
@@ -526,6 +527,7 @@ async fn a_latched_session_stops_trying_the_websocket() {
             .send(
                 &request(items(json!([message("hi")]))),
                 &Baseline::new(),
+                None,
                 None,
                 None,
             )
@@ -618,6 +620,7 @@ async fn drive(conduit: &Conduit, turns: usize) -> (String, Vec<Sent>) {
                 &baseline,
                 previous_request.as_ref(),
                 previous_response_id.as_deref(),
+                None,
             )
             .await
             .expect("the turn should complete");
@@ -885,7 +888,7 @@ async fn a_prewarm_opens_the_connection_without_producing_a_turn() {
     );
 
     conduit
-        .prewarm(&request(items(json!([message("warm")]))))
+        .prewarm(&request(items(json!([message("warm")]))), None)
         .await;
 
     assert!(conduit.has_pooled_connection().await);
@@ -901,6 +904,7 @@ async fn a_prewarm_opens_the_connection_without_producing_a_turn() {
         .send(
             &request(items(json!([message("real")]))),
             &Baseline::new(),
+            None,
             None,
             None,
         )
@@ -937,6 +941,7 @@ async fn a_latched_session_does_not_prewarm() {
             &Baseline::new(),
             None,
             None,
+            None,
         )
         .await
         .unwrap();
@@ -944,7 +949,7 @@ async fn a_latched_session_does_not_prewarm() {
 
     let before = ws.connections();
     conduit
-        .prewarm(&request(items(json!([message("warm")]))))
+        .prewarm(&request(items(json!([message("warm")]))), None)
         .await;
 
     assert_eq!(
@@ -1036,7 +1041,7 @@ async fn an_abandoned_turn_does_not_poison_the_next_upload() {
     let mut conversation = items(json!([message("turn 0")]));
     let first = request(conversation.clone());
     let (events, sent) = conduit
-        .send(&first, &baseline, None, None)
+        .send(&first, &baseline, None, None, None)
         .await
         .expect("the first turn should complete");
     let _: Vec<_> = events.collect().await;
@@ -1069,7 +1074,7 @@ async fn an_abandoned_turn_does_not_poison_the_next_upload() {
     conversation.extend(items(json!([message("turn 1")])));
     let second = request(conversation.clone());
     let (events, sent) = conduit
-        .send(&second, &baseline, Some(&first), Some("resp_ws"))
+        .send(&second, &baseline, Some(&first), Some("resp_ws"), None)
         .await
         .expect("the abandoned turn should still start");
     assert_eq!(
@@ -1084,7 +1089,7 @@ async fn an_abandoned_turn_does_not_poison_the_next_upload() {
     conversation.extend(items(json!([message("turn 2")])));
     let third = request(conversation.clone());
     let (events, sent) = conduit
-        .send(&third, &baseline, Some(&second), Some("resp_ws"))
+        .send(&third, &baseline, Some(&second), Some("resp_ws"), None)
         .await
         .expect("the turn after the abandoned one should complete");
     let _: Vec<_> = events.collect().await;
@@ -1098,5 +1103,54 @@ async fn an_abandoned_turn_does_not_poison_the_next_upload() {
     assert!(
         last.get("previous_response_id").is_none_or(Value::is_null),
         "a fresh connection was handed a response id it has never seen: {last}"
+    );
+}
+
+/// §7.1 — a socket opened as one account never carries another's turn.
+///
+/// A connection authenticates once, at the upgrade, and then serves every turn
+/// sent over it. Reuse is §4.1's whole point, and it is exactly wrong across
+/// accounts: the pinned turn would go up on the opener's credential, succeed,
+/// and spend a subscription nobody pointed at it. Counted rather than read off
+/// a header because the count is what the reuse decision produces — a second
+/// connection means the pooled one was refused.
+#[tokio::test]
+async fn a_pooled_connection_is_not_reused_for_another_account() {
+    let ws = WsServer::start(stream_events(), WsBehavior::Replay).await;
+    let addr = start_http().await;
+    let conduit = Conduit::new(
+        Arc::new(HttpTransport::new(format!("http://{addr}/responses"))),
+        Some(Arc::new(
+            WebSocketTransport::new(ws.url.clone()).with_compression(false),
+        )),
+        "test-session".to_owned(),
+    );
+
+    let baseline = Baseline::new();
+    let first = request(items(json!([message("the main turn")])));
+    let (events, _) = conduit
+        .send(&first, &baseline, None, None, None)
+        .await
+        .expect("the first turn should be served");
+    let _: Vec<_> = events.collect().await;
+
+    assert!(
+        conduit.has_pooled_connection().await,
+        "the first turn left no connection to reuse, so this proves nothing"
+    );
+    assert_eq!(ws.connections(), 1);
+
+    // The same conversation, on a tier pinned somewhere else.
+    let second = request(items(json!([message("the pinned turn")])));
+    let (events, _) = conduit
+        .send(&second, &baseline, None, None, Some("spare"))
+        .await
+        .expect("the pinned turn should be served");
+    let _: Vec<_> = events.collect().await;
+
+    assert_eq!(
+        ws.connections(),
+        2,
+        "the pinned turn went up on a socket opened as the serving account"
     );
 }

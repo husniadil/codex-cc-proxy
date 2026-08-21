@@ -22,19 +22,33 @@ pub struct PooledConnection {
     /// only continue a response through the connection that produced it
     /// (§4.3); this is what that check reads.
     seen_response_id: Option<String>,
+    /// The account whose credential opened this socket (§7.1).
+    ///
+    /// A connection authenticates once, at the upgrade, and then carries every
+    /// turn sent over it. So a socket outlives the turn that opened it *as one
+    /// account*: handing it a turn a tier pinned somewhere else would spend the
+    /// opener's quota, succeed, and say nothing. This is what the reuse check
+    /// reads.
+    account: Option<String>,
 }
 
 impl PooledConnection {
-    pub fn new(socket: Socket) -> Self {
+    pub fn new(socket: Socket, account: Option<&str>) -> Self {
         Self {
             socket,
             seen_response_id: None,
+            account: account.map(str::to_owned),
         }
     }
 
     /// Whether this connection has seen the response a delta would continue.
     pub fn saw(&self, response_id: &str) -> bool {
         self.seen_response_id.as_deref() == Some(response_id)
+    }
+
+    /// Whether this connection was opened as the account a turn belongs to.
+    pub fn opened_as(&self, account: Option<&str>) -> bool {
+        self.account.as_deref() == account
     }
 
     /// Send one frame.

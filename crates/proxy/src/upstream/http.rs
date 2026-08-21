@@ -75,6 +75,7 @@ impl Transport for HttpTransport {
         &self,
         request: &ResponsesRequest,
         session_id: Option<&str>,
+        account: Option<&str>,
     ) -> Result<EventStream, ProxyError> {
         let body = serde_json::to_string(request).map_err(|error| {
             ProxyError::invalid_request(format!("could not serialize the request: {error}"))
@@ -122,7 +123,7 @@ impl Transport for HttpTransport {
         match &self.credentials {
             Some(credentials) => {
                 for (name, value) in credentials
-                    .authorize(None)
+                    .authorize(account)
                     .await?
                     .for_endpoint(self.kind)?
                     .headers

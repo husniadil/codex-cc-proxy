@@ -31,9 +31,15 @@ pub trait Transport: Send + Sync {
     /// `session_id` scopes the prompt cache and must be stable for the life of
     /// a conversation. It is carried per request rather than per transport
     /// because one transport serves every session (§2.7).
+    ///
+    /// `account` is the account this request is made as, which a pinned tier
+    /// names (§7.1). It travels with the request for the same reason: one
+    /// transport serves every tier, and two tiers on one conversation can
+    /// belong to two different accounts.
     async fn stream(
         &self,
         request: &ResponsesRequest,
         session_id: Option<&str>,
+        account: Option<&str>,
     ) -> Result<EventStream, ProxyError>;
 }

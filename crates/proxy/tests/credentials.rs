@@ -74,7 +74,7 @@ async fn a_key_authenticated_turn_completes_and_carries_only_its_key() {
         .with_credentials(authorizer(&store));
 
     let events: Vec<String> = transport
-        .stream(&request(), None)
+        .stream(&request(), None, None)
         .await
         .expect("the turn should open")
         .filter_map(|event| async move { event.ok() })
@@ -119,7 +119,7 @@ async fn a_credential_is_refused_against_the_other_kinds_endpoint() {
     // A key, against the endpoint a subscription grant belongs to.
     let transport = HttpTransport::new(server.url.clone()).with_credentials(authorizer(&store));
 
-    let Err(error) = transport.stream(&request(), None).await else {
+    let Err(error) = transport.stream(&request(), None, None).await else {
         panic!("a key against a subscription endpoint should be refused");
     };
     let message = error.to_string();
@@ -162,7 +162,7 @@ async fn a_key_endpoint_is_never_sent_a_compressed_body() {
         .with_compression(true);
 
     let events: Vec<String> = transport
-        .stream(&bulky, None)
+        .stream(&bulky, None, None)
         .await
         .expect("the turn should open")
         .filter_map(|event| async move { event.ok() })

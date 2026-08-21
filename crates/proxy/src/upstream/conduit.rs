@@ -79,6 +79,7 @@ impl Conduit {
         baseline: &Baseline,
         previous_request: Option<&ResponsesRequest>,
         previous_response_id: Option<&str>,
+        account: Option<&str>,
     ) -> Result<(super::EventStream, Sent), ProxyError> {
         if let Some(websocket) = &self.websocket
             && !self.is_latched_to_http()
@@ -92,7 +93,16 @@ impl Conduit {
             // `400 Invalid previous_response_id`. The refusal ends the turn
             // cleanly, so the refusing connection would be parked and every
             // later delta would repeat it (§4.3).
-            let pooled = self.connection.lock().await.take();
+            // A socket authenticates once, at the upgrade, and then carries
+            // every turn sent over it. One opened as another account is
+            // dropped rather than reused: sending this turn over it would
+            // spend the opener's quota, succeed, and say nothing (§7.1).
+            let pooled = self
+                .connection
+                .lock()
+                .await
+                .take()
+                .filter(|connection| connection.opened_as(account));
 
             let upload = match previous_response_id {
                 Some(id) if !pooled.as_ref().is_some_and(|connection| connection.saw(id)) => {
@@ -121,7 +131,7 @@ impl Conduit {
             );
 
             let attempt = self
-                .send_over_websocket(websocket, &payload, previous, pooled)
+                .send_over_websocket(websocket, &payload, previous, pooled, account)
                 .await;
 
             let attempt = match attempt {
@@ -137,7 +147,7 @@ impl Conduit {
                 Err(failure) if failure.reused => {
                     tracing::debug!(error = %failure.error, "the pooled connection had expired");
                     match self
-                        .send_over_websocket(websocket, request, None, None)
+                        .send_over_websocket(websocket, request, None, None, account)
                         .await
                     {
                         Ok(events) => return Ok((events, Sent::Full)),
@@ -155,7 +165,10 @@ impl Conduit {
         }
 
         // HTTP is stateless: it always carries the whole conversation.
-        let events = self.http.stream(request, Some(&self.session_id)).await?;
+        let events = self
+            .http
+            .stream(request, Some(&self.session_id), account)
+            .await?;
         Ok((events, Sent::Full))
     }
 
@@ -171,6 +184,7 @@ impl Conduit {
         request: &ResponsesRequest,
         previous_response_id: Option<String>,
         pooled: Option<crate::upstream::pool::PooledConnection>,
+        account: Option<&str>,
     ) -> Result<super::EventStream, WebSocketFailure> {
         let reused = pooled.is_some();
         let failed = |error: ProxyError| WebSocketFailure { error, reused };
@@ -178,7 +192,7 @@ impl Conduit {
         let mut connection = match pooled {
             Some(connection) => connection,
             None => websocket
-                .connect(Some(&self.session_id))
+                .connect(Some(&self.session_id), account)
                 .await
                 .map_err(failed)?,
         };
@@ -216,7 +230,7 @@ impl Conduit {
     /// A prewarm produces no response. Its only purpose is that the request
     /// which follows reuses both the connection and the prior response id, so
     /// the first turn of a session does not pay for the handshake.
-    pub async fn prewarm(&self, request: &ResponsesRequest) {
+    pub async fn prewarm(&self, request: &ResponsesRequest, account: Option<&str>) {
         let Some(websocket) = &self.websocket else {
             return;
         };
@@ -227,7 +241,7 @@ impl Conduit {
             return;
         }
 
-        match websocket.connect(Some(&self.session_id)).await {
+        match websocket.connect(Some(&self.session_id), account).await {
             Ok(mut connection) => {
                 if connection.send(request, None, false).await.is_ok() {
                     // Re-checked under the lock: a turn may have started

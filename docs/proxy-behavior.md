@@ -758,6 +758,39 @@ Validation is skipped where the catalog cannot speak for the account being
 selected, which is the fallback list and a refetch that failed; refusing a
 mapping over somebody else's menu would be worse than not checking.
 
+**A pinned tier is served as the account it names.** A tier entry may pin
+another account, and what that decides is which credential authenticates the
+turn: the pinned account's, on every upstream request the tier produces, while
+every unpinned tier keeps using the account serving turns. The mapping a turn
+resolves against carries the account beside the two model ids, because that
+table is the only thing a turn resolves against — an account left out of it
+arrives at the transport as no account at all.
+
+A pin naming an account the store does not hold **refuses the turn**, and the
+refusal names the account and lists what is stored. There is no fallback to the
+serving account: the turn would succeed, read identically to a correct one, and
+spend a subscription nobody pointed at it. That is the same reason the consent
+key exists, and it is the reason nothing about this is inferred — a mapping and
+a store are edited separately, and either one can be the half that is wrong. A
+pinned account holding a credential of the wrong kind is refused the same way
+§8.2 refuses a mismatched selection, naming the pinned account rather than the
+selected one.
+
+**A refresh on a pinned grant goes back where it was read.** Refresh state — the
+single-flight lock, and which refresh token the backend has refused — describes
+one refresh-token family, so a pinned account gets its own token source rather
+than the shared one pointed at a second store. The write matters more: §8.1
+resolves a rotation by account id and falls back to the *selection* where the
+grant carries none, which for a pinned account is another account's entry. A
+grant read for a named account is written back to that account, with the name
+standing where the selection stood.
+
+**A pooled socket belongs to the account that opened it.** A connection
+authenticates once, at the upgrade, and then carries every turn sent over it
+(§4.1). One opened as another account is dropped rather than reused — the reuse
+that makes §4.1 worth anything is exactly wrong across accounts. HTTP needs no
+such rule: every request carries its own credential.
+
 An account's ceiling **replaces** the shared one rather than being capped by it.
 Capping would make an account section unable to raise, and an operator who
 writes a different ceiling for one account means that one. The cap that is not
