@@ -4,7 +4,11 @@ All notable changes to this project are recorded here. This project follows
 [semantic versioning](https://semver.org). The semver-bound surfaces are listed
 in [`docs/api.md`](docs/api.md) §6.
 
-## [Unreleased]
+## [0.6.0]
+
+The second provider, end to end — and confirmed live: relayed turns round-trip
+against the real endpoint with a substituted subscription bearer, plain and
+streaming both. `docs/roadmap.md` §L records what settling that falsified.
 
 ### Added
 
@@ -72,6 +76,27 @@ in [`docs/api.md`](docs/api.md) §6.
   joins the served list `usage` states, so a status line still recognizes a
   session whose tier was remapped while it was running.
   `docs/proxy-behavior.md` §9.4.
+- **`exec` upgrades a plain `--model` id to its long-context variant.** For a
+  relay-serving daemon, an id whose `[1m]` variant the curated list offers is
+  rewritten to it — the client's own long-context selector — and the rewrite is
+  named on stderr. An id already carrying the marker, an alias, another
+  program's `--model`, and every translating launch are forwarded as typed.
+- **A relay-serving daemon answers `models` from a curated list**, windows
+  included: the second provider's own list endpoint names ids but states no
+  windows, so the figures are curated into the binary and every answer says
+  `curated` rather than presenting the list as a fetch. It is a menu for
+  reading, never a list to refuse by — no mapping is validated against it, and
+  `status` reports the catalog as curated instead of unvalidated.
+- **Launches carry `remoteControlAtStartup: false`.** A session started through
+  a local proxy is a local decision. On by default beside the other client
+  policy, switchable with `[client] disable_remote_control = false`.
+- **Every launch forces the client's tool search on.** The client disables
+  deferred tool loading the moment its base URL is not a first-party host, and
+  an MCP set measured at ~101k tokens loaded up front defers to zero with
+  `ENABLE_TOOL_SEARCH=true` — verified live on both paths: the relay forwards
+  `defer_loading` and `tool_reference` verbatim to a backend that runs the
+  search itself, and the translating path carries client-driven discovery
+  (`docs/proxy-behavior.md` §2.5).
 
 ### Changed
 
@@ -90,6 +115,20 @@ in [`docs/api.md`](docs/api.md) §6.
   than a default: the two providers' endpoints refuse each other's credentials,
   and a key that silently claimed the wrong one fails as an authentication
   error naming the credential rather than the destination.
+- **An id no mapping names follows the account that would authenticate it**:
+  relayed when that account is on the second provider — the credential travels
+  only to its own provider's endpoint, and that provider judges the id — and
+  translated with the id passed through when it is on the first. A launch-time
+  model override rides on this symmetrically, with no mapping edit. Crossing
+  providers still takes a pointer (a pinned tier, or a changed selection),
+  because serving an id from an account nobody named would spend a
+  subscription nobody pointed at the turn. `docs/proxy-behavior.md` §9.1.
+- **The `claude-api` skill-deny default is resolved per launch.** Unset,
+  `deny_skills` denies the skill only where a tier translates — the skill
+  documents the second provider's API, the wrong reference for a translated
+  session and the right one for a relayed session. A written list stays the
+  operator's rule on either path, and `status` reports the list a launch would
+  actually apply.
 - **`docs/proxy-behavior.md` §4** no longer claims transports are
   interchangeable below the session. The choice of transport belongs to the
   provider: the relay is HTTP with SSE and nothing else. §9 is the relay; what
@@ -106,6 +145,14 @@ in [`docs/api.md`](docs/api.md) §6.
 - **`record ingress` and `record upstream` honour `--port` and
   `PROXENOS_PORT`.** The variable was read by `run` and silently dropped by
   `record`, which assembled its daemon's arguments by hand.
+- **The ingress imposes no size limit on a request body.** The body extractor's
+  2 MB default refused a real client turn — a full system prompt and a large
+  tool set — with a plain-text 413 the client read as retryable and looped on.
+  The backend's own limit is the real one, and the daemon is loopback-only.
+- **The request path's query string is relayed as sent.** Observed live: the
+  client posts `/v1/messages?beta=true`, and the ingress never read the URI, so
+  the relay posted to the bare endpoint. The query now follows the body's rule
+  — forwarded exactly as sent, never invented. `docs/proxy-behavior.md` §9.2.
 
 ## [0.5.0]
 
