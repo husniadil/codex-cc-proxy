@@ -1,0 +1,21 @@
+{
+  "_note": "Response headers of one live turn against the second provider's Messages endpoint, relayed with a stored subscription token. Captured, not written. Quota rides along with a turn; no separate poll answers it for this credential kind.",
+  "status": 200,
+  "headers": {
+    "anthropic-ratelimit-unified-status": "allowed_warning",
+    "anthropic-ratelimit-unified-5h-status": "allowed",
+    "anthropic-ratelimit-unified-5h-reset": "1787338800",
+    "anthropic-ratelimit-unified-5h-utilization": "0.13",
+    "anthropic-ratelimit-unified-7d-status": "allowed_warning",
+    "anthropic-ratelimit-unified-7d-reset": "1787371200",
+    "anthropic-ratelimit-unified-7d-utilization": "0.93",
+    "anthropic-ratelimit-unified-7d-surpassed-threshold": "0.75",
+    "anthropic-ratelimit-unified-overage-status": "allowed",
+    "anthropic-ratelimit-unified-overage-reset": "1788220800",
+    "anthropic-ratelimit-unified-overage-utilization": "0.0",
+    "anthropic-ratelimit-unified-representative-claim": "seven_day",
+    "anthropic-ratelimit-unified-fallback-percentage": "0.5",
+    "anthropic-ratelimit-unified-reset": "1787371200",
+    "anthropic-ratelimit-unified-upgrade-paths": "overage"
+  }
+}

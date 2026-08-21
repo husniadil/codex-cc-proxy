@@ -1,0 +1,19 @@
+{
+  "_note": "The provider's subscription usage endpoint, asked with the same stored token. It answers, and refuses: a setup token carries no user:profile scope. Probed with and without anthropic-beta: oauth-2025-04-20 \u2014 identical refusal, so the beta header is not what is missing.",
+  "request": {
+    "method": "GET",
+    "path": "/api/oauth/usage"
+  },
+  "status": 403,
+  "body": {
+    "type": "error",
+    "error": {
+      "type": "permission_error",
+      "message": "OAuth token does not meet scope requirement user:profile",
+      "details": {
+        "error_visibility": "user_facing"
+      }
+    },
+    "request_id": "req_REDACTED"
+  }
+}

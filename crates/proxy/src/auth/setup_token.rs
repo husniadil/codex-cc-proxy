@@ -19,7 +19,12 @@ use crate::auth::store::Provider;
 
 /// What `claude setup-token` mints. An API key carries a different prefix and
 /// is a different credential, spent against a different endpoint.
-pub const SETUP_TOKEN_PREFIX: &str = "sk-ant-oat1-";
+///
+/// The stem, not a whole prefix. A real minted token begins `sk-ant-oat01-`,
+/// and the version digit belongs to the issuer: guarding on one value refused
+/// the credential this flow exists to store. What the guard is for is telling a
+/// setup token apart from an API key, and the stem does that.
+pub const SETUP_TOKEN_PREFIX: &str = "sk-ant-oat";
 
 /// Why a guided login refused before anything was stored.
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
@@ -236,6 +241,18 @@ mod tests {
         assert!(
             store.accounts().expect("a readable store").is_empty(),
             "the store is left untouched"
+        );
+    }
+
+    /// The prefix a real minted token actually carries. Measured against a
+    /// live one rather than transcribed from prose: the token in use here
+    /// begins `sk-ant-oat01-`, and a guard written for `sk-ant-oat1-` refused
+    /// the very credential this flow exists to store.
+    #[test]
+    fn the_prefix_a_real_minted_token_carries_is_accepted() {
+        assert_eq!(
+            validate_token("sk-ant-oat01-realish-token").expect("a setup token"),
+            "sk-ant-oat01-realish-token"
         );
     }
 

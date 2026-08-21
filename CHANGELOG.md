@@ -13,7 +13,7 @@ in [`docs/api.md`](docs/api.md) §6.
   reached without the pipe-and-ctrl-d workflow it required. It says where the
   token comes from (`claude setup-token`), reads it from a hidden prompt where
   stdin is a terminal, asks what to call the account when `--as` did not, and
-  refuses anything not beginning with `sk-ant-oat1-` before the store is
+  refuses anything not beginning with `sk-ant-oat` before the store is
   touched — with no override flag, because a credential of the wrong kind
   stores cleanly and fails later naming the account rather than the paste. A
   non-terminal stdin still reads the token from the pipe, so scripted use does

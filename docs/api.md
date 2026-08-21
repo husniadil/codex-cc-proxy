@@ -126,7 +126,7 @@ read at startup.
 it is stored changes. What it adds is the part a person needs and a pipe does
 not: it says to run `claude setup-token` in another terminal, reads the token
 from a **hidden prompt** where stdin is a terminal, and refuses anything that
-does not begin with `sk-ant-oat1-` before the store is touched. That refusal
+does not begin with `sk-ant-oat` before the store is touched — the stem, because the version digit belongs to the issuer and a real minted token begins `sk-ant-oat01-`. That refusal
 exists because a credential of the wrong kind stores cleanly and fails later
 naming the account rather than the paste that was wrong; there is no override
 flag. `--as NAME` names the account, and without one the flow asks. Where stdin
