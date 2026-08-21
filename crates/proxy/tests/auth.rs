@@ -1628,6 +1628,32 @@ fn a_write_that_lost_a_race_is_redone_rather_than_lost() {
     );
 }
 
+/// A write that cannot take its lock says what to do about it.
+///
+/// The lock lives beside the credentials, so a directory that cannot hold one
+/// stops every write. Locking is also not something every filesystem does — a
+/// home on a network mount is the case that exists — and there the failure is
+/// the filesystem's, not the operator's. Either way the answer is the same and
+/// the message has to carry it, because "could not lock the credential file"
+/// on its own reads as a bug in this program.
+#[test]
+fn a_write_that_cannot_lock_names_the_way_out() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("credentials.json");
+    // Something already occupying the lock's name that is not a file.
+    std::fs::create_dir(dir.path().join("credentials.json.lock")).unwrap();
+
+    let error = FileStore::new(&path)
+        .add(&sample(), None)
+        .unwrap_err()
+        .to_string();
+
+    assert!(
+        error.contains("CODEX_CC_PROXY_HOME"),
+        "nothing to act on: {error}"
+    );
+}
+
 /// A writer waits for the one already writing, rather than landing inside it.
 ///
 /// The comparison covers the gap between a write's read and its check. It

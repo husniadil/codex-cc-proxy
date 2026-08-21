@@ -519,10 +519,11 @@ impl FileStore {
 
         let mut path = self.path.clone().into_os_string();
         path.push(".lock");
-        let file = open_private(&PathBuf::from(path))?;
-        file.lock().map_err(|error| {
-            ProxyError::authentication(format!("could not lock the credential file: {error}"))
-        })?;
+        let path = PathBuf::from(path);
+
+        let file = open_private(&path).map_err(|error| unusable(&path, &error.to_string()))?;
+        file.lock()
+            .map_err(|error| unusable(&path, &error.to_string()))?;
         Ok(file)
     }
 
@@ -856,6 +857,22 @@ fn write_private(path: &Path, body: &str) -> Result<(), ProxyError> {
     std::fs::write(path, body).map_err(|error| {
         ProxyError::authentication(format!("could not write credentials: {error}"))
     })
+}
+
+/// A directory that cannot hold the lock, said in a way that can be acted on.
+///
+/// Two things reach here and the answer is the same for both: something is in
+/// the lock's way, or the filesystem does not lock at all — a home on a network
+/// mount being the case that exists. Neither is a mistake the operator made
+/// here, so naming the file without naming a move leaves a reader with a
+/// failure that reads as a bug in this program.
+fn unusable(path: &Path, detail: &str) -> ProxyError {
+    ProxyError::authentication(format!(
+        "could not lock {path:?}: {detail}. Every write of the credential file \
+         takes that lock, so this directory cannot hold credentials. Point \
+         `CODEX_CC_PROXY_HOME` at a directory on a local filesystem and log in \
+         again."
+    ))
 }
 
 /// Open a file only this user can open, creating it if it is not there.

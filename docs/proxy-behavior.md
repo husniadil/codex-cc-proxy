@@ -979,6 +979,15 @@ process that dies partway through a write leaves nothing behind for the next one
 to wait on, and it stays on disk when the credentials are cleared, because
 removing it would leave the next two writers locking two different files.
 
+A filesystem that cannot take the lock **cannot hold credentials**, and the
+write says so rather than proceeding without one. Locking is not universal — a
+home on a network mount is the case that exists — and the alternative is a write
+that reports success while doing exactly what this rule was written to stop.
+The failure names the file and names the move: `CODEX_CC_PROXY_HOME` points the
+whole directory somewhere local. Falling back to an unlocked write is
+deliberately not offered; if it ever is, it belongs behind something the
+operator chose, not behind a log line nobody reads.
+
 A write that finds the file changed since it read still **starts over** rather
 than replacing it. The lock reaches only writers that take it, and an older
 binary or a hand edit takes none; the comparison is what catches those. It

@@ -4,6 +4,18 @@ All notable changes to this project are recorded here. This project follows
 [semantic versioning](https://semver.org). The semver-bound surfaces are listed
 in [`docs/api.md`](docs/api.md) §6.
 
+## [Unreleased]
+
+### Changed
+
+- **A credential directory that cannot lock says what to do about it.** Every
+  write takes a lock beside the credential file, and a filesystem that cannot
+  take one — a home on a network mount being the case that exists — now fails
+  with the file named and `CODEX_CC_PROXY_HOME` named beside it, rather than
+  with an error that reads as a bug in this program. Proceeding without the lock
+  is deliberately not offered: it would report success while doing the thing the
+  lock exists to stop.
+
 ## [0.3.1]
 
 ### Fixed

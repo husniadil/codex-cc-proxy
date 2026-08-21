@@ -741,6 +741,11 @@ pending work.
 - **The catalog fallback list is fixed** and needs updating if models are renamed
   or retired while the live fetch is unavailable. Its entries carry no context
   window, so the window guard does not fire for a model the fallback named.
+- **The credential directory has to be on a filesystem that locks.** Every write
+  of the credential file takes a lock beside it, and a filesystem that cannot
+  take one — a network mount is the case that exists — fails the write rather
+  than proceeding without it. The error names `CODEX_CC_PROXY_HOME`, which
+  points the whole directory somewhere else.
 - **A key account's catalog carries no windows or efforts.** The list is real
   and is the account's own, and the endpoint states neither for any entry. The
   window guard therefore never fires for a key account and the model half of the
