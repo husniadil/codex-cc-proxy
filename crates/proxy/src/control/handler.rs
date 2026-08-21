@@ -403,6 +403,21 @@ pub fn environment(state: &ControlState) -> Vec<(String, String)> {
         ));
     }
 
+    // Which side of §9.1 each tier is on, asked once. Everything below turns on
+    // it: the two window variables and the long-context flag are global to the
+    // client, so a mapping that is not entirely on one provider has to pick.
+    let accounts = state.credentials.accounts().unwrap_or_default();
+    let relaying = |tier: &crate::config::ResolvedTier| {
+        crate::upstream::relay::relays(&accounts, tier.account.as_deref())
+    };
+    let translating = state
+        .policy
+        .get()
+        .tiers()
+        .iter()
+        .any(|tier| !relaying(tier));
+    let relayed = state.policy.get().tiers().iter().any(&relaying);
+
     // §7.2 — the real window, where the catalog knows it.
     //
     // The client cannot recognize these model ids, so it assumes 200,000 and
@@ -414,11 +429,19 @@ pub fn environment(state: &ControlState) -> Vec<(String, String)> {
     // them all and the smallest is the only one that cannot overrun. The
     // effective window rather than the raw one, for the same reason the guard
     // uses it (§7.0): what is left after instructions, tools and output.
+    //
+    // Not stated at all once any tier is relayed (§7.2). The client recognizes
+    // those ids itself, this catalog is not their menu, and one variable
+    // governs every tier — so the figure that covers a translated tier would
+    // also govern a relayed one, where nothing else checks it: the translating
+    // path has this proxy's own window guard behind it and the relay path has
+    // none.
     if let Some(window) = state
         .policy
         .get()
         .tiers()
         .iter()
+        .filter(|_| !relayed)
         .filter_map(|tier| catalog.get(&tier.model))
         .filter_map(crate::catalog::Model::effective_window)
         .min()
@@ -459,10 +482,18 @@ pub fn environment(state: &ControlState) -> Vec<(String, String)> {
         }
     }
 
-    // Inert for ordinary model ids, and set as a one-sided floor: should a
-    // future client classify unknown ids as long-context, the assumption is
-    // pinned down rather than raised (§7.2).
-    variables.push(("CLAUDE_CODE_DISABLE_1M_CONTEXT".to_owned(), "1".to_owned()));
+    // Load-bearing for an id the client cannot recognize: without it the client
+    // appends `[1m]` and assumes four times the context the model has (§7.2).
+    //
+    // Omitted where every tier is relayed. The flag also strips
+    // `context-1m-2025-08-07` from the beta list the client sends, so on that
+    // path it denies an entitlement the account may hold, and there is no
+    // unrecognized id left for it to protect. A split mapping keeps it: losing
+    // an entitlement is a smaller session than it could have been, while a
+    // fabricated million-token window is a session that overruns.
+    if translating {
+        variables.push(("CLAUDE_CODE_DISABLE_1M_CONTEXT".to_owned(), "1".to_owned()));
+    }
     variables
 }
 

@@ -3812,3 +3812,217 @@ async fn a_relay_bound_tier_is_not_reported_as_a_withheld_model() {
         "the first provider's catalog does not speak for a relayed id"
     );
 }
+
+/// A daemon whose `env` answers for exactly this mapping and these accounts.
+///
+/// Built by hand rather than through the harness because the cases below turn
+/// on which provider each tier's account is on, and that is the one thing the
+/// harness fixes at start.
+async fn env_for(
+    dir: &tempfile::TempDir,
+    tiers: Vec<ResolvedTier>,
+    accounts: impl Fn(&FileStore),
+) -> Value {
+    let store = Arc::new(FileStore::new(dir.path().join("credentials.json")));
+    accounts(&store);
+    let state = ControlState {
+        port: 8787,
+        policy: Arc::new(proxenos::policy::Policy::new(
+            proxenos::policy::Snapshot::new(
+                tiers,
+                None,
+                proxenos::config::CrossAccountTiers::Permitted,
+            ),
+        )),
+        catalog: Arc::new(CatalogSource::fixed(
+            Catalog::parse(
+                r#"{"data":[{"id":"gpt-5.6-terra","context_window":272000},
+                            {"id":"gpt-5.4-mini","context_window":200000}]}"#,
+                95.0,
+            )
+            .unwrap(),
+        )),
+        credentials: store as Arc<dyn AccountStore>,
+        capture: Arc::new(proxenos::recorder::Switches::default()),
+        usage: Arc::new(proxenos::usage::UsageStore::default()),
+        login: Arc::new(proxenos::auth::daemon_login::LoginFlow::default()),
+        config: Arc::new(proxenos::config::Config::default()),
+        shutdown: Arc::new(proxenos::daemon::Shutdown::default()),
+        tokens: None,
+        usage_endpoint: String::new(),
+        sessions: Arc::new(proxenos::session::SessionStore::new()),
+        config_path: None,
+    };
+
+    control::answer(
+        &state,
+        &json!({ "jsonrpc": "2.0", "id": 1, "method": "env" }).to_string(),
+    )
+    .await
+    .result
+    .unwrap()
+}
+
+fn relayed(name: &'static str) -> impl Fn(&FileStore) {
+    move |store: &FileStore| {
+        store
+            .add_key(name, "relay-key-value", Provider::Anthropic)
+            .unwrap();
+        store.select(name).unwrap();
+    }
+}
+
+/// §7.2 — a mapping served entirely by the relay states no window at all.
+///
+/// The client recognizes these ids natively and already knows their windows, so
+/// an override here would replace a real figure with one the first provider's
+/// catalog cannot supply. And `CLAUDE_CODE_DISABLE_1M_CONTEXT` is omitted:
+/// measured, it strips `context-1m-2025-08-07` from the beta list on the wire,
+/// so setting it would deny an entitlement the account may actually hold.
+#[tokio::test]
+async fn an_all_relay_mapping_states_no_window_and_no_long_context_flag() {
+    let dir = tempfile::tempdir().unwrap();
+    let result = env_for(
+        &dir,
+        ["opus", "sonnet", "haiku", "fable"]
+            .into_iter()
+            .map(|tier| ResolvedTier {
+                defaulted: false,
+                account: None,
+                tier,
+                model: "claude-sonnet-5".to_owned(),
+            })
+            .collect(),
+        relayed("relay"),
+    )
+    .await;
+
+    // All three renderings of one variable set: the shell exports, the settings
+    // document, and the list `exec` puts on the child.
+    let shell = render::env_shell(&result);
+    let settings: Value = serde_json::from_str(&render::settings_json(&result)).unwrap();
+    let injected: std::collections::BTreeMap<String, String> =
+        render::variables(&result).into_iter().collect();
+
+    for absent in [
+        "CLAUDE_CODE_MAX_CONTEXT_TOKENS",
+        "CLAUDE_CODE_AUTO_COMPACT_WINDOW",
+        "CLAUDE_CODE_DISABLE_1M_CONTEXT",
+    ] {
+        assert!(!shell.contains(absent), "{absent} in {shell}");
+        assert_eq!(settings["env"][absent], Value::Null, "{absent} in settings");
+        assert!(!injected.contains_key(absent), "{absent} in exec's injects");
+    }
+
+    // The final ids are still handed over, which is the whole point of the
+    // launch surface: the client bakes them in and sends them for the session.
+    assert_eq!(
+        injected
+            .get("ANTHROPIC_DEFAULT_SONNET_MODEL")
+            .map(String::as_str),
+        Some("claude-sonnet-5")
+    );
+    assert!(shell.contains("export ANTHROPIC_DEFAULT_HAIKU_MODEL=claude-sonnet-5"));
+    assert_eq!(
+        settings["env"]["ANTHROPIC_DEFAULT_OPUS_MODEL"],
+        json!("claude-sonnet-5")
+    );
+}
+
+/// §7.2 — a mapping split across both providers states no window either, and
+/// keeps the flag.
+///
+/// The override is global to the client, and only one side of a split mapping
+/// can be right. The window is omitted because a figure taken from the first
+/// provider's catalog would govern the relayed tier too, where nothing checks
+/// it — the translating path has the proxy's own window guard behind it and the
+/// relay path has nothing. The flag is kept for the opposite reason: without it
+/// the client appends `[1m]` to the ids it does not recognize and assumes four
+/// times the context they have.
+#[tokio::test]
+async fn a_mixed_mapping_states_no_window_and_keeps_the_long_context_flag() {
+    let dir = tempfile::tempdir().unwrap();
+    let result = env_for(
+        &dir,
+        vec![
+            ResolvedTier {
+                defaulted: false,
+                account: None,
+                tier: "opus",
+                model: "gpt-5.6-terra".to_owned(),
+            },
+            ResolvedTier {
+                defaulted: false,
+                account: None,
+                tier: "sonnet",
+                model: "gpt-5.6-terra".to_owned(),
+            },
+            ResolvedTier {
+                defaulted: false,
+                account: None,
+                tier: "fable",
+                model: "gpt-5.4-mini".to_owned(),
+            },
+            ResolvedTier {
+                defaulted: false,
+                account: Some("relay".to_owned()),
+                tier: "haiku",
+                model: "claude-haiku-5".to_owned(),
+            },
+        ],
+        |store: &FileStore| {
+            store
+                .add(
+                    &Credentials {
+                        access_token: "serving".to_owned(),
+                        refresh_token: "refresh".to_owned(),
+                        id_token: None,
+                        account_id: Some("acct_serving".to_owned()),
+                        expires_at: Some(u64::MAX / 2),
+                    },
+                    None,
+                )
+                .unwrap();
+            store
+                .add_key("relay", "relay-key-value", Provider::Anthropic)
+                .unwrap();
+            store.select("acct_serving").unwrap();
+        },
+    )
+    .await;
+
+    let shell = render::env_shell(&result);
+    let settings: Value = serde_json::from_str(&render::settings_json(&result)).unwrap();
+    let injected: std::collections::BTreeMap<String, String> =
+        render::variables(&result).into_iter().collect();
+
+    for absent in [
+        "CLAUDE_CODE_MAX_CONTEXT_TOKENS",
+        "CLAUDE_CODE_AUTO_COMPACT_WINDOW",
+    ] {
+        assert!(!shell.contains(absent), "{absent} in {shell}");
+        assert_eq!(settings["env"][absent], Value::Null, "{absent} in settings");
+        assert!(!injected.contains_key(absent), "{absent} in exec's injects");
+    }
+
+    assert!(
+        shell.contains("export CLAUDE_CODE_DISABLE_1M_CONTEXT=1"),
+        "{shell}"
+    );
+    assert_eq!(
+        settings["env"]["CLAUDE_CODE_DISABLE_1M_CONTEXT"],
+        json!("1")
+    );
+    assert_eq!(
+        injected
+            .get("CLAUDE_CODE_DISABLE_1M_CONTEXT")
+            .map(String::as_str),
+        Some("1")
+    );
+    assert_eq!(
+        injected
+            .get("ANTHROPIC_DEFAULT_HAIKU_MODEL")
+            .map(String::as_str),
+        Some("claude-haiku-5")
+    );
+}

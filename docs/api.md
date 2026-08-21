@@ -295,11 +295,18 @@ carry the smallest across the mapped tiers. The client will warn that its
 200,000 limit is not enforced; that is expected, because the real window is
 larger and using it is the point.
 
+**A mapping with any tier on the second provider states no window at all**, and
+one served entirely by that provider omits `CLAUDE_CODE_DISABLE_1M_CONTEXT` too
+— the client recognizes those ids by itself, and both variables would replace
+what it knows with a figure this catalog cannot supply (`proxy-behavior.md`
+§7.2). The tier variables are unchanged: they still carry the final ids.
+
 All four tier variables are always emitted. `WebFetch` runs on the haiku tier, so
 an unmapped haiku breaks it in a way that looks unrelated to tier mapping.
 
 `CLAUDE_CODE_DISABLE_1M_CONTEXT` is not inert: without it this client appends
-`[1m]` to an unrecognized id and assumes a million tokens — see
+`[1m]` to an unrecognized id and assumes a million tokens, and it also strips
+`context-1m-2025-08-07` from the beta list the client sends — see
 `proxy-behavior.md` §7.2.
 
 **Shell exports carry routing, plus the connector switch.** When

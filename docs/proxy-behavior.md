@@ -825,10 +825,37 @@ Measured: without it, this client appends `[1m]` to the unrecognized id and
 assumes a million tokens. With it, the id stays plain. That is the four-times
 overestimate this section warns about, and the flag is what prevents it.
 
+**The same flag governs a wire header.** Measured on ingress capture: without it
+the client adds `context-1m-2025-08-07` to `anthropic-beta`; with it the beta is
+absent. On an id the client does not recognize that costs nothing, because the
+entitlement is not the proxy's to claim. On a relayed id (§9) it is an
+entitlement the account may actually hold, and the flag denies it.
+
+So the flag is set **only where at least one tier still translates**. A mapping
+served entirely by the relay omits it: there is no unrecognized id left for it to
+protect, and every id it would affect is one the client knows. A split mapping
+keeps it, because the two costs are not symmetrical — a denied entitlement makes
+a session smaller than it could have been, while a fabricated million-token
+window makes one that overruns.
+
 Where the catalog knows the window, the environment also states it:
 `CLAUDE_CODE_MAX_CONTEXT_TOKENS` and `CLAUDE_CODE_AUTO_COMPACT_WINDOW`, both set
 to the effective window, and to the smallest across the mapped tiers since one
 value covers them all.
+
+**Neither is stated once any tier is relayed** (§9.1). The client recognizes
+those ids natively and knows their windows already, and the catalog this figure
+comes from is not their menu — so on a mapping served entirely by the relay an
+override could only replace a real window with an invented one.
+
+A split mapping states neither as well, and that is the one place this costs
+something: the tiers that still translate fall back to the client's own 200,000
+assumption and compact early. It buys the guarantee that matters more. One
+variable governs every tier, so a figure taken from the first provider's catalog
+would govern the relayed tiers too — and those are the tiers with nothing behind
+them, since this proxy's own window guard sits on the translating path and the
+relay path has none (§9). An early compaction wastes context on the side that is
+still guarded; a late one fails the session on the side that is not.
 
 Both are needed. Stating the window alone is worse than saying nothing: the
 client stops applying its own 200,000 assumption and, not recognizing the model,
