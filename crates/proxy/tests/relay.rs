@@ -94,6 +94,9 @@ async fn upstream(refuse: bool) -> (String, Recorded) {
             }
         }),
     );
+    // The stub imposes no limit of its own, so a body-size assertion measures
+    // the ingress under test rather than this stand-in for the backend.
+    let app = app.layer(axum::extract::DefaultBodyLimit::disable());
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     tokio::spawn(async move {
@@ -256,6 +259,54 @@ async fn the_relay_forwards_the_ingress_body_byte_for_byte() {
     let seen = seen.lock().unwrap();
     assert_eq!(seen.bodies.len(), 1);
     assert_eq!(seen.bodies[0], CLIENT_BODY);
+}
+
+/// A turn larger than the body extractor's 2 MB default reaches the backend
+/// rather than being refused at the door.
+///
+/// A real client's turn — a full system prompt and a large tool set — runs well
+/// past 2 MB, and the 413 the ingress returned was not even an Anthropic error
+/// shape: the client read it as retryable and looped forever, the turn never
+/// reaching the backend. A small body could never catch this, which is why this
+/// one is deliberately over the limit.
+#[tokio::test]
+async fn a_turn_over_the_default_body_limit_is_relayed() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = store_with_a_relay_account(&dir);
+
+    let (base, seen) = daemon(
+        store,
+        vec![tier("sonnet", "claude-sonnet-5", Some("relay"))],
+        false,
+    )
+    .await;
+
+    // Comfortably past axum's 2 MB default for the body extractor.
+    let filler = "x".repeat(3 * 1024 * 1024);
+    let body = format!(
+        r#"{{"model":"claude-sonnet-5","messages":[{{"role":"user","content":"{filler}"}}]}}"#
+    );
+
+    let response = reqwest::Client::new()
+        .post(format!("{base}/v1/messages"))
+        .header("content-type", "application/json")
+        .header("authorization", "Bearer placeholder")
+        .header("anthropic-version", "2023-06-01")
+        .body(body.clone())
+        .send()
+        .await
+        .expect("the ingress should answer");
+
+    assert_eq!(
+        response.status(),
+        200,
+        "a body over 2 MB must reach the backend, not be refused at the door"
+    );
+    assert_eq!(
+        seen.lock().unwrap().bodies[0].len(),
+        body.len(),
+        "the whole body was relayed, byte for byte"
+    );
 }
 
 /// **Build 3, the other direction.** What upstream streamed is what the client

@@ -39,6 +39,13 @@ provider's live endpoint (`proxy-behavior.md` §9, `roadmap.md` §L).
 than retrying or selecting another port. A second daemon on a different port
 would be silently unused by a client already configured for the first.
 
+The ingress imposes **no size limit** on a request body. A real turn — a full
+system prompt and a large tool set — runs past the extractor's 2 MB default, and
+the backend's own limit is the real one. A 413 from the door is worse than a
+large body: it is not an Anthropic error shape, so the client reads it as
+retryable and loops on it, the turn never reaching the backend. The daemon is
+loopback-only, so the only sender is the user's own client.
+
 ### 1.1 Errors
 
 Every failure — including transport and credential failures — returns an

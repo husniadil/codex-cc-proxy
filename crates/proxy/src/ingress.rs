@@ -9,6 +9,7 @@ use crate::upstream::Transport;
 use axum::Json;
 use axum::Router;
 use axum::body::Body;
+use axum::extract::DefaultBodyLimit;
 use axum::extract::State;
 use axum::http::HeaderValue;
 use axum::http::StatusCode;
@@ -99,6 +100,15 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/messages/count_tokens", post(count_tokens))
         .route("/v1/models", get(models))
         .fallback(not_found)
+        // No size ceiling on a turn. The body extractor defaults to 2 MB, and a
+        // real client's turn — a full system prompt and a large tool set — runs
+        // well past that. The refusal was worse than the size: a plain-text 413
+        // from the extractor is not an Anthropic error shape, so the client read
+        // it as a retryable failure and looped on it, the turn never reaching
+        // the backend. The backend's own limit is the real one; the daemon is
+        // loopback-only, so nothing but the user's own client can send here
+        // anyway (§6).
+        .layer(DefaultBodyLimit::disable())
         .with_state(state)
 }
 
