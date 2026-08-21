@@ -262,14 +262,25 @@ async fn store_key(
 /// Best effort by design. No daemon running is the ordinary case for a login,
 /// and it is not a failure of one.
 async fn hand_over_to(name: &str) {
+    let path = control::default_path();
     let told = control::call(
-        &control::default_path(),
+        &path,
         "accounts.select",
         Some(serde_json::json!({ "account": name })),
     )
     .await;
-    if told.is_ok() {
-        println!("The running daemon now serves turns as {name}.");
+    match told {
+        Ok(_) => println!("The running daemon now serves turns as {name}."),
+        // A refusal is worth saying. A switch can now be refused for a reason
+        // the operator can fix — a mapping this account cannot serve — and
+        // staying quiet would leave a daemon serving the previous account with
+        // nothing said about why. Only where there is a daemon to have refused:
+        // no socket is no daemon, which is an ordinary state after a login and
+        // not something to report as a failure.
+        Err(error) if path.exists() => {
+            eprintln!("The running daemon is still serving another account: {error}");
+        }
+        Err(_) => {}
     }
 }
 

@@ -461,7 +461,7 @@ A Unix domain socket, or a named pipe on Windows, carrying JSON-RPC:
 | `status` | connection state, whether the grant has been **refused**, plan and which source reported it, the tier mapping and the effort ceiling, any mapped model the catalog withholds, whether the catalog was authoritative, the client policy in effect, and the build and `instance` serving the socket | yes |
 | `accounts.forget` | forgets one account — the selected one, or `{"account": name}` — and answers with the name it cleared and the one serving turns afterwards; the rest stay usable, and an idle account's removal leaves the serving grant's quota alone | no — was `disconnect` |
 | `accounts` | every stored account, what kind of credential each holds, and which one serves turns; no tokens | no — v0.3 |
-| `accounts.select` | `{"account": name}`, the account every following turn is made as, and whether the catalog was refetched for it | no — v0.3 |
+| `accounts.select` | `{"account": name}`, the account every following turn is made as, whether the catalog was refetched for it, and the tier mapping now in force; refuses, and moves nothing, where that account's mapping names a model its catalog does not have | no — v0.3 |
 | `accounts.rename` | `{"account": from, "name": to}`, the name this daemon calls an account by; the grant and the account id are untouched | no — v0.3 |
 | `models` | catalog, whether it is the fallback list, and whether it was fetched for an account other than the one serving turns | yes |
 | `tiers.get` | tier mapping | yes |
@@ -516,6 +516,18 @@ argument as the whole mapping would let a caller that knows about one tier
 silently unset the three it did not mention. Every set is validated against the
 catalog exactly as startup validates it — that check is why this daemon owns the
 mapping rather than a front-end, since it is the side holding the catalog.
+
+**A selection re-resolves the mapping, and can be refused.** The account's own
+tiers and ceiling (§4) are resolved and validated against the catalog fetched
+for it, before anything else moves; a mapping naming a model that account's
+catalog does not have refuses the switch and leaves the daemon serving what it
+was, catalog included. The answer carries the mapping now in force, because
+after a switch it is not necessarily the one that was routing turns a moment
+ago. Validation is skipped where the catalog cannot speak for this account — a
+fallback list, or a refetch that failed and left the previous account's list in
+force — for the reason startup skips it: a fetch that did not answer is not
+evidence that a model went away. There `catalog_stale` says the list is not
+this account's.
 
 **A selection moves what routes turns.** `accounts.select` writes to the store
 the ingress authenticates through, so the next turn is made as the account

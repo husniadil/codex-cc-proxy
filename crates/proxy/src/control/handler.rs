@@ -749,7 +749,33 @@ async fn select_account(state: &ControlState, params: Option<&Value>) -> Result<
             ProxyError::invalid_request("name the account to select: {\"account\": \"...\"}")
         })?;
 
+    // What to go back to if the account cannot be served. Read before the
+    // switch, because after it there is nothing left that remembers.
+    let previous = serving_name(state);
+
     state.credentials.select(name)?;
+
+    // The catalog first, because the mapping is validated against it and it is
+    // the new account's menu that decides (§7.0).
+    let catalog_refreshed = refresh_catalog(state).await;
+
+    if let Err(refusal) = put_mapping_in_force(state, name) {
+        // Back where it was, catalog included. A daemon left serving an account
+        // whose every turn is dispatched to a model the backend will not answer
+        // for fails one turn later, upstream, saying nothing about tier mapping.
+        if let Some(previous) = previous
+            && state.credentials.select(&previous).is_ok()
+        {
+            refresh_catalog(state).await;
+            return Err(refusal);
+        }
+        return Err(ProxyError::invalid_request(format!(
+            "{refusal}\n\nThe previous account could not be restored, so this daemon is \
+             now serving `{name}` with a mapping it cannot serve. Fix the mapping, or \
+             select another account."
+        )));
+    }
+
     state.usage.clear();
     // The conversations already bound to the previous account. Each pays a
     // full upload on its next turn, which is what §4.3 resolves every
@@ -764,8 +790,58 @@ async fn select_account(state: &ControlState, params: Option<&Value>) -> Result<
         // a fetch that failed leaves the previous account's list in force, and
         // everything downstream of it — the models offered, the efforts
         // allowed, what `tiers.set` will accept — still describes that account.
-        "catalog_refreshed": refresh_catalog(state).await,
+        "catalog_refreshed": catalog_refreshed,
+        // The mapping this account is served by, which is not necessarily the
+        // one that was routing turns a moment ago.
+        "tiers": tier_map(state),
     }))
+}
+
+/// Resolve one account's mapping, check the catalog can serve it, and put it in
+/// force.
+///
+/// A catalog is one account's menu (§7.0), so the mapping that was routing
+/// turns a moment ago describes the account just moved off.
+///
+/// **Validated only against a catalog that describes this account.** Two things
+/// stop it otherwise, and both are §7.1: a fallback list is not the backend's
+/// answer, which `validate` skips on its own; and a refetch that failed leaves
+/// the previous account's list in force, which would refuse this account's
+/// mapping over a menu belonging to somebody else. Where that happens the
+/// switch goes ahead and `catalog_stale` says the list is not this account's,
+/// which is the honest report and the documented one.
+fn put_mapping_in_force(state: &ControlState, account: &str) -> Result<(), ProxyError> {
+    let tiers = state.config.tiers_for(Some(account)).resolve()?;
+    let ceiling = state.config.effort_ceiling_for(Some(account))?;
+
+    let catalog = state.catalog.current();
+    if !catalog.is_stale_for(serving_account(state).as_deref()) {
+        catalog.validate(
+            &tiers
+                .iter()
+                .map(|tier| tier.model.clone())
+                .collect::<Vec<_>>(),
+        )?;
+    }
+
+    state.policy.set_tiers(tiers);
+    state.policy.set_effort_ceiling(ceiling);
+    Ok(())
+}
+
+/// The name the store files the account serving turns under.
+///
+/// The name rather than the account id, because that is what an account section
+/// in the configuration is keyed by and what every account verb takes — and a
+/// key account has no id at all.
+fn serving_name(state: &ControlState) -> Option<String> {
+    state
+        .credentials
+        .accounts()
+        .ok()?
+        .into_iter()
+        .find(|account| account.selected)
+        .map(|account| account.name)
 }
 
 /// Fetch the catalog again for the account now serving turns.

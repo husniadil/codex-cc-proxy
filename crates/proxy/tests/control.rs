@@ -97,7 +97,18 @@ impl Harness {
         let policy = Arc::new(codex_cc_proxy::policy::Policy::new(
             codex_cc_proxy::policy::Snapshot::new(tiers(), None),
         ));
-        let config = Arc::new(codex_cc_proxy::config::Config::default());
+        // The mapping matches this harness's catalog. A switch re-resolves the
+        // mapping from configuration, so a default that names models the
+        // catalog does not have would make every switch refuse itself.
+        let config = Arc::new(codex_cc_proxy::config::Config {
+            tiers: codex_cc_proxy::config::Tiers {
+                opus: Some("gpt-5.6-terra".to_owned()),
+                sonnet: Some("gpt-5.6-terra".to_owned()),
+                haiku: Some("gpt-5.6-terra".to_owned()),
+                fable: Some("gpt-5.6-terra".to_owned()),
+            },
+            ..codex_cc_proxy::config::Config::default()
+        });
         let shutdown = Arc::new(codex_cc_proxy::daemon::Shutdown::default());
         let sessions = Arc::new(codex_cc_proxy::session::SessionStore::new());
 
@@ -188,6 +199,18 @@ impl Harness {
         let catalog = r#"{"data":[{"id":"gpt-5.6-terra","context_window":272000},
                                   {"id":"gpt-5.4-mini","context_window":200000}]}"#;
         harness.respawn(catalog, "gpt-5.4-mini").await
+    }
+
+    /// The same harness, whose daemon started from this configuration — for
+    /// the tests about a mapping that belongs to one account.
+    async fn with_configuration(self, config: codex_cc_proxy::config::Config) -> Self {
+        let harness = Self {
+            config: Arc::new(config),
+            ..self
+        };
+        let catalog = r#"{"data":[{"id":"gpt-5.6-terra","context_window":272000},
+                                  {"id":"gpt-5.4-mini","context_window":200000}]}"#;
+        harness.respawn(catalog, "gpt-5.6-terra").await
     }
 
     /// The same harness, whose catalog was fetched for the named account.
@@ -2495,6 +2518,31 @@ async fn the_catalog_says_when_it_was_fetched_for_another_account() {
     );
 }
 
+/// A configuration mapping every tier of each named account onto the one model
+/// that account's catalog offers.
+///
+/// The stub answers a different model per account, which is the situation this
+/// exists for: two accounts with disjoint menus cannot share one mapping.
+fn mapping_per_account(accounts: &[&str]) -> codex_cc_proxy::config::Config {
+    let mut config = codex_cc_proxy::config::Config::default();
+    for account in accounts {
+        let model = format!("model-for-{account}");
+        config.accounts.insert(
+            (*account).to_owned(),
+            codex_cc_proxy::config::AccountConfig {
+                tiers: codex_cc_proxy::config::Tiers {
+                    opus: Some(model.clone()),
+                    sonnet: Some(model.clone()),
+                    haiku: Some(model.clone()),
+                    fable: Some(model),
+                },
+                effort: None,
+            },
+        );
+    }
+    config
+}
+
 /// A switch refetches the catalog for the account now serving.
 ///
 /// The list is one account's menu, so after a switch it has to be asked for
@@ -2504,7 +2552,10 @@ async fn the_catalog_says_when_it_was_fetched_for_another_account() {
 #[tokio::test]
 async fn selecting_an_account_refetches_the_catalog_as_that_account() {
     let catalogs = CatalogServer::start().await;
-    let harness = Harness::start().await;
+    let harness = Harness::start()
+        .await
+        .with_configuration(mapping_per_account(&["acct_one", "acct_two"]))
+        .await;
     harness
         .store
         .add(&grant("acct_one", "a-one"), None)
@@ -2878,4 +2929,112 @@ async fn a_thin_grant_is_not_rendered_as_a_key() {
     let rendered = render::accounts(&harness.call("accounts").await.unwrap());
     assert!(rendered.contains("mystery"), "{rendered}");
     assert!(!rendered.contains("key"), "{rendered}");
+}
+
+/// A configuration whose named account maps a tier to `model`.
+fn mapping_for(account: &str, model: &str) -> codex_cc_proxy::config::Config {
+    let mut config = codex_cc_proxy::config::Config::default();
+    // The shared table names a model this harness's catalog has, so what the
+    // account does not override still validates — the assertion is about the
+    // one tier it does.
+    config.tiers = codex_cc_proxy::config::Tiers {
+        opus: Some("gpt-5.6-terra".to_owned()),
+        sonnet: Some("gpt-5.6-terra".to_owned()),
+        haiku: Some("gpt-5.6-terra".to_owned()),
+        fable: Some("gpt-5.6-terra".to_owned()),
+    };
+    config.accounts.insert(
+        account.to_owned(),
+        codex_cc_proxy::config::AccountConfig {
+            tiers: codex_cc_proxy::config::Tiers {
+                opus: Some(model.to_owned()),
+                ..codex_cc_proxy::config::Tiers::default()
+            },
+            effort: Some("low".to_owned()),
+        },
+    );
+    config
+}
+
+/// A switch puts the account's own mapping in force.
+///
+/// A catalog is one account's menu, so the mapping that was routing turns a
+/// moment ago describes the account just moved off. Leaving it in place is how
+/// a switch ends with every turn dispatched to a model this account is not
+/// offered.
+#[tokio::test]
+async fn selecting_an_account_puts_its_own_mapping_in_force() {
+    let harness = Harness::start()
+        .await
+        .with_configuration(mapping_for("acct_one", "gpt-5.4-mini"))
+        .await;
+    harness
+        .store
+        .add(&grant("acct_one", "a-one"), None)
+        .unwrap();
+    harness
+        .store
+        .add(&grant("acct_two", "a-two"), None)
+        .unwrap();
+
+    harness
+        .call_with("accounts.select", json!({ "account": "acct_one" }))
+        .await
+        .unwrap();
+
+    let opus = harness
+        .policy
+        .get()
+        .tiers()
+        .iter()
+        .find(|tier| tier.tier == "opus")
+        .unwrap()
+        .model
+        .clone();
+    assert_eq!(
+        opus, "gpt-5.4-mini",
+        "the selected account's mapping did not reach what routes turns"
+    );
+    assert_eq!(
+        harness.policy.get().effort_ceiling(),
+        Some(codex_cc_proxy_core::responses::Effort::Low),
+        "the selected account's ceiling did not reach what routes turns"
+    );
+}
+
+/// A switch whose mapping the target account cannot serve is refused, and
+/// leaves the daemon exactly where it was.
+///
+/// The alternative is a daemon serving an account whose every turn is
+/// dispatched to a model the backend will not answer for — a failure that
+/// arrives one turn later, upstream, saying nothing about tier mapping.
+#[tokio::test]
+async fn a_switch_the_target_account_cannot_serve_is_refused() {
+    let harness = Harness::start()
+        .await
+        .with_configuration(mapping_for("acct_one", "a-model-this-account-has-not"))
+        .await;
+    harness
+        .store
+        .add(&grant("acct_one", "a-one"), None)
+        .unwrap();
+    harness
+        .store
+        .add(&grant("acct_two", "a-two"), None)
+        .unwrap();
+
+    let error = harness
+        .call_with("accounts.select", json!({ "account": "acct_one" }))
+        .await
+        .unwrap_err();
+
+    assert!(
+        error.contains("a-model-this-account-has-not"),
+        "the refusal should name the model: {error}"
+    );
+    assert_eq!(
+        harness.store.load().unwrap().unwrap().access_token,
+        "a-two",
+        "a refused switch must leave the store where it was"
+    );
 }

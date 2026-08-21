@@ -735,6 +735,17 @@ the shared tables answer for everything it does not state. Keyed by the name the
 store files it under, because that is what every account verb takes and a key
 account carries no id to be named by.
 
+**A switch re-resolves the mapping and can be refused by it.** Selecting an
+account resolves that account's tiers and ceiling and validates them against
+the catalog fetched for it, before anything else moves. A mapping naming a
+model that account's catalog does not have refuses the switch and leaves the
+daemon where it was, catalog included — the alternative is a daemon serving an
+account whose every turn is dispatched to a model the backend will not answer
+for, which fails one turn later, upstream, saying nothing about tier mapping.
+Validation is skipped where the catalog cannot speak for the account being
+selected, which is the fallback list and a refetch that failed; refusing a
+mapping over somebody else's menu would be worse than not checking.
+
 An account's ceiling **replaces** the shared one rather than being capped by it.
 Capping would make an account section unable to raise, and an operator who
 writes a different ceiling for one account means that one. The cap that is not
