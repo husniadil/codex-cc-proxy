@@ -130,6 +130,7 @@ pub async fn dispatch(
         "login.cancel" => Ok(json!({ "cancelled": state.login.cancel() })),
         "tiers.set" => set_tiers(state, params),
         "effort.set" => set_effort(state, params),
+        "cross_account_tiers.set" => set_cross_account(state, params),
         "usage.refresh" => refresh_usage(state).await,
         "doctor" => Err(ProxyError::invalid_request(format!(
             "`{method}` is not implemented yet"
@@ -496,7 +497,8 @@ fn set_tiers(state: &ControlState, params: Option<&Value>) -> Result<Value, Prox
         ));
     }
 
-    let mut tiers = state.policy.get().tiers().to_vec();
+    let snapshot = state.policy.get();
+    let mut tiers = snapshot.tiers().to_vec();
 
     // Each value in the same two forms the configuration file takes: a model
     // id, or `{ account, model }` pinning the tier to another account.
@@ -536,8 +538,10 @@ fn set_tiers(state: &ControlState, params: Option<&Value>) -> Result<Value, Prox
 
         // The write-time half of the consent gate. The startup half refuses
         // the file; this refuses the socket, so a front-end cannot write what
-        // a restart would then refuse to load.
-        if pin.is_some() && !state.config.cross_account_tiers {
+        // a restart would then refuse to load. Read from the live policy, not
+        // the startup configuration: consent granted over the socket applies
+        // to the next call, not the next restart.
+        if pin.is_some() && snapshot.cross_account() == crate::config::CrossAccountTiers::Refused {
             return Err(ProxyError::invalid_request(format!(
                 "pinning `{name}` to another account routes this client's traffic across \
                  accounts. That is a decision the operator owns: set \
@@ -1084,6 +1088,61 @@ async fn select_account(state: &ControlState, params: Option<&Value>) -> Result<
         // one that was routing turns a moment ago.
         "tiers": tier_map(state),
     }))
+}
+
+/// `cross_account_tiers.set` — grant or revoke consent for pinned tiers.
+///
+/// **Always persisted.** The other setters persist on request because a
+/// front-end trying something is not an operator changing what the daemon is;
+/// consent is the operator changing what the daemon is, by definition, and a
+/// grant that evaporated at the next restart would leave the file refusing a
+/// mapping the operator explicitly permitted.
+///
+/// Written before it is applied, like every persisted change here: a write
+/// that fails leaves the daemon as it was, so the error is the whole story.
+fn set_cross_account(state: &ControlState, params: Option<&Value>) -> Result<Value, ProxyError> {
+    let enabled = params
+        .and_then(|params| params.get("enabled"))
+        .and_then(Value::as_bool)
+        .ok_or_else(|| {
+            ProxyError::invalid_request("`cross_account_tiers.set` needs `enabled`: true or false")
+        })?;
+
+    // Revoking while a pin is in force would write a file this daemon will
+    // refuse to start from — a refusal the operator only meets at the next
+    // restart, with no way back but an edit. Refused now instead, naming what
+    // still needs the consent.
+    if !enabled {
+        let pinned: Vec<&str> = state
+            .policy
+            .get()
+            .tiers()
+            .iter()
+            .filter(|tier| tier.account.is_some())
+            .map(|tier| tier.tier)
+            .collect();
+        if !pinned.is_empty() {
+            return Err(ProxyError::invalid_request(format!(
+                "consent cannot be revoked while {} still pin{} another account; point the \
+                 tier{} back at a model first",
+                pinned.join(", "),
+                if pinned.len() == 1 { "s" } else { "" },
+                if pinned.len() == 1 { "" } else { "s" },
+            )));
+        }
+    }
+
+    let persisted = write_config(state, |document| {
+        crate::config::edit::set_cross_account_tiers(document, enabled)
+    })?;
+
+    state.policy.set_cross_account(if enabled {
+        crate::config::CrossAccountTiers::Permitted
+    } else {
+        crate::config::CrossAccountTiers::Refused
+    });
+
+    Ok(json!({ "cross_account_tiers": enabled, "persisted": persisted }))
 }
 
 /// Resolve one account's mapping, check the catalog can serve it, and put it in

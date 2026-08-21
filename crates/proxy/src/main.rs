@@ -928,7 +928,11 @@ async fn run_with(args: RunArgs, capture: Capture) -> Result<()> {
     // same value — so a change moves what actually happens rather than only
     // what `status` reports.
     let policy = Arc::new(proxenos::policy::Policy::new(
-        proxenos::policy::Snapshot::new(tiers.clone(), effort_ceiling),
+        proxenos::policy::Snapshot::new(
+            tiers.clone(),
+            effort_ceiling,
+            config.cross_account_policy(),
+        ),
     ));
 
     // One signal, shared: asking over the socket has to move this process, not

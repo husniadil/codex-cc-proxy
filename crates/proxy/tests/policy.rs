@@ -26,7 +26,11 @@ fn tier(name: &'static str, model: &str) -> ResolvedTier {
 /// project refuses everywhere else.
 #[test]
 fn the_routing_table_always_matches_the_tiers() {
-    let policy = Policy::new(Snapshot::new(vec![tier("opus", "a")], None));
+    let policy = Policy::new(Snapshot::new(
+        vec![tier("opus", "a")],
+        None,
+        proxenos::config::CrossAccountTiers::Refused,
+    ));
 
     policy.set_tiers(vec![tier("opus", "b"), tier("sonnet", "c")]);
 
@@ -56,7 +60,11 @@ fn the_routing_table_always_matches_the_tiers() {
 #[test]
 fn a_concurrent_set_never_reverts_the_field_it_did_not_touch() {
     for attempt in 0..40 {
-        let policy = Arc::new(Policy::new(Snapshot::new(vec![tier("opus", "a")], None)));
+        let policy = Arc::new(Policy::new(Snapshot::new(
+            vec![tier("opus", "a")],
+            None,
+            proxenos::config::CrossAccountTiers::Refused,
+        )));
         let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
 
         let mapping = {

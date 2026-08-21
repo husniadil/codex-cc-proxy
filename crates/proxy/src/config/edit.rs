@@ -177,6 +177,53 @@ pub fn set_effort(
     Ok(with_trailing_newline(lines.join("\n")))
 }
 
+/// Set or withdraw the cross-account consent key, in the text of the file.
+///
+/// A top-level bare key with the same placement hazard as the shared `effort`:
+/// written below a table header it becomes that table's key, which parses,
+/// which nothing reads, and which leaves the daemon refusing a mapping the
+/// operator explicitly permitted. Withdrawing comments the line out rather
+/// than deleting it, so the warning above it still has something to warn about.
+pub fn set_cross_account_tiers(document: &str, enabled: bool) -> Result<String, ProxyError> {
+    let mut lines: Vec<String> = document.lines().map(str::to_owned).collect();
+
+    let first_table = lines
+        .iter()
+        .position(|line| line.trim_start().starts_with('['))
+        .unwrap_or(lines.len());
+
+    // A commented-out key counts — the shipped file ships it that way, and a
+    // second live line would leave the commented one looking like the setting.
+    let existing = lines
+        .get(..first_table)
+        .unwrap_or_default()
+        .iter()
+        .position(|line| {
+            let bare = line.trim_start().trim_start_matches('#').trim_start();
+            is_assignment_to(bare, "cross_account_tiers")
+        });
+
+    let line = if enabled {
+        "cross_account_tiers = true".to_owned()
+    } else {
+        "# cross_account_tiers = true".to_owned()
+    };
+
+    match existing {
+        Some(index) => {
+            if let Some(existing) = lines.get_mut(index) {
+                *existing = line;
+            }
+        }
+        None => {
+            lines.insert(first_table, line);
+            lines.insert(first_table + 1, String::new());
+        }
+    }
+
+    Ok(with_trailing_newline(lines.join("\n")))
+}
+
 /// Whether a line assigns to this key, ignoring how it is spaced.
 fn is_assignment_to(line: &str, key: &str) -> bool {
     let trimmed = line.trim_start();

@@ -99,7 +99,11 @@ impl Harness {
         let switches = Arc::new(proxenos::recorder::Switches::default());
         let usage = Arc::new(proxenos::usage::UsageStore::default());
         let policy = Arc::new(proxenos::policy::Policy::new(
-            proxenos::policy::Snapshot::new(tiers(), None),
+            proxenos::policy::Snapshot::new(
+                tiers(),
+                None,
+                proxenos::config::CrossAccountTiers::Refused,
+            ),
         ));
         // The mapping matches this harness's catalog. A switch re-resolves the
         // mapping from configuration, so a default that names models the
@@ -336,8 +340,10 @@ impl Harness {
             .collect();
 
         let path = self._dir.path().join("control-2.sock");
+        // Seeded from the configuration this daemon "started from", exactly
+        // as startup seeds the real one.
         let policy = Arc::new(proxenos::policy::Policy::new(
-            proxenos::policy::Snapshot::new(tiers, None),
+            proxenos::policy::Snapshot::new(tiers, None, self.config.cross_account_policy()),
         ));
         let state = ControlState {
             port: 8787,
@@ -648,7 +654,11 @@ async fn an_unknown_window_is_reported_as_null() {
     let state = ControlState {
         port: 1,
         policy: Arc::new(proxenos::policy::Policy::new(
-            proxenos::policy::Snapshot::new(tiers(), None),
+            proxenos::policy::Snapshot::new(
+                tiers(),
+                None,
+                proxenos::config::CrossAccountTiers::Refused,
+            ),
         )),
         catalog: Arc::new(CatalogSource::fixed(Catalog::fallback())),
         credentials: Arc::new(FileStore::new(dir.path().join("c.json"))),
@@ -798,7 +808,11 @@ async fn a_malformed_request_is_reported_without_closing_the_socket() {
     let state = ControlState {
         port: 1,
         policy: Arc::new(proxenos::policy::Policy::new(
-            proxenos::policy::Snapshot::new(tiers(), None),
+            proxenos::policy::Snapshot::new(
+                tiers(),
+                None,
+                proxenos::config::CrossAccountTiers::Refused,
+            ),
         )),
         catalog: Arc::new(CatalogSource::fixed(Catalog::fallback())),
         credentials: Arc::new(FileStore::new(dir.path().join("c.json"))),
@@ -1153,7 +1167,11 @@ async fn status_says_when_the_catalog_was_unavailable() {
     let state = ControlState {
         port: 8787,
         policy: Arc::new(proxenos::policy::Policy::new(
-            proxenos::policy::Snapshot::new(tiers(), None),
+            proxenos::policy::Snapshot::new(
+                tiers(),
+                None,
+                proxenos::config::CrossAccountTiers::Refused,
+            ),
         )),
         catalog: Arc::new(CatalogSource::fixed(Catalog::fallback())),
         credentials: Arc::new(FileStore::new(dir.path().join("c.json"))),
@@ -1186,7 +1204,11 @@ async fn models_prints_unknown_rather_than_a_number() {
     let state = ControlState {
         port: 1,
         policy: Arc::new(proxenos::policy::Policy::new(
-            proxenos::policy::Snapshot::new(tiers(), None),
+            proxenos::policy::Snapshot::new(
+                tiers(),
+                None,
+                proxenos::config::CrossAccountTiers::Refused,
+            ),
         )),
         catalog: Arc::new(CatalogSource::fixed(Catalog::fallback())),
         credentials: Arc::new(FileStore::new(dir.path().join("c.json"))),
@@ -1259,7 +1281,11 @@ async fn env_states_no_window_when_the_catalog_is_unavailable() {
     let state = ControlState {
         port: 8787,
         policy: Arc::new(proxenos::policy::Policy::new(
-            proxenos::policy::Snapshot::new(tiers(), None),
+            proxenos::policy::Snapshot::new(
+                tiers(),
+                None,
+                proxenos::config::CrossAccountTiers::Refused,
+            ),
         )),
         catalog: Arc::new(CatalogSource::fixed(Catalog::fallback())),
         credentials: Arc::new(FileStore::new(dir.path().join("c.json"))),
@@ -1720,6 +1746,67 @@ async fn a_cross_account_tier_set_with_consent_pins_the_tier() {
     assert!(
         rendered.contains("claude-haiku-4-5 (as spare)"),
         "{rendered}"
+    );
+}
+
+/// Consent is granted over the socket and takes effect without a restart —
+/// the roadmap's rule: a persisted configuration key, written through the
+/// control socket so both the CLI and a front-end can set it deliberately.
+/// Always persisted, because a consent that evaporated at the next restart
+/// would leave the file refusing a mapping the operator explicitly permitted.
+#[tokio::test]
+async fn consent_granted_over_the_socket_takes_effect_without_a_restart() {
+    let harness = Harness::start().await;
+
+    let pinned = json!({ "tiers": { "haiku": { "account": "spare", "model": "m" } } });
+    let refused = harness.call_with("tiers.set", pinned.clone()).await;
+    assert!(refused.is_err(), "consent has not been granted yet");
+
+    let result = harness
+        .call_with("cross_account_tiers.set", json!({ "enabled": true }))
+        .await
+        .unwrap();
+    assert_eq!(result["cross_account_tiers"], json!(true));
+    assert_eq!(result["persisted"], json!(true));
+
+    let written = std::fs::read_to_string(&harness.config_file).unwrap();
+    assert!(
+        written.contains("\ncross_account_tiers = true"),
+        "the consent must be durable: {written}"
+    );
+
+    harness
+        .call_with("tiers.set", pinned)
+        .await
+        .expect("the granted consent applies to the next call, not the next restart");
+}
+
+/// Revoking consent while a pin is in force is refused naming the pin. The
+/// alternative writes a file the daemon will refuse to start from — a refusal
+/// the operator only meets at the next restart, with no way back but an edit.
+#[tokio::test]
+async fn consent_cannot_be_revoked_while_a_pin_is_in_force() {
+    let harness = Harness::start().await;
+    harness
+        .call_with("cross_account_tiers.set", json!({ "enabled": true }))
+        .await
+        .unwrap();
+
+    harness
+        .call_with(
+            "tiers.set",
+            json!({ "tiers": { "haiku": { "account": "spare", "model": "m" } } }),
+        )
+        .await
+        .unwrap();
+
+    let error = harness
+        .call_with("cross_account_tiers.set", json!({ "enabled": false }))
+        .await
+        .unwrap_err();
+    assert!(
+        error.contains("haiku"),
+        "the refusal names the pin still in force: {error}"
     );
 }
 

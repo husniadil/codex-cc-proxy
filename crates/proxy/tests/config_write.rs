@@ -110,6 +110,38 @@ fn a_file_without_the_table_gains_it() {
     assert!(written.contains("port = 8787"));
 }
 
+/// The consent key is a bare key above every table, shipped commented out with
+/// its warning. Granting uncomments it in place; withdrawing comments it back,
+/// so the warning above it keeps something to warn about — and a file that
+/// never mentioned it gains the key above the first table, never inside one.
+#[test]
+fn consent_is_granted_by_uncommenting_the_shipped_key() {
+    let granted = edit::set_cross_account_tiers(proxenos::config::EXAMPLE, true).unwrap();
+    let parsed: toml::Value = toml::from_str(&granted).unwrap();
+    assert_eq!(parsed["cross_account_tiers"].as_bool(), Some(true));
+    assert_eq!(
+        granted.matches("\ncross_account_tiers =").count(),
+        1,
+        "one live line, not a live one beside the commented one:\n{granted}"
+    );
+
+    let withdrawn = edit::set_cross_account_tiers(&granted, false).unwrap();
+    let parsed: toml::Value = toml::from_str(&withdrawn).unwrap();
+    assert!(parsed.get("cross_account_tiers").is_none(), "{withdrawn}");
+    assert!(
+        withdrawn.contains("# cross_account_tiers = true"),
+        "withdrawn is commented, not deleted: {withdrawn}"
+    );
+
+    let added = edit::set_cross_account_tiers(DOCUMENT, true).unwrap();
+    let parsed: toml::Value = toml::from_str(&added).unwrap();
+    assert_eq!(parsed["cross_account_tiers"].as_bool(), Some(true));
+    assert!(
+        parsed["tiers"].get("cross_account_tiers").is_none(),
+        "the key must land above the first table:\n{added}"
+    );
+}
+
 /// The effort ceiling is a bare key above every table, and it is commented out
 /// in the shipped example. Setting it must produce a *live* key, not a second
 /// line that leaves the commented one looking authoritative.

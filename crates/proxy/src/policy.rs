@@ -43,11 +43,19 @@ pub struct Snapshot {
     tiers: Vec<ResolvedTier>,
     models: Vec<ModelMapping>,
     effort_ceiling: Option<Effort>,
+    /// Whether tier entries may pin another account. Held here rather than in
+    /// the startup configuration because consent granted over the socket must
+    /// apply to the next call, not the next restart.
+    cross_account: crate::config::CrossAccountTiers,
 }
 
 impl Snapshot {
     /// A snapshot from the tier mapping, with the routing table derived from it.
-    pub fn new(tiers: Vec<ResolvedTier>, effort_ceiling: Option<Effort>) -> Self {
+    pub fn new(
+        tiers: Vec<ResolvedTier>,
+        effort_ceiling: Option<Effort>,
+        cross_account: crate::config::CrossAccountTiers,
+    ) -> Self {
         let models = tiers
             .iter()
             .map(|tier| ModelMapping {
@@ -59,6 +67,7 @@ impl Snapshot {
             tiers,
             models,
             effort_ceiling,
+            cross_account,
         }
     }
 
@@ -73,6 +82,7 @@ impl Snapshot {
             tiers: Vec::new(),
             models,
             effort_ceiling,
+            cross_account: crate::config::CrossAccountTiers::Refused,
         }
     }
 
@@ -87,6 +97,10 @@ impl Snapshot {
 
     pub fn effort_ceiling(&self) -> Option<Effort> {
         self.effort_ceiling
+    }
+
+    pub fn cross_account(&self) -> crate::config::CrossAccountTiers {
+        self.cross_account
     }
 }
 
@@ -116,11 +130,17 @@ impl Policy {
     }
 
     pub fn set_tiers(&self, tiers: Vec<ResolvedTier>) {
-        self.update(|current| Snapshot::new(tiers, current.effort_ceiling));
+        self.update(|current| Snapshot::new(tiers, current.effort_ceiling, current.cross_account));
     }
 
     pub fn set_effort_ceiling(&self, ceiling: Option<Effort>) {
-        self.update(|current| Snapshot::new(current.tiers.clone(), ceiling));
+        self.update(|current| Snapshot::new(current.tiers.clone(), ceiling, current.cross_account));
+    }
+
+    pub fn set_cross_account(&self, cross_account: crate::config::CrossAccountTiers) {
+        self.update(|current| {
+            Snapshot::new(current.tiers.clone(), current.effort_ceiling, cross_account)
+        });
     }
 
     /// Read and replace under one lock.
