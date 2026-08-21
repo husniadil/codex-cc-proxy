@@ -1363,6 +1363,32 @@ read, a credential of the wrong kind — is its own, in the same shape everythin
 else in §1.1 uses. A connection that never opened is retryable, because nothing
 was sent.
 
+### 9.4 What a relayed turn leaves behind
+
+The payload is untouched on this path; the record of it is not optional. Two
+things a translating turn leaves behind, a relayed one leaves in the same place.
+
+**Ingress capture records a relayed turn** (`api.md`, `record`), and what it
+records is **the bytes that were relayed**. The rest of this section is a rule
+about not re-encoding the body, and a capture rebuilt from this proxy's own
+types would break it in the one place the breakage is hardest to see: a fixture
+that is not what the client sent still replays, still passes, and is wrong about
+every field those types do not model. The headers go through the same redaction
+by name as everywhere else — the name is the datum, the value is a secret in a
+file that is not the credential store.
+
+Capture is never allowed to change the turn. A body that cannot be held as raw
+JSON is not captured and the turn goes anyway, the same as a capture that cannot
+be written (`api.md`).
+
+**The model id joins the served list** the quota answer states (`api.md` §2). The
+mapping alone cannot stand in for it. A client is handed final ids by `env` and
+`exec` at launch and sends them for the session's life, so an operator who
+remaps a tier mid-run leaves the mapping naming an id no running session sends —
+and a status line reading the mapping would stop recognizing the session it is
+painting. What a turn was actually made against is the durable record, and it is
+kept here for the same reason §7.1's path keeps one.
+
 ---
 
 ## 10. Testing

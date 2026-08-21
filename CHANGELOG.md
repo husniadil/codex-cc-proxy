@@ -31,6 +31,13 @@ in [`docs/api.md`](docs/api.md) §6.
   spent against. `codex` by default. Only meaningful with `--key`, and refused
   rather than ignored without it.
 - **`[upstream.anthropic]`** in the configuration, with an `endpoint` key.
+- **A relayed turn is observable like a translating one.** `record ingress`
+  captures it, holding its request as the exact bytes that were relayed rather
+  than a re-encoding that would drop every field this proxy's own types do not
+  model, with header values redacted by name as everywhere else. Its model id
+  joins the served list `usage` states, so a status line still recognizes a
+  session whose tier was remapped while it was running.
+  `docs/proxy-behavior.md` §9.4.
 
 ### Changed
 

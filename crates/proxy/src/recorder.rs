@@ -86,13 +86,19 @@ impl Switches {
 }
 
 /// A captured exchange, in the corpus format.
+///
+/// The request is generic over how it is held, because the two paths hold it
+/// differently and one of them must not be re-encoded. The translating path
+/// captures the request it parsed; the relay (§9) captures the bytes it
+/// relayed, so what is written is what the backend was sent rather than what
+/// this proxy's own types would reproduce from it.
 #[derive(Debug, Serialize)]
-struct Capture<'a> {
+struct Capture<'a, R: ?Sized> {
     name: String,
     capability: &'a str,
     provenance: &'a str,
     note: String,
-    request: &'a Value,
+    request: &'a R,
     /// The request headers as they arrived, in arrival order, repeats kept —
     /// both are data when the question is what a client actually sends.
     /// Credential-bearing values are redacted before they reach this struct.
@@ -163,10 +169,10 @@ impl Recorder {
     /// Recording never fails a request: a capture that cannot be written is
     /// logged and dropped. Losing a fixture is a nuisance; losing the turn it
     /// was recording is a broken session.
-    pub fn record(
+    pub fn record<R: Serialize + std::fmt::Debug + ?Sized>(
         &self,
         mode: Mode,
-        request: &Value,
+        request: &R,
         headers: Vec<(String, String)>,
         upstream: Vec<Value>,
         note: &str,

@@ -483,10 +483,14 @@ serving one with its freshness stated, and an account with no figure reports
 that rather than a zero — which is every account of this provider until §L's
 quota-endpoint row is answered. `proxy-behavior.md` §8.3.
 
+Ingress capture reaches this path: a relayed turn is captured like a translating
+one, with its request held as the exact bytes that were relayed, and the id it
+was made against joins the served list the quota answer states.
+`proxy-behavior.md` §9.4.
+
 What has not landed: a grant for this provider (§L has no method for obtaining
 one yet, so the relay carries keys), and the per-launch switch surface in `env`
-and `exec`. Capability probes do not run against this path yet, and neither
-does ingress capture.
+and `exec`. Capability probes do not run against this path yet.
 
 ### v0.7.0
 

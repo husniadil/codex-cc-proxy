@@ -256,7 +256,11 @@ costs anything:
   they are half of any question about what a client actually sends — with
   credential-bearing values (`authorization`, `x-api-key`, `cookie`,
   `proxy-authorization`) redacted by name: the header's presence is the datum,
-  its value is a secret in a file that is not the credential store.
+  its value is a secret in a file that is not the credential store. A turn that
+  is relayed rather than translated (`proxy-behavior.md` §9) is captured too,
+  and its request is held as the exact bytes that were relayed — that path
+  forwards the body verbatim, and a capture re-encoded through this proxy's own
+  types would silently drop every field they do not model.
 - **upstream** captures the whole exchange: the client's request, untranslated,
   paired with the stream the backend answered it with. It needs credentials and
   spends quota, because the turn it records is a real one. Every turn through a

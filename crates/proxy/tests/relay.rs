@@ -102,11 +102,58 @@ async fn upstream(refuse: bool) -> (String, Recorded) {
     (format!("http://{addr}/v1/messages"), seen)
 }
 
+/// The state a daemon shares with the rest of the process rather than keeps to
+/// itself: the live policy, where captures land and whether they are on, and
+/// the store a status line is answered from.
+///
+/// Held by the test rather than built inside the daemon, because every
+/// observability assertion below is about what a turn left behind here.
+struct Observed {
+    policy: Arc<proxenos::policy::Policy>,
+    recorder: Option<proxenos::recorder::Recorder>,
+    capture: Arc<proxenos::recorder::Switches>,
+    usage: Arc<proxenos::usage::UsageStore>,
+}
+
+impl Observed {
+    fn new(tiers: Vec<ResolvedTier>) -> Self {
+        Self {
+            policy: Arc::new(proxenos::policy::Policy::new(
+                proxenos::policy::Snapshot::new(
+                    tiers,
+                    None,
+                    proxenos::config::CrossAccountTiers::Permitted,
+                ),
+            )),
+            recorder: None,
+            capture: Arc::new(proxenos::recorder::Switches::new(None)),
+            usage: Arc::new(proxenos::usage::UsageStore::default()),
+        }
+    }
+
+    /// Capturing what the client sends, into this directory.
+    fn capturing_ingress(mut self, directory: &std::path::Path) -> Self {
+        self.recorder = Some(proxenos::recorder::Recorder::new(directory));
+        self.capture = Arc::new(proxenos::recorder::Switches::new(Some(
+            proxenos::recorder::Mode::Ingress,
+        )));
+        self
+    }
+}
+
 /// The daemon's wiring for a relay turn. No conduit: this path never reaches
 /// one, and giving it one would let a routing mistake pass as a success.
 async fn daemon(
     store: Arc<FileStore>,
     tiers: Vec<ResolvedTier>,
+    refuse: bool,
+) -> (String, Recorded) {
+    daemon_with(store, &Observed::new(tiers), refuse).await
+}
+
+async fn daemon_with(
+    store: Arc<FileStore>,
+    observed: &Observed,
     refuse: bool,
 ) -> (String, Recorded) {
     let (endpoint, seen) = upstream(refuse).await;
@@ -123,13 +170,7 @@ async fn daemon(
         ));
 
     let state = AppState {
-        policy: Arc::new(proxenos::policy::Policy::new(
-            proxenos::policy::Snapshot::new(
-                tiers,
-                None,
-                proxenos::config::CrossAccountTiers::Permitted,
-            ),
-        )),
+        policy: Arc::clone(&observed.policy),
         catalog: Arc::new(proxenos::catalog::CatalogSource::fixed(
             proxenos::catalog::Catalog::fallback(),
         )),
@@ -137,9 +178,9 @@ async fn daemon(
         // would fail to connect rather than quietly answer.
         transport: Arc::new(HttpTransport::new("http://127.0.0.1:1/unused")),
         conduits: None,
-        recorder: None,
-        capture: Arc::new(proxenos::recorder::Switches::new(None)),
-        usage: Arc::new(proxenos::usage::UsageStore::default()),
+        recorder: observed.recorder.clone(),
+        capture: Arc::clone(&observed.capture),
+        usage: Arc::clone(&observed.usage),
         instructions: Arc::new(proxenos::config::InstructionsConfig {
             identity: true,
             append: None,
@@ -462,5 +503,144 @@ fn relay_bound_tiers_are_left_out_of_the_catalog_validation() {
             &[tier("sonnet", "gpt-5.4-mini", Some("acct_serving"))],
         )
         .is_empty()
+    );
+}
+
+/// A capture file, read back with the request kept as the bytes on disk.
+///
+/// `Value` would answer this question wrong: it reorders keys and normalises
+/// whitespace, so a capture that had been re-encoded would still compare equal
+/// to one that had not.
+#[derive(serde::Deserialize)]
+struct Captured {
+    request: Box<serde_json::value::RawValue>,
+    headers: Vec<(String, String)>,
+}
+
+/// The one capture in a directory, or a failure naming what was there instead.
+fn one_capture(directory: &std::path::Path) -> Captured {
+    let mut files: Vec<std::path::PathBuf> = std::fs::read_dir(directory)
+        .expect("the capture directory should exist")
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().is_some_and(|ext| ext == "json"))
+        .collect();
+    files.sort();
+    assert_eq!(files.len(), 1, "exactly one capture, found {files:?}");
+    let body = std::fs::read_to_string(&files[0]).expect("the capture should be readable");
+    serde_json::from_str(&body).expect("the capture should be in the corpus format")
+}
+
+/// **Build 1.** A relayed turn is captured by `record ingress`, and what it
+/// captures is the bytes that were relayed.
+///
+/// A capture is the only record of what a client actually sent, and a path
+/// that leaves none is invisible to it. Asserted against a body no round trip
+/// through this proxy's own types would reproduce — a field it does not model,
+/// and keys in an order it would not write — so a capture rebuilt from parsed
+/// types fails here rather than passing by resemblance.
+#[tokio::test]
+async fn a_relayed_turn_is_captured_by_ingress_capture_verbatim() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = store_with_a_relay_account(&dir);
+    let captures = dir.path().join("captures");
+    let observed = Observed::new(vec![tier("sonnet", "claude-sonnet-5", Some("relay"))])
+        .capturing_ingress(&captures);
+
+    let (base, seen) = daemon_with(Arc::clone(&store), &observed, false).await;
+    assert_eq!(turn(&base, CLIENT_BODY).await.status(), 200);
+    assert_eq!(seen.lock().unwrap().bodies[0], CLIENT_BODY);
+
+    let capture = one_capture(&captures);
+    assert_eq!(
+        capture.request.get(),
+        CLIENT_BODY,
+        "the capture holds the bytes that were relayed, not a re-encoding of them"
+    );
+
+    let header = |name: &str| {
+        capture
+            .headers
+            .iter()
+            .find(|(key, _)| key == name)
+            .map(|(_, value)| value.as_str())
+            .unwrap_or("<absent>")
+            .to_owned()
+    };
+    // The names survive, the values do not: that the client sent one is the
+    // datum, and a capture is a file that is not the credential store.
+    assert_eq!(header("authorization"), "(redacted)");
+    assert_eq!(header("x-api-key"), "(redacted)");
+    assert_eq!(header("anthropic-version"), "2023-06-01");
+    assert_eq!(header("x-app"), "cli");
+}
+
+/// **Build 2.** A relayed turn's model id joins the served list a status line
+/// answers "is this session mine?" from, read back over the control socket.
+///
+/// The mapping alone cannot answer it. A client is handed final ids at launch
+/// and sends them for the session's life, so an operator who remaps the tier
+/// mid-run leaves the mapping naming an id no running session sends — and the
+/// running session's status line stops recognizing its own quota. What a turn
+/// was actually made against is the only durable record of it, and the
+/// translating path has always kept one.
+#[tokio::test]
+async fn a_relayed_turn_joins_the_served_models_a_status_line_reads() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = store_with_a_relay_account(&dir);
+    let observed = Observed::new(vec![tier("sonnet", "claude-sonnet-5", Some("relay"))]);
+
+    let (base, seen) = daemon_with(Arc::clone(&store), &observed, false).await;
+    assert_eq!(turn(&base, CLIENT_BODY).await.status(), 200);
+    assert_eq!(seen.lock().unwrap().bodies.len(), 1);
+
+    // The operator remaps the tier while the session runs. The mapping now
+    // names an id nobody sends; the session still sends the one it was
+    // launched with.
+    observed
+        .policy
+        .set_tiers(vec![tier("sonnet", "claude-sonnet-6", Some("relay"))]);
+
+    let socket = dir.path().join("control.sock");
+    let state = proxenos::control::handler::ControlState {
+        port: 8787,
+        policy: Arc::clone(&observed.policy),
+        catalog: Arc::new(proxenos::catalog::CatalogSource::fixed(
+            proxenos::catalog::Catalog::fallback(),
+        )),
+        credentials: Arc::clone(&store) as Arc<dyn AccountStore>,
+        capture: Arc::clone(&observed.capture),
+        usage: Arc::clone(&observed.usage),
+        login: Arc::new(proxenos::auth::daemon_login::LoginFlow::default()),
+        config: Arc::new(proxenos::config::Config::default()),
+        shutdown: Arc::new(proxenos::daemon::Shutdown::default()),
+        tokens: None,
+        usage_endpoint: String::new(),
+        sessions: Arc::new(proxenos::session::SessionStore::new()),
+        config_path: None,
+    };
+    let serving = socket.clone();
+    tokio::spawn(async move {
+        let _ = proxenos::control::serve(&serving, state).await;
+    });
+    for _ in 0..100 {
+        if socket.exists() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+
+    let answer = proxenos::control::call(&socket, "usage", None)
+        .await
+        .expect("the control socket should answer");
+    let models = answer["models"]
+        .as_array()
+        .expect("usage states which models this quota belongs to")
+        .iter()
+        .filter_map(|model| model.as_str())
+        .collect::<Vec<_>>();
+    assert!(
+        models.contains(&"claude-sonnet-5"),
+        "the relayed turn's own id is missing from {models:?}"
     );
 }
