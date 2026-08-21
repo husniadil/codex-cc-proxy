@@ -509,16 +509,17 @@ async fn an_unpinned_tier_follows_the_selection_back_to_the_translating_path() {
     assert!(seen.lock().unwrap().bodies.is_empty());
 }
 
-/// A turn that would translate while the account authenticating it holds the
-/// second provider's credential is refused before anything is sent.
+/// An id the mapping does not name, arriving while an account on the second
+/// provider serves turns, is relayed to that account rather than translated.
 ///
-/// Falling through instead spends that credential against the translating
-/// backend — a key leaking to a provider it was never stored for, refused
-/// there with a message about the key rather than about the mapping. Observed
-/// live: a client sending an id the mapping did not name, while a key for the
-/// second provider was serving turns.
+/// Translating it would spend that account's credential against the first
+/// provider's backend — a key leaking to a provider it was never stored for.
+/// Relayed, the credential travels only to its own provider's endpoint, and
+/// that provider judges the id, which is the authoritative answer to whether
+/// it is served. This is what a launch-time model override rides on: any id
+/// the subscription serves works without a mapping edit.
 #[tokio::test]
-async fn a_turn_that_would_translate_as_the_relay_account_is_refused() {
+async fn an_unmapped_id_is_relayed_when_the_relay_account_serves_turns() {
     let dir = tempfile::tempdir().unwrap();
     let store = store_with_a_relay_account(&dir);
     store.select("relay").unwrap();
@@ -530,26 +531,61 @@ async fn a_turn_that_would_translate_as_the_relay_account_is_refused() {
     )
     .await;
 
-    // An id the mapping does not name, so it cannot route to the relay.
-    let response = turn(
-        &base,
-        "{\"max_tokens\":64,\"model\":\"claude-sonnet-4-5\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"stream\":true}",
+    // An id no mapping names, relayed as sent.
+    let body = "{\"max_tokens\":64,\"model\":\"claude-sonnet-4-5\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"stream\":true}";
+    let response = turn(&base, body).await;
+
+    assert_eq!(response.status(), 200);
+    let seen = seen.lock().unwrap();
+    assert_eq!(seen.bodies[0], body);
+    assert_eq!(
+        seen.headers[0]
+            .get("authorization")
+            .and_then(|value| value.to_str().ok()),
+        Some("Bearer relay-key-value")
+    );
+}
+
+/// A tier pinned to an account on the first provider translates as that
+/// account even while an account on the second provider serves turns.
+///
+/// The pin is the pointer a cross-provider override rides on (§7.1): without
+/// it there is nothing to say whose subscription an unmapped first-provider id
+/// should spend, so an unmapped id follows the serving account instead.
+#[tokio::test]
+async fn a_pinned_first_provider_tier_still_translates_while_the_relay_account_serves() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Arc::new(FileStore::new(dir.path().join("credentials.json")));
+    store
+        .add(
+            &grant("serving-token", "serving-refresh", "acct_serving"),
+            Some("codex"),
+        )
+        .unwrap();
+    store
+        .add_key("relay", "relay-key-value", Provider::Anthropic)
+        .unwrap();
+    store.select("relay").unwrap();
+
+    let (base, seen) = daemon(
+        Arc::clone(&store),
+        vec![
+            tier("sonnet", "claude-sonnet-5", None),
+            tier("opus", "gpt-5.6-terra", Some("codex")),
+        ],
+        false,
     )
     .await;
 
-    assert_eq!(response.status(), 400);
-    let body: Value = response.json().await.unwrap();
-    assert_eq!(body["type"], "error");
-    assert_eq!(body["error"]["type"], "invalid_request_error");
-    let message = body["error"]["message"].as_str().unwrap();
-    assert!(
-        message.contains("claude-sonnet-4-5"),
-        "names the model: {message}"
-    );
-    assert!(message.contains("`relay`"), "names the account: {message}");
-
-    // Refused before anything left: the relay stub saw nothing, and the
-    // translating transport points nowhere so reaching it would not be a 400.
+    // The pinned tier's turns take the translating path, whose transport
+    // points nowhere — failing there is the assertion: it never reached the
+    // relay, even though the relay account is serving.
+    let response = turn(
+        &base,
+        "{\"max_tokens\":64,\"model\":\"opus\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"stream\":true}",
+    )
+    .await;
+    assert_ne!(response.status(), 200);
     assert!(seen.lock().unwrap().bodies.is_empty());
 }
 

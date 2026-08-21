@@ -1296,9 +1296,9 @@ and a turn routes by **model id**: the id in the body is looked up among the
 mapped models, and the account that mapping names decides the path. A mapping
 that pins one (§7.1) names it; a mapping that pins nobody names the account
 serving turns, which is what an unpinned tier has always meant. An id whose
-account is on the second provider is relayed; everything else translates as it
-did before this path existed, provided the account authenticating it is on the
-first provider — the refusal below.
+account is on the second provider is relayed. An id no mapping names follows
+the account that would authenticate it: relayed when that account is on the
+second provider, translated as before when it is on the first.
 
 The unpinned case matters on its own. An operator who stores a key for this
 provider and selects it has said where their turns go, and routing that ignored
@@ -1306,15 +1306,18 @@ the selection would send every one of them to the other provider's endpoint —
 refused there as a credential of the wrong kind, which is a message about the
 credential rather than about the half that is wrong.
 
-**A turn that would translate is refused when the account authenticating it is
-on the second provider.** Translation spends the authenticating account's
-credential against the first provider's backend, so an id the mapping does not
-name, arriving while such an account serves turns, has nowhere safe to go: sent
-anyway, the credential leaks to an endpoint it was never stored for and is
-refused there with a message about the key rather than about the mapping.
-Instead the turn is refused before anything is sent, naming the id and the
-account. A cross-provider mapping stays available the way it always was — by
-pinning the tier to an account on the translating provider (§7.1).
+**A turn never authenticates against a backend its account was not stored
+for.** Translation spends the authenticating account's credential against the
+first provider's backend, so an id the mapping does not name, arriving while
+an account on the second provider would authenticate it, is relayed to that
+account instead. The credential travels only to its own provider's endpoint,
+and that provider judges the id — the only authoritative answer to whether it
+is served. A launch-time model override rides on this, symmetrically: an
+unmapped id goes to the account serving turns on either provider, passed
+through to the translating backend or relayed to the second, with no mapping
+edit. Crossing providers still takes a pointer — a pinned tier (§7.1) or a
+changed selection — because serving an id from an account nobody named would
+spend a subscription nobody pointed at the turn.
 
 By model id rather than by tier name, because this path never rewrites the
 model. The client is handed final ids by `env` and `exec` at launch and sends

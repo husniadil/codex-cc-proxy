@@ -194,46 +194,71 @@ async fn messages(
     if let Some(relay) = &state.relay
         && let Ok(routed) = serde_json::from_slice::<Routed>(&body)
     {
-        match relay.account_for(&routed.model, policy.models()) {
-            Ok(Some(account)) => {
-                // The id the *client* asked for, which on this path is the id
-                // the backend sees: nothing here rewrites the model (§9). A
-                // status line reads the client's own id, and the mapping alone
-                // cannot answer it — a client is handed final ids at launch
-                // and sends them for the session's life, so a tier remapped
-                // mid-run leaves the mapping naming an id no running session
-                // sends.
-                state.usage.record_model(&routed.model);
+        let claimed = match relay.account_for(&routed.model, policy.models()) {
+            Ok(claimed) => claimed,
+            Err(error) => return error.into_response(),
+        };
 
-                // Ingress capture, before anything leaves. Verbatim, for the
-                // same reason the relay itself is: a capture rebuilt from this
-                // proxy's own types would lose every field they do not model,
-                // and a fixture that is not what the client sent is not a
-                // fixture. Recording never fails a turn, so a body that cannot
-                // be held as raw JSON is simply not captured.
-                if state.capture.ingress()
-                    && let Some(recorder) = &state.recorder
-                    && let Ok(raw) = serde_json::from_slice::<&serde_json::value::RawValue>(&body)
-                {
-                    recorder.record(
-                        crate::recorder::Mode::Ingress,
-                        raw,
-                        crate::recorder::presentable_headers(&headers),
-                        Vec::new(),
-                        "Captured from a live client on the relay path (§9). The request is \
+        // §9.1 — an id no relayed mapping claims still relays when the account
+        // that would otherwise authenticate its translation is on the second
+        // provider. Translating it would spend that credential against the
+        // first provider's backend — a key leaking to an endpoint it was never
+        // stored for. Relayed, the credential travels only to its own
+        // provider, and that provider judges the id, which is the only
+        // authoritative answer to whether it is served. A launch-time model
+        // override rides on this: any id the account's subscription serves
+        // works without a mapping edit.
+        let account = match claimed {
+            Some(account) => Some(account),
+            None => {
+                let pinned = policy
+                    .models()
+                    .iter()
+                    .find(|mapping| mapping.requested == routed.model)
+                    .and_then(|mapping| mapping.account.clone());
+                match relay.relaying_account(pinned.as_deref()) {
+                    Ok(name) => name,
+                    Err(error) => return error.into_response(),
+                }
+            }
+        };
+
+        if let Some(account) = account {
+            // The id the *client* asked for, which on this path is the id
+            // the backend sees: nothing here rewrites the model (§9). A
+            // status line reads the client's own id, and the mapping alone
+            // cannot answer it — a client is handed final ids at launch
+            // and sends them for the session's life, so a tier remapped
+            // mid-run leaves the mapping naming an id no running session
+            // sends.
+            state.usage.record_model(&routed.model);
+
+            // Ingress capture, before anything leaves. Verbatim, for the
+            // same reason the relay itself is: a capture rebuilt from this
+            // proxy's own types would lose every field they do not model,
+            // and a fixture that is not what the client sent is not a
+            // fixture. Recording never fails a turn, so a body that cannot
+            // be held as raw JSON is simply not captured.
+            if state.capture.ingress()
+                && let Some(recorder) = &state.recorder
+                && let Ok(raw) = serde_json::from_slice::<&serde_json::value::RawValue>(&body)
+            {
+                recorder.record(
+                    crate::recorder::Mode::Ingress,
+                    raw,
+                    crate::recorder::presentable_headers(&headers),
+                    Vec::new(),
+                    "Captured from a live client on the relay path (§9). The request is \
                          the bytes that were relayed, not a re-encoding of them. No \
                          credentials were involved: this is what the client sent, not what \
                          the backend replied.",
-                    );
-                }
-
-                return match relay.forward(&account, &headers, body).await {
-                    Ok(response) => response,
-                    Err(error) => error.into_response(),
-                };
+                );
             }
-            Ok(None) => {}
-            Err(error) => return error.into_response(),
+
+            return match relay.forward(&account, &headers, body).await {
+                Ok(response) => response,
+                Err(error) => error.into_response(),
+            };
         }
     }
 
@@ -254,29 +279,10 @@ async fn messages(
     // translated for one tier's model and authenticated as another's account.
     let account = routed.and_then(|mapping| mapping.account.clone());
 
-    // §9.1 — a turn past this point translates, and translating spends the
-    // authenticating account's credential against the first provider's
-    // backend. An account holding the second provider's credential is refused
-    // here instead: falling through leaks that credential to an endpoint it
-    // was never stored for, which refuses it with a message about the key
-    // rather than about the mapping.
-    if let Some(relay) = &state.relay {
-        match relay.relaying_account(account.as_deref()) {
-            Ok(Some(name)) => {
-                return ProxyError::invalid_request(format!(
-                    "`{}` does not route to any relayed model, and the account that \
-                     would authenticate it (`{name}`) holds the second provider's \
-                     credential — refused rather than spent against the translating \
-                     backend. Map `{}` for `{name}`, or pin its tier to an account \
-                     on the translating provider.",
-                    request.model, request.model
-                ))
-                .into_response();
-            }
-            Ok(None) => {}
-            Err(error) => return error.into_response(),
-        }
-    }
+    // A turn past this point translates as an account on the first provider:
+    // the block above already relayed every turn whose authenticating account
+    // is on the second, so nothing here can spend a credential against a
+    // backend it was not stored for.
 
     // Translated once with no session knowledge, purely to derive the item
     // sequence this conversation is identified by (§3.1).
