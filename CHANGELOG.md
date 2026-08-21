@@ -8,6 +8,40 @@ in [`docs/api.md`](docs/api.md) §6.
 
 ### Added
 
+- **A tier may pin another account, behind explicit consent.** `haiku =
+  { account = "spare", model = "..." }` routes that tier's turns to another
+  stored account — and they are *served as* that account: its credential
+  authenticates every upstream request, a token refresh is written back to the
+  entry it was read from rather than to whichever account is selected, and a
+  pooled socket opened as one account is never reused for another. A pin naming
+  an account the store does not hold refuses the turn by name; there is no
+  fallback to the serving account, because that spends the wrong subscription's
+  quota invisibly. Absent the `cross_account_tiers` consent key, a pinned entry
+  refuses the daemon at startup and `tiers.set` at write time, naming the key;
+  the `cross_account_tiers.set` socket method grants or withdraws it, always
+  persisted, with withdrawal refused while a pin is in force.
+  `docs/proxy-behavior.md` §7.1.
+- **An account states its provider.** Each stored account carries which
+  provider's endpoints its credential is spent against; `accounts` and `status`
+  name it where it is not the default. Files written before there was a second
+  provider keep their exact shape.
+- **A relay-bound launch is handed no window it cannot know.** For a mapping
+  served entirely by the relay, `env` and `exec` omit
+  `CLAUDE_CODE_MAX_CONTEXT_TOKENS`, `CLAUDE_CODE_AUTO_COMPACT_WINDOW`, and
+  `CLAUDE_CODE_DISABLE_1M_CONTEXT`: the client recognizes those ids natively,
+  an override could only replace a real window with an invented one, and the
+  flag would strip the `context-1m` beta from the wire — an entitlement the
+  account may actually hold. A mixed mapping states no window and keeps the
+  flag; `docs/proxy-behavior.md` §7.2 states both costs.
+- **`record ingress` keeps the request headers**, in arrival order, with
+  credential-bearing values (`authorization`, `x-api-key`, `cookie`,
+  `proxy-authorization`) redacted by name. A header's presence is the datum;
+  its value never lands in a capture.
+- **The connector opt-out reaches the environment.**
+  `client.disable_connectors` now also exports
+  `ENABLE_CLAUDEAI_MCP_SERVERS=false` — the client's own documented opt-out for
+  the claude.ai-hosted servers — so a launch configured by exports alone honours
+  it.
 - **A quota figure per account, not per daemon.** A pinned tier's turns spend
   the account it names, so two accounts can serve one session and a single
   latest snapshot reported whichever made the most recent turn. Each figure is
@@ -60,6 +94,18 @@ in [`docs/api.md`](docs/api.md) §6.
   interchangeable below the session. The choice of transport belongs to the
   provider: the relay is HTTP with SSE and nothing else. §9 is the relay; what
   was §9 (Testing) is §10.
+
+### Fixed
+
+- **A pinned mapping no longer refuses the daemon at startup, nor a switch.**
+  `tiers.set` already excluded pinned entries from catalog validation, but the
+  daemon's start and `accounts.select` still measured them against the serving
+  account's menu — so a pinned mapping accepted over the socket was refused at
+  the next start, silently until then. One function now holds the exclusions
+  (pinned and relayed alike) at all three doors.
+- **`record ingress` and `record upstream` honour `--port` and
+  `PROXENOS_PORT`.** The variable was read by `run` and silently dropped by
+  `record`, which assembled its daemon's arguments by hand.
 
 ## [0.5.0]
 

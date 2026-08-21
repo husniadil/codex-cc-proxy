@@ -477,6 +477,15 @@ The cross-account consent key landed ahead of this slice and is not part of it:
 startup and `tiers.set` at write time — and `cross_account_tiers.set` grants it
 over the socket.
 
+Cross-account tiers are *served* as the account they name: the pinned account's
+credential authenticates the turn, a refresh is written back to the entry it
+was read from, and a pooled socket opened as one account is never reused for
+another (`proxy-behavior.md` §7.1). The per-launch switch surface followed: a
+mapping served entirely by the relay is handed final ids with no window
+override and no long-context flag, a mixed mapping follows the §7.2 rule, and
+neither a pinned nor a relayed tier is measured against the serving account's
+catalog — at startup, `tiers.set`, or `accounts.select`.
+
 Per-account quota has landed: a figure is filed under the account that served
 the turn it rode in on, `usage` reports every account's own figure beside the
 serving one with its freshness stated, and an account with no figure reports
@@ -489,8 +498,9 @@ was made against joins the served list the quota answer states.
 `proxy-behavior.md` §9.4.
 
 What has not landed: a grant for this provider (§L has no method for obtaining
-one yet, so the relay carries keys), and the per-launch switch surface in `env`
-and `exec`. Capability probes do not run against this path yet.
+one yet, so the relay carries keys), and capability probes against this path —
+both live-gated, since a probe fixture that was not recorded from the real
+endpoint proves nothing (§L).
 
 ### v0.7.0
 
