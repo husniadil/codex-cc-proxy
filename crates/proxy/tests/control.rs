@@ -63,7 +63,7 @@ struct Harness {
     path: std::path::PathBuf,
     /// The configuration file a persisted change is written to — inside the
     /// temp directory, never the operator's.
-    config: std::path::PathBuf,
+    config_file: std::path::PathBuf,
     store: Arc<FileStore>,
     /// The same policy the ingress routes turns from. Asserting on this is the
     /// difference between testing that a method echoes a value back and testing
@@ -75,9 +75,9 @@ struct Harness {
     /// the difference between testing that a flag round-trips and testing that
     /// the method does anything.
     switches: Arc<codex_cc_proxy::recorder::Switches>,
-    /// The policy the daemon publishes for whoever starts the client. Held so a
+    /// The configuration this harness's daemon started from. Held so a
     /// test can switch it off and assert that nothing is left behind.
-    client: Arc<codex_cc_proxy::config::ClientConfig>,
+    config: Arc<codex_cc_proxy::config::Config>,
     /// The same signal the daemon's own run loop waits on, so a test can assert
     /// a stop actually moved something rather than only answering.
     shutdown: Arc<codex_cc_proxy::daemon::Shutdown>,
@@ -97,7 +97,7 @@ impl Harness {
         let policy = Arc::new(codex_cc_proxy::policy::Policy::new(
             codex_cc_proxy::policy::Snapshot::new(tiers(), None),
         ));
-        let client = Arc::new(codex_cc_proxy::config::ClientConfig::default());
+        let config = Arc::new(codex_cc_proxy::config::Config::default());
         let shutdown = Arc::new(codex_cc_proxy::daemon::Shutdown::default());
         let sessions = Arc::new(codex_cc_proxy::session::SessionStore::new());
 
@@ -116,7 +116,7 @@ impl Harness {
             capture: Arc::clone(&switches),
             usage: Arc::clone(&usage),
             login: Arc::new(codex_cc_proxy::auth::daemon_login::LoginFlow::default()),
-            client: Arc::clone(&client),
+            config: Arc::clone(&config),
             shutdown: Arc::clone(&shutdown),
             // No credentials to ask with, and no endpoint that would answer:
             // no test may reach the network.
@@ -144,12 +144,12 @@ impl Harness {
 
         Self {
             path,
-            config: dir.path().join("config.toml"),
+            config_file: dir.path().join("config.toml"),
             store,
             policy,
             switches,
             usage,
-            client,
+            config,
             shutdown,
             sessions,
             _dir: dir,
@@ -165,8 +165,11 @@ impl Harness {
 
     /// The same harness, answering on a socket whose daemon writes to another
     /// configuration path — for the tests about what a failed write does.
-    async fn with_config(self, config: std::path::PathBuf) -> Self {
-        let harness = Self { config, ..self };
+    async fn with_config(self, config_file: std::path::PathBuf) -> Self {
+        let harness = Self {
+            config_file,
+            ..self
+        };
         let catalog = r#"{"data":[{"id":"gpt-5.6-terra","context_window":272000},
                                   {"id":"gpt-5.4-mini","context_window":200000}]}"#;
         harness.respawn(catalog, "gpt-5.6-terra").await
@@ -176,7 +179,10 @@ impl Harness {
     /// about what switching it off leaves behind.
     async fn with_client(self, client: codex_cc_proxy::config::ClientConfig) -> Self {
         let harness = Self {
-            client: Arc::new(client),
+            config: Arc::new(codex_cc_proxy::config::Config {
+                client,
+                ..codex_cc_proxy::config::Config::default()
+            }),
             ..self
         };
         let catalog = r#"{"data":[{"id":"gpt-5.6-terra","context_window":272000},
@@ -200,12 +206,12 @@ impl Harness {
             capture: Arc::clone(&self.switches),
             usage: Arc::clone(&self.usage),
             login: Arc::new(codex_cc_proxy::auth::daemon_login::LoginFlow::default()),
-            client: Arc::clone(&self.client),
+            config: Arc::clone(&self.config),
             shutdown: Arc::clone(&self.shutdown),
             tokens: None,
             usage_endpoint: String::new(),
             sessions: Arc::clone(&self.sessions),
-            config_path: Some(self.config.clone()),
+            config_path: Some(self.config_file.clone()),
         };
         let socket = path.clone();
         tokio::spawn(async move {
@@ -255,12 +261,12 @@ impl Harness {
             capture: Arc::clone(&self.switches),
             usage: Arc::clone(&self.usage),
             login: Arc::new(codex_cc_proxy::auth::daemon_login::LoginFlow::default()),
-            client: Arc::clone(&self.client),
+            config: Arc::clone(&self.config),
             shutdown: Arc::clone(&self.shutdown),
             tokens: Some(tokens),
             usage_endpoint: String::new(),
             sessions: Arc::clone(&self.sessions),
-            config_path: Some(self.config.clone()),
+            config_path: Some(self.config_file.clone()),
         };
         let socket = path.clone();
         tokio::spawn(async move {
@@ -313,12 +319,12 @@ impl Harness {
             capture: Arc::clone(&self.switches),
             usage: Arc::clone(&self.usage),
             login: Arc::new(codex_cc_proxy::auth::daemon_login::LoginFlow::default()),
-            client: Arc::clone(&self.client),
+            config: Arc::clone(&self.config),
             shutdown: Arc::clone(&self.shutdown),
             tokens,
             usage_endpoint: String::new(),
             sessions: Arc::clone(&self.sessions),
-            config_path: Some(self.config.clone()),
+            config_path: Some(self.config_file.clone()),
         };
 
         let socket = path.clone();
@@ -621,7 +627,7 @@ async fn an_unknown_window_is_reported_as_null() {
         capture: Arc::new(codex_cc_proxy::recorder::Switches::default()),
         usage: Arc::new(codex_cc_proxy::usage::UsageStore::default()),
         login: Arc::new(codex_cc_proxy::auth::daemon_login::LoginFlow::default()),
-        client: Arc::new(codex_cc_proxy::config::ClientConfig::default()),
+        config: Arc::new(codex_cc_proxy::config::Config::default()),
         shutdown: Arc::new(codex_cc_proxy::daemon::Shutdown::default()),
         tokens: None,
         usage_endpoint: String::new(),
@@ -771,7 +777,7 @@ async fn a_malformed_request_is_reported_without_closing_the_socket() {
         capture: Arc::new(codex_cc_proxy::recorder::Switches::default()),
         usage: Arc::new(codex_cc_proxy::usage::UsageStore::default()),
         login: Arc::new(codex_cc_proxy::auth::daemon_login::LoginFlow::default()),
-        client: Arc::new(codex_cc_proxy::config::ClientConfig::default()),
+        config: Arc::new(codex_cc_proxy::config::Config::default()),
         shutdown: Arc::new(codex_cc_proxy::daemon::Shutdown::default()),
         tokens: None,
         usage_endpoint: String::new(),
@@ -1100,7 +1106,7 @@ async fn status_says_when_the_catalog_was_unavailable() {
         capture: Arc::new(codex_cc_proxy::recorder::Switches::default()),
         usage: Arc::new(codex_cc_proxy::usage::UsageStore::default()),
         login: Arc::new(codex_cc_proxy::auth::daemon_login::LoginFlow::default()),
-        client: Arc::new(codex_cc_proxy::config::ClientConfig::default()),
+        config: Arc::new(codex_cc_proxy::config::Config::default()),
         shutdown: Arc::new(codex_cc_proxy::daemon::Shutdown::default()),
         tokens: None,
         usage_endpoint: String::new(),
@@ -1133,7 +1139,7 @@ async fn models_prints_unknown_rather_than_a_number() {
         capture: Arc::new(codex_cc_proxy::recorder::Switches::default()),
         usage: Arc::new(codex_cc_proxy::usage::UsageStore::default()),
         login: Arc::new(codex_cc_proxy::auth::daemon_login::LoginFlow::default()),
-        client: Arc::new(codex_cc_proxy::config::ClientConfig::default()),
+        config: Arc::new(codex_cc_proxy::config::Config::default()),
         shutdown: Arc::new(codex_cc_proxy::daemon::Shutdown::default()),
         tokens: None,
         usage_endpoint: String::new(),
@@ -1206,7 +1212,7 @@ async fn env_states_no_window_when_the_catalog_is_unavailable() {
         capture: Arc::new(codex_cc_proxy::recorder::Switches::default()),
         usage: Arc::new(codex_cc_proxy::usage::UsageStore::default()),
         login: Arc::new(codex_cc_proxy::auth::daemon_login::LoginFlow::default()),
-        client: Arc::new(codex_cc_proxy::config::ClientConfig::default()),
+        config: Arc::new(codex_cc_proxy::config::Config::default()),
         shutdown: Arc::new(codex_cc_proxy::daemon::Shutdown::default()),
         tokens: None,
         usage_endpoint: String::new(),
@@ -1590,7 +1596,7 @@ async fn a_change_is_not_written_to_the_configuration_unless_asked() {
 
     assert_eq!(result["persisted"], json!(false));
     assert!(
-        !harness.config.exists(),
+        !harness.config_file.exists(),
         "nothing should have been written to the configuration"
     );
 }
@@ -1600,7 +1606,7 @@ async fn a_change_is_not_written_to_the_configuration_unless_asked() {
 async fn a_persisted_change_survives_in_the_file() {
     let harness = Harness::start().await;
     std::fs::write(
-        &harness.config,
+        &harness.config_file,
         "# why this is what it is\n[tiers]\nsonnet = \"gpt-5.6-terra\"\n",
     )
     .unwrap();
@@ -1615,7 +1621,7 @@ async fn a_persisted_change_survives_in_the_file() {
 
     assert_eq!(result["persisted"], json!(true));
 
-    let written = std::fs::read_to_string(&harness.config).unwrap();
+    let written = std::fs::read_to_string(&harness.config_file).unwrap();
     assert!(written.contains(r#"sonnet = "gpt-5.4-mini""#), "{written}");
     // The comment is the whole reason this is a text edit rather than a
     // re-serialization. Losing it would be invisible: the file would still
@@ -1629,7 +1635,7 @@ async fn a_persisted_change_survives_in_the_file() {
 #[tokio::test]
 async fn a_refused_effort_never_reaches_the_file() {
     let harness = Harness::start().await;
-    std::fs::write(&harness.config, "port = 8787\n").unwrap();
+    std::fs::write(&harness.config_file, "port = 8787\n").unwrap();
 
     let error = harness
         .call_with("effort.set", json!({ "effort": "cheap", "persist": true }))
@@ -1638,7 +1644,7 @@ async fn a_refused_effort_never_reaches_the_file() {
 
     assert!(error.contains("cheap"), "{error}");
     assert_eq!(
-        std::fs::read_to_string(&harness.config).unwrap(),
+        std::fs::read_to_string(&harness.config_file).unwrap(),
         "port = 8787\n"
     );
 }
@@ -1655,7 +1661,7 @@ async fn a_change_that_cannot_be_written_is_not_applied_either() {
 
     // A real configuration that reads fine and cannot be written: the read leg
     // has to succeed, or this would prove the wrong half of the ordering.
-    let unwritable = harness.config.parent().unwrap().join("read-only.toml");
+    let unwritable = harness.config_file.parent().unwrap().join("read-only.toml");
     std::fs::write(&unwritable, "port = 8787\n").unwrap();
     let mut permissions = std::fs::metadata(&unwritable).unwrap().permissions();
     permissions.set_readonly(true);

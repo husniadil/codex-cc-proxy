@@ -40,12 +40,17 @@ pub struct ControlState {
     /// The authorization flow, if one is running. Held here because there is
     /// exactly one callback port and every front-end shares it.
     pub login: Arc<crate::auth::daemon_login::LoginFlow>,
-    /// Policy the client applies to itself, published for whoever starts it.
+    /// The configuration this daemon started from.
     ///
-    /// Read once at startup, like the instructions: nothing routes a turn from
-    /// it, so a change that outlives the process belongs in the file where the
-    /// comments explaining it live.
-    pub client: Arc<crate::config::ClientConfig>,
+    /// Read once at startup, and that is the model: nothing here routes a turn
+    /// by itself, and a change meant to outlive the process belongs in the file
+    /// where the comments explaining it live. What this socket can move on a
+    /// running daemon it moves through `policy`, not by re-reading this.
+    ///
+    /// Held whole rather than as the two slices that were needed first. An
+    /// account's tier mapping has to be resolved against the shared tables at
+    /// the moment a switch happens, so the shared tables have to be here.
+    pub config: Arc<crate::config::Config>,
     /// The stop signal the daemon's own run loop waits on. Shared, so asking
     /// here moves the process rather than only answering about it.
     pub shutdown: Arc<crate::daemon::Shutdown>,
@@ -82,7 +87,7 @@ pub async fn dispatch(
         // upgrade that has not restarted anything.
         "env" => Ok(json!({
             "variables": environment(state),
-            "settings": state.client.settings(),
+            "settings": state.config.client.settings(),
         })),
         "usage" => Ok(usage(state)),
         "accounts.forget" => forget_account(state, params).await,
@@ -257,8 +262,8 @@ fn status(state: &ControlState) -> Value {
         // a message that names nobody — and what they need next is the key that
         // undoes it.
         "client": {
-            "deny_skills": state.client.deny_skills,
-            "disable_connectors": state.client.disable_connectors,
+            "deny_skills": state.config.client.deny_skills,
+            "disable_connectors": state.config.client.disable_connectors,
         },
         "recording": state.capture.any(),
     })

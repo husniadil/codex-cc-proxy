@@ -930,7 +930,7 @@ async fn run_with(args: RunArgs, capture: Capture) -> Result<()> {
         capture: Arc::clone(&switches),
         usage: Arc::clone(&usage),
         login: Arc::new(codex_cc_proxy::auth::daemon_login::LoginFlow::default()),
-        client: Arc::new(config.client.clone()),
+        config: Arc::new(config.clone()),
         shutdown: Arc::clone(&shutdown),
         tokens: Some(Arc::clone(&tokens)),
         usage_endpoint: config.upstream.usage.clone(),
