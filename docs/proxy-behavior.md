@@ -430,6 +430,10 @@ the backend cannot parse, and it refuses the request with an error naming
 nothing. Only bodies above a threshold are compressed; below it, compression
 adds more than it removes.
 
+This is measured against the subscription backend and asserted about no other.
+A request spent with a key is never compressed, whatever `[transport]` says —
+§8.2 carries what happens when it is.
+
 **WebSocket**: `permessage-deflate`, negotiated during the upgrade rather than
 chosen per message. The client offers the extension and the server selects it
 (RFC 7692), so declining to offer it is the only way to switch it off. The frame

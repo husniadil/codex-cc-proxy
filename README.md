@@ -32,7 +32,7 @@ implementation is wrong in a way that does not fail loudly.
 
 ## Status
 
-**v0.2.0.** Everything here is verified against a local replay server built
+**v0.3.0.** Everything here is verified against a local replay server built
 from the upstream protocol definitions, and the whole suite runs without
 credentials or quota. Every capability probe has since also been answered by a
 live backend — `doctor --live` runs the same probes against the real thing, and
@@ -200,10 +200,32 @@ Logging in again adds an account rather than replacing the one you have. Each
 holds its own grant, so they do not interfere:
 
 ```sh
-codex-cc-proxy login --as spare  # a second account, under a name you choose
-codex-cc-proxy accounts          # what is stored; * is the one serving turns
+codex-cc-proxy login --as spare        # a second account, under a name you choose
+codex-cc-proxy accounts                # what is stored; * is the one serving turns
 codex-cc-proxy accounts --use spare
+codex-cc-proxy accounts --rename spare work
+codex-cc-proxy accounts --forget work  # undo a login
 ```
+
+An account can hold an API key instead of a subscription grant, for anyone who
+has no subscription at all. The key is read from standard input, never from an
+argument, because an argument is visible to every other process on the machine:
+
+```sh
+codex-cc-proxy login --key --as api    # pipe the key in, or paste it and end with ctrl-d
+codex-cc-proxy accounts --use api
+```
+
+`--as` is required here rather than optional: a key carries no account id to be
+named by, and the name is what `accounts --use` takes.
+
+A key is spent against a different endpoint with different billing, and one kind
+of credential is refused against the other kind's endpoint before anything
+leaves. It has no refresh, no expiry, and no plan, so `usage` has no quota to
+report for it and the WebSocket transport does not apply — that protocol belongs
+to the subscription backend. The path is proven against the replay server; a
+live key endpoint has answered and **has not settled everything**, and
+[`docs/roadmap.md`](docs/roadmap.md) §L carries what is still open.
 
 | | |
 |---|---|

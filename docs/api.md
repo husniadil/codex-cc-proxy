@@ -746,11 +746,12 @@ pending work.
   accept it — measured by posting a `document` block directly, which returned a
   code that existed only inside the PDF.
 
-- **Compression saves bytes and no tokens.** HTTP bodies are zstd-compressed;
-  WebSocket frames use `permessage-deflate`, negotiated during the upgrade.
-  Roughly two thirds off in both directions, and the inbound half is the larger
-  one — the backend echoes the whole request back three times per turn. Quota is
-  unaffected.
+- **Compression saves bytes and no tokens.** Subscription HTTP bodies are
+  zstd-compressed and WebSocket frames use `permessage-deflate`, negotiated
+  during the upgrade. Roughly two thirds off in both directions, and the inbound
+  half is the larger one — the backend echoes the whole request back three times
+  per turn. Quota is unaffected. A key request is neither: it is never
+  compressed, and there is no socket for it to compress.
 
 - **A web search that produced no citations reports the pages the model opened**,
   which carry a URL but no title. That is worse than a real citation and better

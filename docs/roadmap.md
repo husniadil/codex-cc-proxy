@@ -271,7 +271,7 @@ callback port rather than handing out a URL whose callback would be refused. And
 the volunteered snapshot cannot — a front-end with a figure to show on a daemon
 that has served no turn yet.
 
-### v0.3.0
+### v0.3.0 — shipped
 
 **A launcher.** Starting the client currently means evaluating the output of
 `env` in a shell first, which is one manual step that a reader can get wrong and
@@ -362,7 +362,10 @@ is the subscription backend's, and no quota, because that figure is a
 subscription entitlement.
 
 **End to end means against the replay server**, which is what this suite can
-hold. Nothing about a key endpoint has been confirmed live — see §L.
+hold. A live key endpoint has answered three times and settled less than that:
+it took the key at the turn endpoint, refused a compressed body there, and
+refused the same key at the model list. Whether a turn completes against it is
+not recorded anywhere here — see §L.
 
 ### v0.4.0
 

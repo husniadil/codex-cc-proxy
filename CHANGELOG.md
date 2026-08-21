@@ -4,7 +4,11 @@ All notable changes to this project are recorded here. This project follows
 [semantic versioning](https://semver.org). The semver-bound surfaces are listed
 in [`docs/api.md`](docs/api.md) §6.
 
-## [Unreleased]
+## [0.3.0]
+
+One credential file held one account and one kind of credential, and starting a
+client meant evaluating a shell expression first. None of those three is true
+now.
 
 ### Added
 
@@ -137,8 +141,10 @@ in [`docs/api.md`](docs/api.md) §6.
   endpoint that now refuses it.
 
   Proven end to end against the replay server, which is what this suite can
-  hold. Nothing about a real key endpoint has been confirmed — `docs/roadmap.md`
-  §L carries what only a live one can settle.
+  hold. A real key endpoint has answered three times and settled less than that:
+  it took the key at the turn endpoint, refused a compressed body there, and
+  refused the same key at the model list. `docs/roadmap.md` §L carries what that
+  leaves open.
 
 - **`doctor --live` refuses when it cannot authenticate, instead of reporting
   the backend as broken.** With no credential — or with a key selected, whose
