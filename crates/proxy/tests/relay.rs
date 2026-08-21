@@ -46,6 +46,36 @@ const UPSTREAM_STREAM: &str = "event: message_start\ndata: {\"type\":\"message_s
 /// A body no round trip through this proxy's request types would reproduce.
 const CLIENT_BODY: &str = "{\"max_tokens\":64,\"model\":\"claude-sonnet-5\",\"messages\":[{\"role\":\"user\",\"content\":\"the marker is 4KD9\"}],\"stream\":true,\"an_unmodelled_field\":{\"z\":1,\"a\":2}}";
 
+/// One header, as a map, so both arms of the stub answer the same type.
+fn header_map(name: axum::http::HeaderName, value: &str) -> HeaderMap {
+    let mut headers = HeaderMap::new();
+    headers.insert(name, value.parse().unwrap());
+    headers
+}
+
+/// The quota headers of one live turn against the second provider, captured
+/// into `fixtures/upstream/relay-quota-headers.json` rather than written. The
+/// stub answers with these so a quota assertion measures a parser against real
+/// header names and real values, not against a shape this test invented.
+fn captured_quota_headers() -> HeaderMap {
+    let captured: Value = serde_json::from_str(include_str!(
+        "../../../fixtures/upstream/relay-quota-headers.json"
+    ))
+    .expect("the fixture is JSON");
+
+    captured["headers"]
+        .as_object()
+        .expect("a header map")
+        .iter()
+        .map(|(name, value)| {
+            (
+                axum::http::HeaderName::from_bytes(name.as_bytes()).unwrap(),
+                value.as_str().unwrap().parse().unwrap(),
+            )
+        })
+        .collect()
+}
+
 fn grant(access: &str, refresh: &str, account_id: &str) -> Credentials {
     Credentials {
         access_token: access.to_owned(),
@@ -86,14 +116,17 @@ async fn upstream(refuse: bool) -> (String, Recorded) {
                 if refuse {
                     return (
                         axum::http::StatusCode::TOO_MANY_REQUESTS,
-                        [(axum::http::header::CONTENT_TYPE, "application/json")],
+                        header_map(axum::http::header::CONTENT_TYPE, "application/json"),
                         "{\"type\":\"error\",\"error\":{\"type\":\"rate_limit_error\",\"message\":\"slow down\"}}"
                             .to_owned(),
                     );
                 }
+                let mut answered =
+                    header_map(axum::http::header::CONTENT_TYPE, "text/event-stream");
+                answered.extend(captured_quota_headers());
                 (
                     axum::http::StatusCode::OK,
-                    [(axum::http::header::CONTENT_TYPE, "text/event-stream")],
+                    answered,
                     UPSTREAM_STREAM.to_owned(),
                 )
             }
@@ -818,5 +851,48 @@ async fn a_relayed_turn_joins_the_served_models_a_status_line_reads() {
     assert!(
         models.contains(&"claude-sonnet-5"),
         "the relayed turn's own id is missing from {models:?}"
+    );
+}
+
+/// The second provider states quota in the response headers of every turn, and
+/// for a subscription token that is the only place it states one — its usage
+/// endpoint refuses that credential for want of a scope. A relayed turn that
+/// dropped the figure would leave `usage` reporting "no figure" for an account
+/// whose headroom just came past on the wire.
+///
+/// It rides a turn already being made, so nothing here polls and nothing here
+/// spends a request.
+#[tokio::test]
+async fn a_relayed_turn_records_the_accounts_quota_from_its_response_headers() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = store_with_a_relay_account(&dir);
+    let observed = Observed::new(vec![tier("sonnet", "claude-sonnet-5", Some("relay"))]);
+
+    let (base, _seen) = daemon_with(Arc::clone(&store), &observed, false).await;
+    assert_eq!(turn(&base, CLIENT_BODY).await.status(), 200);
+
+    let measured = observed
+        .usage
+        .latest_for("relay")
+        .expect("the relayed turn's headers carried a quota for `relay`");
+    assert_eq!(measured.source, proxenos::usage::Source::Turn);
+
+    let used = |minutes: u64| {
+        measured
+            .snapshot
+            .windows
+            .iter()
+            .find(|window| window.window_minutes == Some(minutes))
+            .unwrap_or_else(|| panic!("no {minutes}-minute window"))
+            .used_percent
+    };
+    assert_eq!(used(300), 13.0);
+    assert_eq!(used(10080), 93.0);
+
+    // The figure belongs to the account that served the turn, never to
+    // whichever account happens to be selected when someone asks.
+    assert!(
+        observed.usage.latest_for("acct_serving").is_none(),
+        "the serving account made no turn and has no figure"
     );
 }

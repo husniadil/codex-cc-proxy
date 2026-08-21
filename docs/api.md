@@ -206,6 +206,13 @@ beside the serving one, with how it was come by — riding a turn, or asked for
 over the socket — and the moment it was taken. An account with no figure says
 so, and says why: no turn made as it yet, a key holding no subscription
 entitlement, or a provider that does not report a quota to this proxy at all.
+
+**A second-provider account earns its figure the same way**, from the
+`anthropic-ratelimit-unified-*` headers on the response to a relayed turn
+(`proxy-behavior.md` §9.4) — the only place that provider states a quota for a
+subscription credential. It is reported as having ridden a turn, because it did.
+No plan name appears beside it: no header states one, and one is not deducible
+from headroom.
 Where there is one account, the block above is the whole answer and nothing is
 repeated under its own name.
 

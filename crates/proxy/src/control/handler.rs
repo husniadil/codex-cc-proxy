@@ -466,6 +466,15 @@ fn per_account(state: &ControlState) -> Vec<Value> {
 
 /// Why an account has no figure.
 fn unavailable(account: &crate::auth::store::Account) -> &'static str {
+    if account.provider == crate::auth::store::Provider::Anthropic.as_str() {
+        // §9.4 — this provider states quota in the response headers of every
+        // relayed turn, and for a subscription token that is the only place it
+        // states one: its usage endpoint refuses that credential for want of a
+        // scope. So the reader is one turn away from a figure, and saying the
+        // provider reports none would send them looking for a feature instead.
+        return "this provider states quota on every turn; none has been relayed \
+                as this account yet";
+    }
     if account.provider != crate::auth::store::Provider::Codex.as_str() {
         // `roadmap.md` §L — whether this provider answers a quota question at
         // all is unmeasured, and a figure of zero would be an answer nobody

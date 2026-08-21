@@ -17,6 +17,17 @@ in [`docs/api.md`](docs/api.md) §6.
 
 ### Added
 
+- **`proxenos usage` now reports the second provider's accounts too.** That
+  provider states rate-limit headroom in `anthropic-ratelimit-unified-*` headers
+  on the response to every turn, and for a subscription credential it is the
+  only place one is stated — its usage endpoint refuses that credential for want
+  of a scope, so there is nothing for `usage.refresh` to ask. The headers are
+  read off each relayed response and filed under the account that made the turn,
+  which costs nothing: the figure rides a turn already being made, and no path
+  here polls. A plan name is absent rather than guessed, and an account that has
+  relayed no turn yet says a turn supplies its figure instead of claiming the
+  provider reports none.
+
 - **`proxenos login --setup-token`: a guided way to store a subscription
   token.** The same stored credential `--key --provider anthropic` produces,
   reached without the pipe-and-ctrl-d workflow it required. It says where the

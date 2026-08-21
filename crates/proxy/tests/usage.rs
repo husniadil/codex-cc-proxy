@@ -389,3 +389,71 @@ fn the_serving_account_is_the_one_the_credential_store_has_selected() {
         Some(snapshot(41.0))
     );
 }
+
+/// The second provider answers quota in response headers, and that is the only
+/// place it answers one for this credential kind: its usage endpoint refuses a
+/// subscription token for want of a scope. `fixtures/upstream/relay-quota-headers.json`
+/// is one live turn's headers, captured rather than written.
+#[test]
+fn a_snapshot_is_read_from_the_second_providers_response_headers() {
+    let captured: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../fixtures/upstream/relay-quota-headers.json"
+    ))
+    .expect("the fixture is JSON");
+
+    let mut headers = axum::http::HeaderMap::new();
+    for (name, value) in captured["headers"].as_object().expect("a header map") {
+        headers.insert(
+            axum::http::HeaderName::from_bytes(name.as_bytes()).unwrap(),
+            value.as_str().unwrap().parse().unwrap(),
+        );
+    }
+
+    let snapshot = Snapshot::from_headers(&headers).expect("these headers carry a quota");
+
+    assert!(!snapshot.limit_reached, "the turn was allowed");
+    // Plan is genuinely unavailable on this path — no header states one — and
+    // an invented plan name is worse than none.
+    assert_eq!(snapshot.plan, None);
+
+    let window = |minutes: u64| {
+        snapshot
+            .windows
+            .iter()
+            .find(|window| window.window_minutes == Some(minutes))
+            .unwrap_or_else(|| panic!("no {minutes}-minute window in {:?}", snapshot.windows))
+    };
+    assert_eq!(window(300).used_percent, 13.0);
+    assert_eq!(window(300).resets_at, Some(1_787_338_800));
+    assert_eq!(window(10080).used_percent, 93.0);
+    assert_eq!(window(10080).resets_at, Some(1_787_371_200));
+}
+
+/// A response carrying no quota header says nothing about quota, and saying
+/// nothing is not the same as saying none is used.
+#[test]
+fn headers_without_a_quota_are_not_an_empty_snapshot() {
+    let mut headers = axum::http::HeaderMap::new();
+    headers.insert(
+        axum::http::header::CONTENT_TYPE,
+        "text/event-stream".parse().unwrap(),
+    );
+    assert!(Snapshot::from_headers(&headers).is_none());
+}
+
+/// A refused turn says so, and the meter has to show it.
+#[test]
+fn a_rejected_status_reads_as_the_limit_reached() {
+    let mut headers = axum::http::HeaderMap::new();
+    headers.insert(
+        "anthropic-ratelimit-unified-5h-utilization",
+        "1.0".parse().unwrap(),
+    );
+    headers.insert(
+        "anthropic-ratelimit-unified-status",
+        "rejected".parse().unwrap(),
+    );
+    let snapshot = Snapshot::from_headers(&headers).expect("a window was reported");
+    assert!(snapshot.limit_reached);
+    assert_eq!(snapshot.windows[0].used_percent, 100.0);
+}

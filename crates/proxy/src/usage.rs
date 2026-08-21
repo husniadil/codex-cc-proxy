@@ -122,6 +122,60 @@ impl Snapshot {
         })
     }
 
+    /// Read a snapshot out of a relayed response's own headers.
+    ///
+    /// The second provider states quota in the response headers of every turn,
+    /// and for a subscription token that is the *only* place it states one —
+    /// its usage endpoint refuses that credential for want of a scope. So this
+    /// is the primary path there, not a fallback, and it costs nothing: the
+    /// figure rides a turn already being made.
+    ///
+    /// This is the inverse of [`Snapshot::headers`], and deliberately reads the
+    /// same names: what this proxy hands its own client on one path is what the
+    /// provider hands this proxy on the other. Utilization is a fraction on the
+    /// wire and a percentage in a snapshot, which is the one conversion here.
+    ///
+    /// Plan is absent because no header states one. An account's plan name is
+    /// not derivable from its headroom, and guessing it would put a word in the
+    /// provider's mouth.
+    ///
+    /// `None` where no window was reported at all. An empty snapshot would read
+    /// as "quota known, nothing used" — the reassuring direction to be wrong in.
+    pub fn from_headers(headers: &axum::http::HeaderMap) -> Option<Self> {
+        let read = |name: &str| headers.get(name)?.to_str().ok()?.parse::<f64>().ok();
+
+        let windows: Vec<Window> = [(FIVE_HOURS, "5h"), (SEVEN_DAYS, "7d")]
+            .into_iter()
+            .filter_map(|(nominal, slot)| {
+                let utilization = read(&format!("anthropic-ratelimit-unified-{slot}-utilization"))?;
+                Some(Window {
+                    used_percent: (utilization * 100.0).clamp(0.0, 100.0),
+                    window_minutes: Some(nominal),
+                    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                    resets_at: read(&format!("anthropic-ratelimit-unified-{slot}-reset"))
+                        .map(|reset| reset as u64),
+                })
+            })
+            .collect();
+
+        if windows.is_empty() {
+            return None;
+        }
+
+        Some(Self {
+            plan: None,
+            // Only an outright refusal is the limit being reached. The
+            // provider also says `allowed_warning`, which is a turn that went
+            // through, and reading that as rejected would show a limit the
+            // account has not hit.
+            limit_reached: headers
+                .get("anthropic-ratelimit-unified-status")
+                .and_then(|status| status.to_str().ok())
+                == Some("rejected"),
+            windows,
+        })
+    }
+
     /// The window matching a nominal duration, if the backend reported one.
     fn window_of(&self, nominal: u64) -> Option<&Window> {
         self.windows

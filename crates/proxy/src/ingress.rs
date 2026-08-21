@@ -259,7 +259,23 @@ async fn messages(
             }
 
             return match relay.forward(&account, &headers, uri.query(), body).await {
-                Ok(response) => response,
+                Ok(response) => {
+                    // §9.4 — the second provider states quota in the headers of
+                    // every turn, and for a subscription token that is the only
+                    // place it states one. Read here rather than polled: it
+                    // rode a turn already being made, and it is filed under the
+                    // account that made it rather than whichever one is serving
+                    // when someone later asks.
+                    if let Some(snapshot) = crate::usage::Snapshot::from_headers(response.headers())
+                    {
+                        state.usage.record_for(
+                            Some(&account),
+                            &snapshot,
+                            crate::usage::Source::Turn,
+                        );
+                    }
+                    response
+                }
                 Err(error) => error.into_response(),
             };
         }

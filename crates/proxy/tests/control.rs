@@ -4396,6 +4396,38 @@ async fn an_account_with_no_figure_reports_unavailable() {
     assert_eq!(by_name("main")["known"], json!(true));
 }
 
+/// Why a second-provider account has no figure yet points at the turn that
+/// would supply one.
+///
+/// Its quota rides the response headers of every relayed turn, so "this
+/// provider does not report a quota" is not what is going on — the reader is
+/// one turn away from a figure, and telling them otherwise sends them looking
+/// for a feature instead of making a turn.
+#[tokio::test]
+async fn a_second_provider_account_is_told_a_turn_supplies_its_figure() {
+    let harness = Harness::start().await;
+    harness
+        .store
+        .add_key("relay", "relay-secret", Provider::Anthropic)
+        .unwrap();
+
+    let usage = harness.call("usage").await.unwrap();
+    let entry = usage["accounts"]
+        .as_array()
+        .expect("named figures")
+        .iter()
+        .find(|entry| entry["account"] == json!("relay"))
+        .expect("`relay` should be reported")
+        .clone();
+
+    assert_eq!(entry["known"], json!(false), "{entry}");
+    let detail = entry["detail"].as_str().unwrap_or_default();
+    assert!(
+        detail.contains("turn"),
+        "the reason should point at a turn, not at a missing capability: {detail}"
+    );
+}
+
 /// A figure asked for over the socket says it was asked for. Both are
 /// legitimate and differently stale, so neither is reported as the other.
 #[tokio::test]

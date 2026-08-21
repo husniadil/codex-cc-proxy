@@ -1415,6 +1415,27 @@ and a status line reading the mapping would stop recognizing the session it is
 painting. What a turn was actually made against is the durable record, and it is
 kept here for the same reason §7.1's path keeps one.
 
+**The response's quota headers become this account's figure.** The second
+provider states rate-limit headroom in `anthropic-ratelimit-unified-*` response
+headers on every turn, and for a subscription credential that is the *only*
+place it states one: its usage endpoint refuses that credential for want of a
+scope, so the `usage.refresh` path of §8.3 has nothing to ask. Reading the
+headers costs nothing — the figure rides a turn already being made — and it is
+filed under the account that made the turn, never under whichever account is
+selected when someone later asks.
+
+The names read here are the names §9.2 emits on the other path: what this proxy
+hands its own client when it translates is what the provider hands this proxy
+when it relays. Utilization is a fraction on the wire and a percentage in a
+snapshot; that conversion is the only arithmetic, and nothing else is derived.
+The plan name is **absent**, because no header states one and an account's plan
+is not deducible from its headroom. `allowed_warning` is a turn that went
+through: only an outright `rejected` is the limit being reached, and reading the
+warning as a refusal would show a limit the account has not hit. A response
+carrying no quota header at all yields no snapshot rather than an empty one — an
+empty snapshot reads as "quota known, nothing used", which is the reassuring
+direction to be wrong in.
+
 ---
 
 ## 10. Testing
