@@ -1052,7 +1052,9 @@ async fn select_account(state: &ControlState, params: Option<&Value>) -> Result<
 /// which is the honest report and the documented one.
 fn put_mapping_in_force(state: &ControlState, account: &str) -> Result<(), ProxyError> {
     let config = configuration(state);
-    let tiers = config.tiers_for(Some(account)).resolve()?;
+    let tiers = config
+        .tiers_for(Some(account))
+        .resolve(config.cross_account_policy())?;
     let ceiling = config.effort_ceiling_for(Some(account))?;
 
     let catalog = state.catalog.current();

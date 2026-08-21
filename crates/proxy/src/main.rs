@@ -100,7 +100,8 @@ async fn live_transport() -> Result<Arc<dyn proxenos::upstream::Transport>> {
 /// answers whether the tier the client's secondary conversations land on is
 /// mapped to something that works.
 fn live_models() -> Result<Arc<Vec<ModelMapping>>> {
-    let tiers = Config::load()?.tiers.resolve()?;
+    let config = Config::load()?;
+    let tiers = config.tiers.resolve(config.cross_account_policy())?;
     let by_tier = |name: &str| {
         tiers
             .iter()
@@ -840,7 +841,9 @@ async fn run_with(args: RunArgs, capture: Capture) -> Result<()> {
 
     // Refused before binding: a daemon that starts with an incomplete mapping
     // breaks WebFetch in a way that looks unrelated to tier mapping (§7.1).
-    let mut tiers = config.tiers_for(serving.as_deref()).resolve()?;
+    let mut tiers = config
+        .tiers_for(serving.as_deref())
+        .resolve(config.cross_account_policy())?;
 
     // Also refused before binding, so a mistyped ceiling is caught at startup
     // rather than silently spending at full rate.

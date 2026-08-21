@@ -9,10 +9,10 @@ use proxenos::daemon::bind;
 
 fn complete_tiers() -> Tiers {
     Tiers {
-        opus: Some("gpt-5.6-terra".to_owned()),
-        sonnet: Some("gpt-5.6-terra".to_owned()),
-        haiku: Some("gpt-5.4-mini".to_owned()),
-        fable: Some("gpt-5.4-mini".to_owned()),
+        opus: Some("gpt-5.6-terra".into()),
+        sonnet: Some("gpt-5.6-terra".into()),
+        haiku: Some("gpt-5.4-mini".into()),
+        fable: Some("gpt-5.4-mini".into()),
     }
 }
 
@@ -57,13 +57,15 @@ async fn the_daemon_binds_loopback() {
 #[test]
 fn an_omitted_tier_takes_its_default() {
     let tiers = Tiers {
-        opus: Some("gpt-5.5".to_owned()),
-        sonnet: Some("gpt-5.5".to_owned()),
+        opus: Some("gpt-5.5".into()),
+        sonnet: Some("gpt-5.5".into()),
         haiku: None,
         fable: None,
     };
 
-    let resolved = tiers.resolve().expect("the omitted tiers default");
+    let resolved = tiers
+        .resolve(proxenos::config::CrossAccountTiers::Refused)
+        .expect("the omitted tiers default");
     let model = |tier: &str| {
         resolved
             .iter()
@@ -83,19 +85,23 @@ fn an_omitted_tier_takes_its_default() {
 #[test]
 fn a_blank_tier_counts_as_missing() {
     let tiers = Tiers {
-        opus: Some("gpt-5.6-terra".to_owned()),
-        sonnet: Some("   ".to_owned()),
-        haiku: Some("gpt-5.4-mini".to_owned()),
-        fable: Some("gpt-5.4-mini".to_owned()),
+        opus: Some("gpt-5.6-terra".into()),
+        sonnet: Some("   ".into()),
+        haiku: Some("gpt-5.4-mini".into()),
+        fable: Some("gpt-5.4-mini".into()),
     };
 
-    let error = tiers.resolve().expect_err("a blank tier should fail");
+    let error = tiers
+        .resolve(proxenos::config::CrossAccountTiers::Refused)
+        .expect_err("a blank tier should fail");
     assert!(error.message.contains("sonnet"), "{}", error.message);
 }
 
 #[test]
 fn a_complete_mapping_resolves_all_four() {
-    let resolved = complete_tiers().resolve().expect("a complete mapping");
+    let resolved = complete_tiers()
+        .resolve(proxenos::config::CrossAccountTiers::Refused)
+        .expect("a complete mapping");
     let names: Vec<&str> = resolved.iter().map(|tier| tier.tier).collect();
     assert_eq!(names, vec!["opus", "sonnet", "haiku", "fable"]);
 }
@@ -107,15 +113,101 @@ fn a_complete_mapping_resolves_all_four() {
 #[test]
 fn a_model_id_carrying_a_1m_marker_is_rejected() {
     let tiers = Tiers {
-        opus: Some("gpt-5.6-terra[1m]".to_owned()),
+        opus: Some("gpt-5.6-terra[1m]".into()),
         ..complete_tiers()
     };
 
     let error = tiers
-        .resolve()
+        .resolve(proxenos::config::CrossAccountTiers::Refused)
         .expect_err("a [1m] marker should be rejected");
     assert!(error.message.contains("[1m]"), "{}", error.message);
     assert!(error.message.contains("opus"), "{}", error.message);
+}
+
+/// A tier may name another account: `haiku = { account = "...", model = "..." }`.
+/// The bare-string form keeps its meaning — the serving account — so every
+/// existing configuration reads unchanged.
+#[test]
+fn a_tier_names_another_account_in_table_form() {
+    let config: Config = toml::from_str(
+        r#"
+        [tiers]
+        opus   = "gpt-5.6-terra"
+        sonnet = "gpt-5.6-terra"
+        haiku  = { account = "spare", model = "gpt-5.4-mini" }
+        fable  = "gpt-5.4-mini"
+        "#,
+    )
+    .expect("both forms parse");
+
+    let resolved = config
+        .tiers
+        .resolve(proxenos::config::CrossAccountTiers::Permitted)
+        .expect("a permitted cross-account mapping resolves");
+
+    let haiku = resolved.iter().find(|tier| tier.tier == "haiku").unwrap();
+    assert_eq!(haiku.model, "gpt-5.4-mini");
+    assert_eq!(haiku.account.as_deref(), Some("spare"));
+
+    let opus = resolved.iter().find(|tier| tier.tier == "opus").unwrap();
+    assert_eq!(
+        opus.account, None,
+        "a bare string stays on the serving account"
+    );
+}
+
+/// Routing one client's traffic across accounts spends another account's quota,
+/// which is a decision the operator must own. Absent the consent key, the
+/// mapping refuses — naming the key — rather than falling back to the serving
+/// account, which would spend the wrong quota invisibly.
+#[test]
+fn a_cross_account_tier_without_consent_is_refused() {
+    let config: Config = toml::from_str(
+        r#"
+        [tiers]
+        opus   = "gpt-5.6-terra"
+        sonnet = "gpt-5.6-terra"
+        haiku  = { account = "spare", model = "gpt-5.4-mini" }
+        fable  = "gpt-5.4-mini"
+        "#,
+    )
+    .unwrap();
+
+    let error = config
+        .tiers
+        .resolve(proxenos::config::CrossAccountTiers::Refused)
+        .expect_err("consent is required");
+    assert!(
+        error.message.contains("cross_account_tiers"),
+        "the refusal names the key that grants consent: {}",
+        error.message
+    );
+    assert!(
+        error.message.contains("haiku") && error.message.contains("spare"),
+        "and the entry that needs it: {}",
+        error.message
+    );
+}
+
+/// The consent key parses, and the policy it produces is the one the daemon
+/// hands to every resolve.
+#[test]
+fn the_consent_key_permits_what_its_absence_refuses() {
+    let with = r#"
+        cross_account_tiers = true
+        [tiers]
+        haiku = { account = "spare", model = "gpt-5.4-mini" }
+    "#;
+    let without = r#"
+        [tiers]
+        haiku = { account = "spare", model = "gpt-5.4-mini" }
+    "#;
+
+    let config: Config = toml::from_str(with).unwrap();
+    assert!(config.tiers.resolve(config.cross_account_policy()).is_ok());
+
+    let config: Config = toml::from_str(without).unwrap();
+    assert!(config.tiers.resolve(config.cross_account_policy()).is_err());
 }
 
 /// The configuration file is TOML, and its defaults are the documented ones.
@@ -135,7 +227,12 @@ fn configuration_parses_with_documented_defaults() {
     assert_eq!(config.port, 8787);
     assert!(config.transport.websocket);
     assert!(config.transport.compression);
-    assert!(config.tiers.resolve().is_ok());
+    assert!(
+        config
+            .tiers
+            .resolve(proxenos::config::CrossAccountTiers::Refused)
+            .is_ok()
+    );
 }
 
 /// The upstream is configurable, and its defaults are the shipping ones.
@@ -273,7 +370,12 @@ fn the_configuration_is_read_from_disk() {
     unsafe { std::env::remove_var("PROXENOS_HOME") };
 
     assert_eq!(config.port, 8787);
-    assert!(config.tiers.resolve().is_ok());
+    assert!(
+        config
+            .tiers
+            .resolve(proxenos::config::CrossAccountTiers::Refused)
+            .is_ok()
+    );
 }
 
 /// A missing configuration is a first run, and a first run works.
@@ -290,7 +392,12 @@ fn a_missing_configuration_falls_back_to_the_defaults() {
     unsafe { std::env::remove_var("PROXENOS_HOME") };
 
     assert_eq!(config.port, 8787);
-    assert!(config.tiers.resolve().is_ok());
+    assert!(
+        config
+            .tiers
+            .resolve(proxenos::config::CrossAccountTiers::Refused)
+            .is_ok()
+    );
     assert!(config.instructions.working_budget);
 }
 
@@ -314,7 +421,12 @@ fn an_unparseable_configuration_is_still_refused() {
 fn the_example_configuration_is_valid() {
     let config: Config =
         toml::from_str(proxenos::config::EXAMPLE).expect("the example should parse");
-    assert!(config.tiers.resolve().is_ok());
+    assert!(
+        config
+            .tiers
+            .resolve(proxenos::config::CrossAccountTiers::Refused)
+            .is_ok()
+    );
 }
 
 /// A mistyped ceiling is refused rather than ignored. An operator who wrote it
@@ -384,7 +496,7 @@ fn no_effort_key_means_no_ceiling() {
 #[test]
 fn every_tier_has_the_default_the_readme_states() {
     let resolved = Tiers::default()
-        .resolve()
+        .resolve(proxenos::config::CrossAccountTiers::Refused)
         .expect("the defaults should resolve on their own");
 
     let model = |tier: &str| {
@@ -405,7 +517,12 @@ fn every_tier_has_the_default_the_readme_states() {
 #[test]
 fn an_empty_configuration_resolves() {
     let config: Config = toml::from_str("").expect("an empty configuration should parse");
-    assert!(config.tiers.resolve().is_ok());
+    assert!(
+        config
+            .tiers
+            .resolve(proxenos::config::CrossAccountTiers::Refused)
+            .is_ok()
+    );
     assert!(config.validate().is_ok());
 }
 
@@ -420,7 +537,10 @@ fn a_stated_tier_overrides_only_itself() {
     )
     .unwrap();
 
-    let resolved = config.tiers.resolve().unwrap();
+    let resolved = config
+        .tiers
+        .resolve(proxenos::config::CrossAccountTiers::Refused)
+        .unwrap();
     let model = |tier: &str| {
         resolved
             .iter()
@@ -452,7 +572,7 @@ fn a_blank_tier_is_still_refused_rather_than_defaulted() {
 
     let error = config
         .tiers
-        .resolve()
+        .resolve(proxenos::config::CrossAccountTiers::Refused)
         .expect_err("a blank tier should still fail");
     assert!(error.message.contains("sonnet"), "{}", error.message);
 }
@@ -595,7 +715,7 @@ fn an_account_section_overrides_only_the_tiers_it_names() {
     let model = |account: Option<&str>, tier: &str| {
         config
             .tiers_for(account)
-            .resolve()
+            .resolve(proxenos::config::CrossAccountTiers::Refused)
             .unwrap()
             .into_iter()
             .find(|resolved| resolved.tier == tier)
@@ -679,7 +799,7 @@ fn the_example_states_the_defaults_it_documents() {
     let mapping = |config: &Config| {
         config
             .tiers
-            .resolve()
+            .resolve(proxenos::config::CrossAccountTiers::Refused)
             .unwrap()
             .into_iter()
             .map(|tier| (tier.tier, tier.model))

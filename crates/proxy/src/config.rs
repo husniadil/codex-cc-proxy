@@ -92,14 +92,26 @@ port = 8787
 # accepts nothing that low: `minimal` is refused by some models outright, so it
 # is moved to the nearest they will take rather than sent and failed.
 #
-# Both keys sit above the tables on purpose. In TOML a bare key written after a
-# table header belongs to that table, so `effort` placed below `[tiers]` is
+# These keys sit above the tables on purpose. In TOML a bare key written after
+# a table header belongs to that table, so `effort` placed below `[tiers]` is
 # `tiers.effort` — a different setting entirely.
 # effort = "low"
+
+# Consent for tier entries that pin another account, written as
+# `haiku = { account = "spare", model = "..." }`. Off by default, and the
+# default is a refusal rather than a fallback, because such an entry routes
+# this client's traffic across accounts: main turns spend one account's quota
+# while the pinned tier spends another's, invisibly to the session that is
+# doing it. Turn it on only if that is what you mean.
+# cross_account_tiers = true
 
 # The defaults, shown so they can be changed. An omitted tier takes the value
 # below; a tier written blank is refused rather than defaulted. WebFetch runs on
 # the haiku tier, so that one matters more than it looks.
+#
+# A tier may also pin an account: `haiku = { account = "spare", model = "..." }`
+# serves that tier's turns as `spare` whatever account serves the rest. Gated by
+# `cross_account_tiers` above.
 [tiers]
 opus   = "gpt-5.6-terra"
 sonnet = "gpt-5.6-luna"
@@ -204,6 +216,16 @@ disable_connectors = true
 pub struct Config {
     #[serde(default = "default_port")]
     pub port: u16,
+    /// Consent for tier entries that name another account.
+    ///
+    /// Such an entry routes one client's traffic across accounts — main turns
+    /// on one subscription's quota, a pinned tier on another's — which is a
+    /// decision the operator must own. Absent, a cross-account entry refuses
+    /// the daemon at startup and refuses `tiers.set` at write time, naming
+    /// this key. Never a silent fallback to the serving account: that spends
+    /// the wrong account's quota invisibly.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub cross_account_tiers: bool,
     #[serde(default)]
     pub tiers: Tiers,
     #[serde(default)]
@@ -634,6 +656,16 @@ impl Config {
         self.accounts.get(account?)
     }
 
+    /// What the `cross_account_tiers` key consents to, as the value every
+    /// resolve takes.
+    pub fn cross_account_policy(&self) -> CrossAccountTiers {
+        if self.cross_account_tiers {
+            CrossAccountTiers::Permitted
+        } else {
+            CrossAccountTiers::Refused
+        }
+    }
+
     /// Check the values that parse but cannot work.
     ///
     /// Refused rather than clamped. A clamp makes an operator's mistake look
@@ -699,6 +731,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             port: DEFAULT_PORT,
+            cross_account_tiers: false,
             tiers: Tiers::default(),
             transport: TransportConfig::default(),
             effort: None,
@@ -708,6 +741,68 @@ impl Default for Config {
             accounts: BTreeMap::new(),
         }
     }
+}
+
+/// One tier's value: a model id, or a model id pinned to another account.
+///
+/// The bare string is the form every configuration has always used and keeps
+/// its meaning — the serving account. The table form is the cross-account one,
+/// gated by `cross_account_tiers`.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(untagged)]
+pub enum TierValue {
+    Model(String),
+    Pinned(PinnedTier),
+}
+
+/// `{ account = "...", model = "..." }` — this tier's turns are served as that
+/// account, whatever account serves the rest of the session.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct PinnedTier {
+    pub account: String,
+    pub model: String,
+}
+
+impl TierValue {
+    fn model(&self) -> &str {
+        match self {
+            Self::Model(model) => model,
+            Self::Pinned(pinned) => &pinned.model,
+        }
+    }
+
+    fn account(&self) -> Option<&str> {
+        match self {
+            Self::Model(_) => None,
+            Self::Pinned(pinned) => Some(&pinned.account),
+        }
+    }
+}
+
+impl From<String> for TierValue {
+    fn from(model: String) -> Self {
+        Self::Model(model)
+    }
+}
+
+impl From<&str> for TierValue {
+    fn from(model: &str) -> Self {
+        Self::Model(model.to_owned())
+    }
+}
+
+/// Whether the configuration consents to tier entries that name another
+/// account.
+///
+/// Carried as a parameter into every resolve rather than read from a field, so
+/// a call site cannot forget the gate: features here have shipped inert because
+/// nothing exercised the wiring, and a gate that has to be named to be skipped
+/// cannot be skipped silently.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CrossAccountTiers {
+    Permitted,
+    Refused,
 }
 
 /// All four tiers must be mapped explicitly.
@@ -720,13 +815,13 @@ impl Default for Config {
 #[serde(deny_unknown_fields)]
 pub struct Tiers {
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub opus: Option<String>,
+    pub opus: Option<TierValue>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub sonnet: Option<String>,
+    pub sonnet: Option<TierValue>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub haiku: Option<String>,
+    pub haiku: Option<TierValue>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub fable: Option<String>,
+    pub fable: Option<TierValue>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -764,6 +859,10 @@ impl Default for TransportConfig {
 pub struct ResolvedTier {
     pub tier: &'static str,
     pub model: String,
+    /// The account this tier's turns are served as, where the entry pinned
+    /// one. `None` is the serving account — the meaning every bare-string
+    /// entry has always had.
+    pub account: Option<String>,
     /// Whether this came from `DEFAULT_TIERS` rather than the configuration.
     ///
     /// A default is this proxy's guess about an account it has not seen; a
@@ -817,7 +916,10 @@ impl Tiers {
     /// A value that is present but blank is refused rather than defaulted. An
     /// omission is someone accepting the shipped answer; a blank is a mistake,
     /// and quietly replacing it would hide the mistake instead of naming it.
-    pub fn resolve(&self) -> Result<Vec<ResolvedTier>, ProxyError> {
+    pub fn resolve(
+        &self,
+        cross_account: CrossAccountTiers,
+    ) -> Result<Vec<ResolvedTier>, ProxyError> {
         let entries = [
             ("opus", &self.opus),
             ("sonnet", &self.sonnet),
@@ -827,7 +929,14 @@ impl Tiers {
 
         let blank: Vec<&str> = entries
             .iter()
-            .filter(|(_, model)| model.as_ref().is_some_and(|model| model.trim().is_empty()))
+            .filter(|(_, value)| {
+                value.as_ref().is_some_and(|value| {
+                    value.model().trim().is_empty()
+                        || value
+                            .account()
+                            .is_some_and(|account| account.trim().is_empty())
+                })
+            })
             .map(|(tier, _)| *tier)
             .collect();
 
@@ -839,17 +948,42 @@ impl Tiers {
             )));
         }
 
+        // The consent gate, before anything else about the entry is
+        // considered. Falling back to the serving account instead would spend
+        // the wrong account's quota invisibly, which is the exact failure the
+        // gate exists to prevent.
+        if cross_account == CrossAccountTiers::Refused
+            && let Some((tier, value)) = entries
+                .iter()
+                .filter_map(|(tier, value)| value.as_ref().map(|value| (*tier, value)))
+                .find(|(_, value)| value.account().is_some())
+        {
+            return Err(ProxyError::invalid_request(format!(
+                "tier `{tier}` names account `{}`, which routes this client's traffic \
+                 across accounts. That is a decision the operator owns: set \
+                 `cross_account_tiers = true` in config.toml to permit it.",
+                value.account().unwrap_or_default()
+            )));
+        }
+
         let resolved: Vec<ResolvedTier> = entries
             .iter()
-            .map(|(tier, model)| ResolvedTier {
+            .map(|(tier, value)| ResolvedTier {
                 tier,
-                defaulted: model.is_none(),
-                model: (*model).clone().unwrap_or_else(|| {
-                    DEFAULT_TIERS
-                        .iter()
-                        .find(|(name, _)| name == tier)
-                        .map_or_else(String::new, |(_, model)| (*model).to_owned())
-                }),
+                defaulted: value.is_none(),
+                account: value
+                    .as_ref()
+                    .and_then(|value| value.account())
+                    .map(str::to_owned),
+                model: value.as_ref().map_or_else(
+                    || {
+                        DEFAULT_TIERS
+                            .iter()
+                            .find(|(name, _)| name == tier)
+                            .map_or_else(String::new, |(_, model)| (*model).to_owned())
+                    },
+                    |value| value.model().to_owned(),
+                ),
             })
             .collect();
 

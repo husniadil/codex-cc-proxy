@@ -38,21 +38,25 @@ fn tiers() -> Vec<ResolvedTier> {
     vec![
         ResolvedTier {
             defaulted: false,
+            account: None,
             tier: "opus",
             model: "gpt-5.6-terra".to_owned(),
         },
         ResolvedTier {
             defaulted: false,
+            account: None,
             tier: "sonnet",
             model: "gpt-5.6-terra".to_owned(),
         },
         ResolvedTier {
             defaulted: false,
+            account: None,
             tier: "haiku",
             model: "gpt-5.4-mini".to_owned(),
         },
         ResolvedTier {
             defaulted: false,
+            account: None,
             tier: "fable",
             model: "gpt-5.4-mini".to_owned(),
         },
@@ -102,10 +106,10 @@ impl Harness {
         // catalog does not have would make every switch refuse itself.
         let config = Arc::new(proxenos::config::Config {
             tiers: proxenos::config::Tiers {
-                opus: Some("gpt-5.6-terra".to_owned()),
-                sonnet: Some("gpt-5.6-terra".to_owned()),
-                haiku: Some("gpt-5.6-terra".to_owned()),
-                fable: Some("gpt-5.6-terra".to_owned()),
+                opus: Some("gpt-5.6-terra".into()),
+                sonnet: Some("gpt-5.6-terra".into()),
+                haiku: Some("gpt-5.6-terra".into()),
+                fable: Some("gpt-5.6-terra".into()),
             },
             ..proxenos::config::Config::default()
         });
@@ -325,6 +329,7 @@ impl Harness {
             .into_iter()
             .map(|tier| ResolvedTier {
                 defaulted: false,
+                account: None,
                 tier,
                 model: model.to_owned(),
             })
@@ -2557,10 +2562,10 @@ fn mapping_per_account(accounts: &[&str]) -> proxenos::config::Config {
             (*account).to_owned(),
             proxenos::config::AccountConfig {
                 tiers: proxenos::config::Tiers {
-                    opus: Some(model.clone()),
-                    sonnet: Some(model.clone()),
-                    haiku: Some(model.clone()),
-                    fable: Some(model),
+                    opus: Some(model.clone().into()),
+                    sonnet: Some(model.clone().into()),
+                    haiku: Some(model.clone().into()),
+                    fable: Some(model.into()),
                 },
                 effort: None,
             },
@@ -2964,16 +2969,16 @@ fn mapping_for(account: &str, model: &str) -> proxenos::config::Config {
     // account does not override still validates — the assertion is about the
     // one tier it does.
     config.tiers = proxenos::config::Tiers {
-        opus: Some("gpt-5.6-terra".to_owned()),
-        sonnet: Some("gpt-5.6-terra".to_owned()),
-        haiku: Some("gpt-5.6-terra".to_owned()),
-        fable: Some("gpt-5.6-terra".to_owned()),
+        opus: Some("gpt-5.6-terra".into()),
+        sonnet: Some("gpt-5.6-terra".into()),
+        haiku: Some("gpt-5.6-terra".into()),
+        fable: Some("gpt-5.6-terra".into()),
     };
     config.accounts.insert(
         account.to_owned(),
         proxenos::config::AccountConfig {
             tiers: proxenos::config::Tiers {
-                opus: Some(model.to_owned()),
+                opus: Some(model.to_owned().into()),
                 ..proxenos::config::Tiers::default()
             },
             effort: Some("low".to_owned()),

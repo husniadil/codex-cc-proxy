@@ -479,6 +479,7 @@ fn tier(name: &'static str, model: &str, defaulted: bool) -> ResolvedTier {
         tier: name,
         model: model.to_owned(),
         defaulted,
+        account: None,
     }
 }
 

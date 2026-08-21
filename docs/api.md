@@ -771,6 +771,15 @@ while a blank is a mistake. Each mapped model is validated against the live
 catalog when one is reachable. That validation happens once, at startup: the
 catalog is not refetched, so a mapping cannot go stale while the daemon runs.
 
+A tier entry is a model id, or a table pinning one to another account:
+`haiku = { account = "spare", model = "..." }` serves that tier's turns as
+`spare` whatever account serves the rest of the session. The table form is
+gated by the top-level `cross_account_tiers = true` — it routes one client's
+traffic across accounts' quotas, which is a decision the operator owns, so its
+absence refuses the daemon at startup rather than falling back to the serving
+account. Falling back would spend the wrong account's quota invisibly. The
+bare-string form is ungated and keeps the meaning it has always had.
+
 `[client]` is policy the client applies to itself, which settings mostly carry
 and environment variables mostly cannot — see `proxy-behavior.md` §7.3 for why
 each default is what it is. `deny_skills` names skills refused for a session

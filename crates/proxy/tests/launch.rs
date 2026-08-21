@@ -663,6 +663,39 @@ fn a_launch_that_cannot_carry_the_policy_names_the_loss() {
     );
 }
 
+/// A cross-account tier mapping without the consent key refuses the daemon at
+/// startup — through the shipping binary, because the gate lives in a value
+/// handed through every resolve call and a missed call site would pass every
+/// unit test while the daemon started anyway.
+#[test]
+fn a_cross_account_mapping_without_consent_refuses_the_daemon() {
+    let dir = tempfile::tempdir().expect("a scratch directory");
+    let home = dir.path().join("home");
+    std::fs::create_dir_all(&home).expect("the home");
+    std::fs::write(
+        home.join("config.toml"),
+        r#"
+        [tiers]
+        haiku = { account = "spare", model = "gpt-5.4-mini" }
+        "#,
+    )
+    .expect("the config");
+
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_proxenos"))
+        .args(["run", "--port", "0"])
+        .env("PROXENOS_HOME", &home)
+        .env("TMPDIR", dir.path())
+        .output()
+        .expect("the binary runs");
+
+    assert!(!output.status.success(), "the daemon must refuse to start");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("cross_account_tiers"),
+        "the refusal names the consent key: {stderr}"
+    );
+}
+
 /// The project was renamed at v0.5.0, and an environment still exporting the
 /// old home variable is an operator who has not heard. Reading nothing and
 /// starting with an empty store would look like every credential vanished;

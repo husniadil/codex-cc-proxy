@@ -12,6 +12,7 @@ use std::sync::Arc;
 fn tier(name: &'static str, model: &str) -> ResolvedTier {
     ResolvedTier {
         defaulted: false,
+        account: None,
         tier: name,
         model: model.to_owned(),
     }
