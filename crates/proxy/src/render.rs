@@ -163,7 +163,14 @@ pub fn accounts(result: &Value) -> String {
                 .and_then(Value::as_str)
                 .or_else(|| field(account, "account_id").and_then(Value::as_str))
                 .unwrap_or(if key { "key" } else { "id unknown" });
-            format!("{marker} {name:<24} {who}")
+            // Named only where it is not the provider this project started
+            // with — like the kind, a column stamped on every line says
+            // nothing. Absent entirely from a daemon that predates providers.
+            let provider = match field(account, "provider").and_then(Value::as_str) {
+                Some(provider) if provider != "codex" => format!("  {provider}"),
+                _ => String::new(),
+            };
+            format!("{marker} {name:<24} {who}{provider}")
         })
         .collect::<Vec<_>>()
         .join("\n")
@@ -254,7 +261,16 @@ pub fn status(result: &Value) -> String {
             Some("key") => ", key",
             _ => "",
         };
-        format!("auth       connected ({who}{kind})")
+        // And the provider, by the same rule: only where it is not the one
+        // this proxy started with.
+        let provider = match auth
+            .and_then(|auth| field(auth, "provider"))
+            .and_then(Value::as_str)
+        {
+            Some(provider) if provider != "codex" => format!(", {provider}"),
+            _ => String::new(),
+        };
+        format!("auth       connected ({who}{kind}{provider})")
     } else {
         "auth       not connected — run `proxenos login`".to_owned()
     });

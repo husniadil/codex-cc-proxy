@@ -200,6 +200,8 @@ fn status(state: &ControlState) -> Value {
                 // What it authenticates with, because that decides which
                 // endpoint it is spent against and what it can be asked for.
                 "kind": account.kind,
+                // The other half of that decision: which provider's endpoint.
+                "provider": account.provider,
                 "account_id": account.account_id.clone(),
                 // Reported, never acted on. Null where neither source said
                 // anything: a defaulted plan would either explain away a

@@ -69,6 +69,34 @@ impl std::fmt::Debug for ApiKey {
     }
 }
 
+/// Which provider an account's credential is spent against.
+///
+/// A credential belongs to exactly one provider's endpoints, and sending it to
+/// the other's fails with a message about the credential rather than the
+/// destination. The default is the provider this project started with, so
+/// every credential file written before the field existed reads unchanged.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum Provider {
+    #[default]
+    Codex,
+    Anthropic,
+}
+
+impl Provider {
+    /// What this provider is called wherever it is reported.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Codex => "codex",
+            Self::Anthropic => "anthropic",
+        }
+    }
+
+    fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
 /// What an account authenticates with.
 ///
 /// The two kinds are not interchangeable: a grant is refreshed, carries an
@@ -138,6 +166,9 @@ pub struct Account {
     /// `grant` or `key`. What it authenticates with decides which endpoint it
     /// can be spent against, so nothing that reports an account omits it.
     pub kind: &'static str,
+    /// Which provider the credential is spent against — the other half of that
+    /// same decision.
+    pub provider: &'static str,
     /// The id the backend knows it by, where the grant carried one.
     pub account_id: Option<String>,
     /// Read from the stored id token, so two accounts are distinguishable by
@@ -212,6 +243,11 @@ struct StoredFile {
 #[derive(Debug, Deserialize, Serialize)]
 struct Entry {
     name: String,
+    /// Absent in every file written before there was a second provider, and
+    /// not written for the default — so a store that never leaves the first
+    /// provider keeps its exact shape.
+    #[serde(default, skip_serializing_if = "Provider::is_default")]
+    provider: Provider,
     #[serde(flatten)]
     credential: Credential,
 }
@@ -318,6 +354,10 @@ impl StoredFile {
             }
             None => self.accounts.push(Entry {
                 name: name.clone(),
+                // `put` takes what the first provider's authorization flow
+                // produced — it is the only flow there is (`docs/roadmap.md`
+                // §L holds the second one).
+                provider: Provider::Codex,
                 credential: Credential::Grant(credentials.clone()),
             }),
         }
@@ -694,6 +734,7 @@ impl AccountStore for FileStore {
                 Account {
                     name: entry.name.clone(),
                     kind: entry.credential.kind(),
+                    provider: entry.provider.as_str(),
                     // All four come from a grant's claims. A key carries none
                     // of them, and reports none rather than something
                     // plausible.
@@ -738,6 +779,11 @@ impl AccountStore for FileStore {
                 Some(entry) => entry.credential = Credential::Key(ApiKey::new(key)),
                 None => file.accounts.push(Entry {
                     name: name.to_owned(),
+                    // `login --key` has no provider flag yet; a key stored
+                    // through it is for the provider the verb has always
+                    // meant. The flag arrives with the path that spends the
+                    // other kind.
+                    provider: Provider::Codex,
                     credential: Credential::Key(ApiKey::new(key)),
                 }),
             }

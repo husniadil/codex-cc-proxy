@@ -209,6 +209,61 @@ fn the_binary_lists_and_switches_accounts() {
     assert!(stderr.contains("acct_one"), "{stderr}");
 }
 
+/// An account states its provider, and everything that reports the account
+/// says so — the roadmap's first rule for a second provider. The default is
+/// the provider this project started with, so every credential file written
+/// before the field existed reads unchanged, and the word appears only where
+/// it is not that default: a listing that stamped the same provider on every
+/// line would say nothing.
+#[test]
+fn an_account_states_its_provider_and_the_reports_name_it() {
+    let daemon = Daemon::start(&json!({
+        "selected": "work",
+        "accounts": [
+            { "name": "work", "access_token": "access-acct_one",
+              "refresh_token": "refresh-acct_one", "id_token": id_token("acct_one"),
+              "account_id": "acct_one", "expires_at": 4_000_000_000_u64 },
+            { "name": "claude", "kind": "key", "api_key": "sk-test-not-a-real-key",
+              "provider": "anthropic" },
+        ],
+    }));
+
+    let listed = daemon.run(&["accounts"]);
+    let line_of = |name: &str| {
+        listed
+            .lines()
+            .find(|line| line.contains(name))
+            .unwrap_or_else(|| panic!("{name} should be listed: {listed}"))
+            .to_owned()
+    };
+    assert!(
+        line_of("claude").contains("anthropic"),
+        "the account of the other provider must say so: {listed}"
+    );
+    assert!(
+        !line_of("work").contains("codex") && !line_of("work").contains("anthropic"),
+        "the default provider is not stamped on every line: {listed}"
+    );
+
+    // The switch rewrites the credential file, so this also holds the field
+    // through a round-trip: a write that dropped it would strand the account
+    // back on the default provider silently.
+    let _ = daemon.run(&["accounts", "--use", "claude"]);
+    let status = daemon.run(&["status"]);
+    assert!(
+        status.contains("anthropic"),
+        "status reports the provider of the account serving turns: {status}"
+    );
+    let relisted = daemon.run(&["accounts"]);
+    assert!(
+        relisted
+            .lines()
+            .find(|line| line.contains("claude"))
+            .is_some_and(|line| line.contains("anthropic")),
+        "the provider must survive the file being rewritten: {relisted}"
+    );
+}
+
 /// §2 — `accounts --forget` through the shipping binary. The named account
 /// goes, the rest stay usable, and something still serves turns.
 #[test]

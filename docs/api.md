@@ -621,7 +621,12 @@ is.
 **`status` names the account.** `auth.account` is what this daemon calls the one
 serving turns and is what selects it; `auth.account_id` is what the backend
 calls it and is what appears on a request; `auth.kind` is `grant` or `key`,
-which decides which endpoint it is spent against and what it can be asked for.
+which decides which endpoint it is spent against and what it can be asked for;
+`auth.provider` is the other half of that decision — which provider's endpoint,
+`codex` unless the account says otherwise, and each entry of `auth.accounts`
+carries the same field. Stored entries without one are the first provider's:
+every credential file written before the field existed reads unchanged, and the
+CLI renderings name a provider only where it is not `codex`.
 `auth.connected` means there is a credential to spend, of either kind — a key
 has no grant behind it, and reading only the grant reported a daemon that could
 serve every turn as not connected. `auth.accounts` lists every stored
