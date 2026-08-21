@@ -220,10 +220,72 @@ fn parse_rest_window(value: &Value) -> Option<Window> {
     })
 }
 
-/// The most recent snapshot, for whoever asks between turns.
-#[derive(Debug, Default)]
+/// How a figure was come by.
+///
+/// A figure that rode a turn and a figure that was asked for are both
+/// legitimate and differently stale, and a meter that showed one as the other
+/// would be stating an age it does not have.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Source {
+    /// Volunteered at the head of a stream, by a turn that was being made
+    /// anyway.
+    Turn,
+    /// Asked for over the control socket.
+    Fetch,
+}
+
+impl Source {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Turn => "turn",
+            Self::Fetch => "fetch",
+        }
+    }
+}
+
+/// One account's quota, with its age.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Measured {
+    pub snapshot: Snapshot,
+    pub source: Source,
+    /// Epoch seconds, as of when the figure was taken.
+    pub at: u64,
+}
+
+/// Which account this daemon serves unpinned turns as, asked at the moment a
+/// figure is recorded.
+///
+/// A resolver rather than a name, because the answer moves: the operator can
+/// select another account on a running daemon, and a figure belongs to
+/// whoever served the turn it came from rather than to whoever is serving when
+/// someone asks.
+pub type ServingAccount = std::sync::Arc<dyn Fn() -> Option<String> + Send + Sync>;
+
+fn now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| since.as_secs())
+}
+
+/// The latest quota figure per account, for whoever asks between turns.
+///
+/// **One snapshot per account, not one per daemon.** Two accounts can serve
+/// one session — a pinned tier's turns spend the account it names while the
+/// rest spend the serving one — so a single latest snapshot reports whichever
+/// account made the most recent turn as though it were the account being
+/// asked about.
+#[derive(Default)]
 pub struct UsageStore {
-    latest: Mutex<Option<Snapshot>>,
+    by_account: Mutex<std::collections::BTreeMap<String, Measured>>,
+    /// A figure no account could be named for.
+    ///
+    /// Only where this daemon has no way to answer "who is serving" — a test
+    /// harness driving the ingress with no credential store behind it. It is
+    /// reported where the daemon-wide figure has always been reported and is
+    /// never attributed to an account, because nothing here knows which one it
+    /// belongs to.
+    unattributed: Mutex<Option<Measured>>,
+    serving: Option<ServingAccount>,
     /// Every model id a turn has actually been made against.
     ///
     /// The configured tiers are the ids this daemon is *set up* to serve; an id
@@ -233,27 +295,133 @@ pub struct UsageStore {
     served: Mutex<std::collections::BTreeSet<String>>,
 }
 
+impl std::fmt::Debug for UsageStore {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.debug_struct("UsageStore").finish_non_exhaustive()
+    }
+}
+
 impl UsageStore {
-    pub fn record(&self, snapshot: &Snapshot) {
-        if let Ok(mut latest) = self.latest.lock() {
-            *latest = Some(snapshot.clone());
-        }
-    }
-
-    /// Forget the snapshot.
+    /// Bound to the accounts this daemon holds.
     ///
-    /// A quota belongs to an account, so switching accounts has to drop it:
-    /// reporting the previous account's headroom for the new one is wrong in
-    /// the direction that reads as room to spend. The next turn supplies a
-    /// figure for whoever is serving now.
-    pub fn clear(&self) {
-        if let Ok(mut latest) = self.latest.lock() {
-            *latest = None;
+    /// The serving account is whichever one the credential store has selected,
+    /// asked each time a figure is recorded rather than read once at startup:
+    /// the selection moves on a running daemon, and a figure belongs to the
+    /// account that served the turn it rode in on.
+    #[must_use]
+    pub fn for_accounts(store: std::sync::Arc<dyn crate::auth::store::AccountStore>) -> Self {
+        Self::default().serving(std::sync::Arc::new(move || {
+            store
+                .accounts()
+                .ok()?
+                .into_iter()
+                .find(|account| account.selected)
+                .map(|account| account.name)
+        }))
+    }
+
+    /// Bind the store to whoever is serving turns.
+    #[must_use]
+    pub fn serving(mut self, serving: ServingAccount) -> Self {
+        self.serving = Some(serving);
+        self
+    }
+
+    /// A snapshot that rode a turn made as whoever is serving.
+    pub fn record(&self, snapshot: &Snapshot) {
+        self.record_for(None, snapshot, Source::Turn);
+    }
+
+    /// File a figure under the account it belongs to.
+    ///
+    /// `None` is the serving account — what an unpinned turn is served as —
+    /// and it is resolved to that account's name here, at the moment the turn
+    /// was served, rather than left to be resolved by whoever asks later.
+    pub fn record_for(&self, account: Option<&str>, snapshot: &Snapshot, source: Source) {
+        let measured = Measured {
+            snapshot: snapshot.clone(),
+            source,
+            at: now(),
+        };
+
+        match account
+            .map(str::to_owned)
+            .or_else(|| self.serving.as_ref().and_then(|serving| serving()))
+        {
+            Some(name) => {
+                if let Ok(mut by_account) = self.by_account.lock() {
+                    by_account.insert(name, measured);
+                }
+            }
+            None => {
+                if let Ok(mut unattributed) = self.unattributed.lock() {
+                    *unattributed = Some(measured);
+                }
+            }
         }
     }
 
+    /// Forget one account's figure.
+    ///
+    /// What a removal invalidates, and all it invalidates: a figure is an
+    /// account's entitlement, and the account is gone.
+    pub fn forget(&self, account: &str) {
+        if let Ok(mut by_account) = self.by_account.lock() {
+            by_account.remove(account);
+        }
+    }
+
+    /// Forget the figure no account could be named for.
+    ///
+    /// What a select invalidates. Every named figure survives a select — it
+    /// still describes the account it was taken from — but an unattributed one
+    /// would be reported as the newly selected account's headroom, which is
+    /// wrong in the direction that reads as room to spend.
+    pub fn forget_unattributed(&self) {
+        if let Ok(mut unattributed) = self.unattributed.lock() {
+            *unattributed = None;
+        }
+    }
+
+    /// The serving account's figure, which is the one reported where a single
+    /// daemon-wide figure has always been reported.
     pub fn latest(&self) -> Option<Snapshot> {
-        self.latest.lock().ok().and_then(|latest| latest.clone())
+        self.latest_measured().map(|measured| measured.snapshot)
+    }
+
+    pub fn latest_measured(&self) -> Option<Measured> {
+        let serving = self
+            .serving
+            .as_ref()
+            .and_then(|serving| serving())
+            .and_then(|name| self.latest_for(&name));
+        serving.or_else(|| {
+            self.unattributed
+                .lock()
+                .ok()
+                .and_then(|unattributed| unattributed.clone())
+        })
+    }
+
+    /// One account's figure, if it has one.
+    pub fn latest_for(&self, account: &str) -> Option<Measured> {
+        self.by_account
+            .lock()
+            .ok()
+            .and_then(|by_account| by_account.get(account).cloned())
+    }
+
+    /// Every account this daemon holds a figure for, by name.
+    pub fn accounts(&self) -> Vec<(String, Measured)> {
+        self.by_account
+            .lock()
+            .map(|by_account| {
+                by_account
+                    .iter()
+                    .map(|(name, measured)| (name.clone(), measured.clone()))
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 
     pub fn record_model(&self, model: &str) {

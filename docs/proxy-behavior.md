@@ -1142,9 +1142,8 @@ daemon restarted, and a login through the CLI never reaches the daemon at all.
 Held as the token, a grant that is not the refused one is tried and the refused
 one is still never retried, whether it comes back by a switch or by a login.
 
-A quota belongs to the account that earned it, so switching accounts drops the
-snapshot and the next turn supplies one. Reporting the previous account's
-headroom is wrong in the direction that reads as room to spend.
+A quota belongs to the account that earned it, and is held under that account's
+name — §8.3.
 
 Clearing forgets one account and leaves the rest usable, selecting another to
 serve turns; clearing the last one removes the file, so "not authenticated" is
@@ -1225,6 +1224,42 @@ refresh.
 
 An account with no kind recorded is a grant, the same read-the-old-shape rule
 §8.1 applies to the file as a whole.
+
+### 8.3 A quota belongs to one account
+
+**One figure per account, not one per daemon.** Two accounts can serve one
+session: a pinned tier's turns spend the account it names (§7.1) while every
+other tier spends the serving one. A single latest snapshot reports whichever
+account made the most recent turn as though it answered the question that was
+asked, so a cheap-tier turn on a pinned account overwrites the headroom of the
+subscription the operator is actually watching.
+
+**A figure is filed under the account that served the turn it rode in on** —
+the pinned account where the tier pinned one, otherwise the serving account,
+resolved to its name at that moment rather than left to be resolved by whoever
+asks later. Both survive side by side: a turn on a pinned tier records under the
+pin and leaves the serving account's own figure exactly where it was.
+
+**Freshness is stated per account.** A figure that rode a turn and a figure that
+was asked for over the socket are both legitimate and differently stale, so each
+carries how it was come by and the moment it was taken. Neither is corrected,
+recomputed, or aged into an estimate: what the provider said is what is
+reported.
+
+**Absent stays absent.** A window a provider did not report is omitted rather
+than rendered as zero used, and an account with no figure at all reports that
+it has none. That covers every account of the second provider, whose quota
+endpoint is an open question (`roadmap.md` §L) — until it is answered, those
+accounts report unavailable rather than a plausible figure.
+
+**What a select and a removal invalidate.** With every figure held under a name,
+a **select** invalidates nothing that is named: each figure still describes the
+account it was taken from, and reporting it as that account is right whether or
+not that account is the one serving now. What a select does drop is a figure no
+account could be named for, which is reported where the daemon-wide figure is
+reported and would otherwise read as the newly selected account's headroom. A
+**removal** drops the removed account's figure, whether or not it was the one
+serving: the entitlement belongs to an account this daemon can no longer spend.
 
 ---
 

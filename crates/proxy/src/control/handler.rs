@@ -1107,7 +1107,12 @@ async fn select_account(state: &ControlState, params: Option<&Value>) -> Result<
         )));
     }
 
-    state.usage.clear();
+    // §8.3 — every account's figure is held under its own name and survives a
+    // select, because it still describes the account it was taken from. What
+    // does not survive is a figure no account could be named for: reported
+    // where the daemon-wide figure is reported, it would read as the newly
+    // selected account's headroom.
+    state.usage.forget_unattributed();
     // The conversations already bound to the previous account. Each pays a
     // full upload on its next turn, which is what §4.3 resolves every
     // ambiguity toward anyway — and the alternative is a conversation billed
@@ -1295,18 +1300,23 @@ async fn forget_account(state: &ControlState, params: Option<&Value>) -> Result<
         }
     };
 
-    // Only if the grant being spent is the one that went. Forgetting an idle
-    // account changes nothing about the account serving turns, and discarding
-    // its quota there costs a figure for nothing — while forgetting its
-    // refusal would leave `status` reporting a healthy grant while every
-    // dispatch failed.
+    // §8.3 — the figure that went with the account, whether or not it was the
+    // one serving turns. A quota is an account's entitlement, and the account
+    // is gone; leaving it behind would report headroom for a subscription this
+    // daemon can no longer spend.
+    if let Some(name) = &cleared {
+        state.usage.forget(name);
+    }
+
     // Handing over to another account is a switch by another name, so what
-    // travels with a switch travels here: the quota that belonged to the grant
-    // that went, the conversations bound to it, and the catalog that described
-    // its plan.
+    // travels with a switch travels here: the conversations bound to the grant
+    // that went, and the catalog that described its plan. Forgetting an idle
+    // account changes nothing about the account serving turns — while
+    // forgetting its refusal would leave `status` reporting a healthy grant
+    // while every dispatch failed.
     let handed_over = cleared.is_some() && cleared == serving;
     if handed_over {
-        state.usage.clear();
+        state.usage.forget_unattributed();
         state.sessions.clear();
     }
 

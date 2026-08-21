@@ -6,7 +6,9 @@
 
 use pretty_assertions::assert_eq;
 use proxenos::usage::Snapshot;
+use proxenos::usage::Source;
 use serde_json::json;
+use std::sync::Arc;
 
 /// A real snapshot, as the backend sends it: one long window, no second one.
 fn free_plan() -> String {
@@ -209,5 +211,181 @@ fn an_unrecognized_body_is_not_read_as_an_empty_quota() {
     assert!(
         proxenos::usage::Snapshot::parse_rest(r#"{"rate_limit":{}}"#).is_none(),
         "a rate_limit with no window at all says nothing about quota"
+    );
+}
+
+/// A snapshot with a percentage no other snapshot in a test can be confused
+/// for.
+fn snapshot(used_percent: f64) -> Snapshot {
+    Snapshot {
+        plan: Some("plus".to_owned()),
+        limit_reached: false,
+        windows: vec![proxenos::usage::Window {
+            used_percent,
+            window_minutes: Some(300),
+            resets_at: Some(1_789_487_264),
+        }],
+    }
+}
+
+/// A store whose serving account is whatever this name says.
+fn store_serving(name: &'static str) -> proxenos::usage::UsageStore {
+    proxenos::usage::UsageStore::default()
+        .serving(Arc::new(move || Some(name.to_owned())) as proxenos::usage::ServingAccount)
+}
+
+/// **Build 1, at the store.** Two accounts can serve one session, so a figure
+/// is held under the account it belongs to rather than as the daemon's one
+/// latest.
+#[test]
+fn each_accounts_figure_is_held_under_its_own_name() {
+    let store = store_serving("main");
+
+    store.record_for(None, &snapshot(11.0), Source::Turn);
+    store.record_for(Some("spare"), &snapshot(77.0), Source::Turn);
+
+    let held: Vec<(String, f64)> = store
+        .accounts()
+        .into_iter()
+        .map(|(name, measured)| (name, measured.snapshot.windows[0].used_percent))
+        .collect();
+    assert_eq!(
+        held,
+        vec![("main".to_owned(), 11.0), ("spare".to_owned(), 77.0)],
+        "a pinned tier's turn must not displace the serving account's figure"
+    );
+}
+
+/// An unpinned turn is filed under the account that actually served it, by
+/// name — which is what lets a later select report the right account's figure
+/// rather than whatever the last turn happened to leave behind.
+#[test]
+fn an_unpinned_turn_is_filed_under_the_serving_accounts_name() {
+    let store = store_serving("main");
+    store.record_for(None, &snapshot(11.0), Source::Turn);
+
+    assert_eq!(
+        store.latest_for("main").map(|m| m.snapshot),
+        Some(snapshot(11.0))
+    );
+}
+
+/// The figure reported where one has always been reported is the serving
+/// account's, never a pinned account's.
+#[test]
+fn the_top_level_figure_follows_the_serving_account() {
+    let store = store_serving("main");
+    store.record_for(Some("spare"), &snapshot(77.0), Source::Turn);
+
+    assert_eq!(
+        store.latest(),
+        None,
+        "the serving account has made no turn, and the pinned account's \
+         headroom is not an answer for it"
+    );
+
+    store.record_for(None, &snapshot(11.0), Source::Turn);
+    assert_eq!(store.latest(), Some(snapshot(11.0)));
+}
+
+/// How a figure was come by, and when, travels with it: one that rode a turn
+/// and one that was asked for are both legitimate and differently stale.
+#[test]
+fn a_figure_carries_how_it_was_come_by_and_when() {
+    let store = store_serving("main");
+    let before = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+
+    store.record_for(None, &snapshot(11.0), Source::Turn);
+    store.record_for(Some("spare"), &snapshot(77.0), Source::Fetch);
+
+    let main = store.latest_for("main").unwrap();
+    assert_eq!(main.source, Source::Turn);
+    assert!(main.at >= before, "the moment it was taken travels with it");
+    assert_eq!(store.latest_for("spare").unwrap().source, Source::Fetch);
+}
+
+/// **Build 4, at the store.** Forgetting an account drops its figure and
+/// nothing else: the rest stay valid because each is held under its own name.
+#[test]
+fn forgetting_an_account_drops_only_its_own_figure() {
+    let store = store_serving("main");
+    store.record_for(None, &snapshot(11.0), Source::Turn);
+    store.record_for(Some("spare"), &snapshot(77.0), Source::Turn);
+
+    store.forget("spare");
+
+    assert!(store.latest_for("spare").is_none());
+    assert_eq!(
+        store.latest_for("main").map(|m| m.snapshot),
+        Some(snapshot(11.0))
+    );
+}
+
+/// A figure taken where no account could be named is reported at the top and
+/// never as some account's, and a select drops it — presenting it as the newly
+/// selected account's headroom is the error this whole keying exists to stop.
+#[test]
+fn a_figure_no_account_can_be_named_for_is_dropped_by_a_select() {
+    let store = proxenos::usage::UsageStore::default();
+    store.record_for(None, &snapshot(11.0), Source::Turn);
+
+    assert_eq!(store.latest(), Some(snapshot(11.0)));
+    assert!(
+        store.accounts().is_empty(),
+        "nothing can name it, so it names nothing"
+    );
+
+    store.forget_unattributed();
+    assert_eq!(store.latest(), None);
+}
+
+/// The wiring the daemon actually uses: the serving account is whichever one
+/// the credential store has selected, read when the figure is recorded.
+///
+/// Asserted through the store rather than through the switch, because a
+/// resolver that was never handed a credential store files every figure as
+/// unattributed and reports an empty per-account meter while every unit test
+/// still passes.
+#[test]
+fn the_serving_account_is_the_one_the_credential_store_has_selected() {
+    use proxenos::auth::store::AccountStore;
+
+    let dir = tempfile::tempdir().unwrap();
+    let credentials = Arc::new(proxenos::auth::store::FileStore::new(
+        dir.path().join("credentials.json"),
+    ));
+    let grant = |account_id: &str| proxenos::auth::store::Credentials {
+        access_token: "token".to_owned(),
+        refresh_token: "refresh".to_owned(),
+        id_token: None,
+        account_id: Some(account_id.to_owned()),
+        expires_at: Some(u64::MAX / 2),
+    };
+    credentials.add(&grant("acct_main"), Some("main")).unwrap();
+    credentials
+        .add(&grant("acct_spare"), Some("spare"))
+        .unwrap();
+    credentials.select("spare").unwrap();
+
+    let store = proxenos::usage::UsageStore::for_accounts(
+        Arc::clone(&credentials) as Arc<dyn AccountStore>
+    );
+    store.record_for(None, &snapshot(23.0), Source::Turn);
+
+    assert_eq!(
+        store.latest_for("spare").map(|m| m.snapshot),
+        Some(snapshot(23.0))
+    );
+    assert!(store.latest_for("main").is_none());
+
+    // And it follows the selection rather than remembering it.
+    credentials.select("main").unwrap();
+    store.record_for(None, &snapshot(41.0), Source::Turn);
+    assert_eq!(
+        store.latest_for("main").map(|m| m.snapshot),
+        Some(snapshot(41.0))
     );
 }

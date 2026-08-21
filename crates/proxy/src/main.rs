@@ -835,7 +835,6 @@ fn log_tail(path: &std::path::Path, since: u64) -> String {
 }
 
 async fn run_with(args: RunArgs, capture: Capture) -> Result<()> {
-    let usage = Arc::new(proxenos::usage::UsageStore::default());
     let switches = Arc::new(proxenos::recorder::Switches::new(match capture {
         Capture::Nothing => None,
         Capture::Ingress => Some(proxenos::recorder::Mode::Ingress),
@@ -850,6 +849,13 @@ async fn run_with(args: RunArgs, capture: Capture) -> Result<()> {
 
     let credentials: Arc<dyn proxenos::auth::store::AccountStore> =
         Arc::new(proxenos::auth::store::FileStore::new(credential_path()));
+
+    // §8.3 — a quota figure is filed under the account that earned it, and an
+    // unpinned turn's account is whoever this store has selected when the turn
+    // is served.
+    let usage = Arc::new(proxenos::usage::UsageStore::for_accounts(Arc::clone(
+        &credentials,
+    )));
 
     // Which account's mapping is in force. Read before the mapping is resolved
     // rather than after, because a catalog is one account's menu (§7.0) and a
