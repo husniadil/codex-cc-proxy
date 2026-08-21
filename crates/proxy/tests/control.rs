@@ -3116,3 +3116,116 @@ async fn renaming_an_account_with_no_section_writes_nothing() {
         "a rename with nothing to move should not create a configuration file"
     );
 }
+
+/// A persisted tier change is written where the value is read from.
+///
+/// The serving account's section shadows the shared table for the tiers it
+/// names, so writing the shared one would leave the change in force on this
+/// daemon and gone at the next start — written, and left looking applied.
+#[tokio::test]
+async fn a_persisted_tier_is_written_under_the_account_that_shadows_it() {
+    let harness = Harness::start()
+        .await
+        .with_configuration(mapping_for("spare", "gpt-5.6-terra"))
+        .await;
+    harness
+        .store
+        .add(&grant("acct_one", "a-one"), Some("spare"))
+        .unwrap();
+    std::fs::write(
+        &harness.config_file,
+        "[tiers]\n\
+         opus   = \"gpt-5.6-terra\"\n\
+         sonnet = \"gpt-5.6-terra\"\n\n\
+         [accounts.spare.tiers]\n\
+         opus = \"gpt-5.6-terra\"\n",
+    )
+    .unwrap();
+
+    harness
+        .call_with(
+            "tiers.set",
+            json!({ "tiers": { "opus": "gpt-5.4-mini", "sonnet": "gpt-5.4-mini" }, "persist": true }),
+        )
+        .await
+        .unwrap();
+
+    let written: toml::Value =
+        toml::from_str(&std::fs::read_to_string(&harness.config_file).unwrap()).unwrap();
+    assert_eq!(
+        written["accounts"]["spare"]["tiers"]["opus"].as_str(),
+        Some("gpt-5.4-mini"),
+        "opus is shadowed by the account section, so that is where it belongs"
+    );
+    assert_eq!(
+        written["tiers"]["sonnet"].as_str(),
+        Some("gpt-5.4-mini"),
+        "sonnet is not shadowed, so the shared table is where it is read from"
+    );
+    assert_eq!(
+        written["tiers"]["opus"].as_str(),
+        Some("gpt-5.6-terra"),
+        "the shared opus is not what this account reads, and was not touched"
+    );
+}
+
+/// A change aimed at an account that is not serving turns is written and not
+/// applied, and says which.
+#[tokio::test]
+async fn a_tier_set_for_another_account_is_written_but_not_in_force() {
+    let harness = Harness::start().await;
+    harness
+        .store
+        .add(&grant("acct_one", "a-one"), Some("spare"))
+        .unwrap();
+    harness
+        .store
+        .add(&grant("acct_two", "a-two"), Some("work"))
+        .unwrap();
+
+    let before = harness.policy.get().tiers().to_vec();
+    harness
+        .call_with(
+            "tiers.set",
+            json!({ "account": "spare", "tiers": { "opus": "gpt-5.4-mini" }, "persist": true }),
+        )
+        .await
+        .unwrap();
+
+    let written: toml::Value =
+        toml::from_str(&std::fs::read_to_string(&harness.config_file).unwrap()).unwrap();
+    assert_eq!(
+        written["accounts"]["spare"]["tiers"]["opus"].as_str(),
+        Some("gpt-5.4-mini")
+    );
+    assert_eq!(
+        harness.policy.get().tiers(),
+        before,
+        "the account serving turns is `work`, so nothing routing should have moved"
+    );
+}
+
+/// The same call without `persist` would change nothing anywhere, and says so
+/// rather than answering as though it did something.
+#[tokio::test]
+async fn a_tier_set_for_another_account_without_persist_is_refused() {
+    let harness = Harness::start().await;
+    harness
+        .store
+        .add(&grant("acct_one", "a-one"), Some("spare"))
+        .unwrap();
+    harness
+        .store
+        .add(&grant("acct_two", "a-two"), Some("work"))
+        .unwrap();
+
+    let error = harness
+        .call_with(
+            "tiers.set",
+            json!({ "account": "spare", "tiers": { "opus": "gpt-5.4-mini" } }),
+        )
+        .await
+        .unwrap_err();
+
+    assert!(error.contains("persist"), "{error}");
+}

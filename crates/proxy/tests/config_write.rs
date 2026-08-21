@@ -34,7 +34,7 @@ websocket = true
 
 #[test]
 fn setting_a_tier_changes_one_value_and_nothing_else() {
-    let written = edit::set_tier(DOCUMENT, "sonnet", "gpt-5.4-mini").unwrap();
+    let written = edit::set_tier(DOCUMENT, None, "sonnet", "gpt-5.4-mini").unwrap();
 
     assert!(written.contains(r#"sonnet = "gpt-5.4-mini""#));
     // Every comment survives, including the one explaining the tier that was
@@ -58,7 +58,7 @@ fn setting_a_tier_changes_one_value_and_nothing_else() {
 /// defaulted.
 #[test]
 fn a_tier_the_file_never_stated_is_added_inside_its_table() {
-    let written = edit::set_tier(DOCUMENT, "fable", "gpt-5.6-sol").unwrap();
+    let written = edit::set_tier(DOCUMENT, None, "fable", "gpt-5.6-sol").unwrap();
 
     let tiers = written.find("[tiers]").unwrap();
     let transport = written.find("[transport]").unwrap();
@@ -77,7 +77,7 @@ fn a_tier_the_file_never_stated_is_added_inside_its_table() {
 /// A file with no `[tiers]` table at all gains one.
 #[test]
 fn a_file_without_the_table_gains_it() {
-    let written = edit::set_tier("port = 8787\n", "opus", "gpt-5.6-terra").unwrap();
+    let written = edit::set_tier("port = 8787\n", None, "opus", "gpt-5.6-terra").unwrap();
 
     assert_eq!(
         toml::from_str::<toml::Value>(&written).unwrap()["tiers"]["opus"].as_str(),
@@ -91,7 +91,7 @@ fn a_file_without_the_table_gains_it() {
 /// line that leaves the commented one looking authoritative.
 #[test]
 fn setting_the_effort_ceiling_uncomments_rather_than_duplicates() {
-    let written = edit::set_effort(DOCUMENT, Some("high")).unwrap();
+    let written = edit::set_effort(DOCUMENT, None, Some("high")).unwrap();
 
     assert!(written.contains(r#"effort = "high""#));
     assert_eq!(
@@ -109,8 +109,8 @@ fn setting_the_effort_ceiling_uncomments_rather_than_duplicates() {
 /// the explanation above it still has something to explain.
 #[test]
 fn removing_the_effort_ceiling_leaves_the_key_commented() {
-    let set = edit::set_effort(DOCUMENT, Some("high")).unwrap();
-    let removed = edit::set_effort(&set, None).unwrap();
+    let set = edit::set_effort(DOCUMENT, None, Some("high")).unwrap();
+    let removed = edit::set_effort(&set, None, None).unwrap();
 
     assert!(removed.contains("# effort = "));
     assert!(
@@ -129,7 +129,8 @@ fn removing_the_effort_ceiling_leaves_the_key_commented() {
 /// about it looks wrong.
 #[test]
 fn the_effort_key_is_never_written_under_a_table() {
-    let written = edit::set_effort("[tiers]\nopus = \"gpt-5.6-terra\"\n", Some("low")).unwrap();
+    let written =
+        edit::set_effort("[tiers]\nopus = \"gpt-5.6-terra\"\n", None, Some("low")).unwrap();
 
     let parsed: toml::Value = toml::from_str(&written).unwrap();
     assert_eq!(parsed["effort"].as_str(), Some("low"));
@@ -151,7 +152,7 @@ fn the_effort_key_is_never_written_under_a_table() {
 fn an_effort_key_below_a_table_header_is_not_the_one_that_gets_set() {
     let document = "port = 8787\n\n[tiers]\nopus = \"gpt-5.6-terra\"\n# effort = \"low\"\n";
 
-    let written = edit::set_effort(document, Some("high")).unwrap();
+    let written = edit::set_effort(document, None, Some("high")).unwrap();
 
     let parsed: toml::Value = toml::from_str(&written).unwrap();
     assert_eq!(
@@ -170,7 +171,7 @@ fn an_effort_key_below_a_table_header_is_not_the_one_that_gets_set() {
 /// must not gain a second one there.
 #[test]
 fn removing_a_ceiling_from_a_file_that_never_had_one_adds_nothing_under_a_table() {
-    let written = edit::set_effort("[tiers]\nopus = \"gpt-5.6-terra\"\n", None).unwrap();
+    let written = edit::set_effort("[tiers]\nopus = \"gpt-5.6-terra\"\n", None, None).unwrap();
 
     let parsed: toml::Value = toml::from_str(&written).unwrap();
     assert!(parsed.get("effort").is_none());

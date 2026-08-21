@@ -6,6 +6,31 @@ in [`docs/api.md`](docs/api.md) §6.
 
 ## [Unreleased]
 
+### Added
+
+- **A tier mapping belongs to an account.** A catalog is one account's menu, so
+  one mapping is only ever right for the models every stored account has — and
+  that intersection shrinks with each account added. Two subscriptions on
+  different plans are offered different models; a key account beside a
+  subscription need not overlap at all. `[accounts.<name>.tiers]` replaces the
+  tiers it names and no others, and `effort` under `[accounts.<name>]` replaces
+  the shared ceiling rather than being capped by it. The key is the name the
+  store files the account under, because a key account has no id to be named by
+  and the name is what every account verb takes.
+
+  Three things follow, and each was a way for the mapping to be quietly wrong.
+  A **switch re-resolves it**, and is refused by a mapping the target account's
+  catalog cannot serve — the daemon stays where it was, catalog included, rather
+  than serving an account whose every turn dies upstream saying nothing about
+  tier mapping. A **rename takes the section with it**, headers only, every key
+  and comment under them untouched. And a **persisted change is written where
+  the value is read from**: a change written to the shared table while the
+  serving account shadows it would be in force now and gone at the next start.
+  `tiers.set` and `effort.set` also take `{"account": name}`, which writes that
+  account's section; aimed at an account that is not serving, the change is
+  written and not applied, and without `persist` it is refused rather than
+  answered as though it had done something.
+
 ### Changed
 
 - **`disconnect` is now `accounts.forget` on the control socket, and its answer

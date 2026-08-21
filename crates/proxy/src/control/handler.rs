@@ -525,6 +525,14 @@ fn set_tiers(state: &ControlState, params: Option<&Value>) -> Result<Value, Prox
     // was, so the error the caller gets is the whole story; applying first
     // would leave it running a policy nobody chose, reported as a failure, and
     // gone at the next restart.
+    let (target, applies_now) = write_target(state, params)?;
+    if !applies_now && !persist {
+        return Err(ProxyError::invalid_request(
+            "that account is not the one serving turns, so this would change nothing \
+             unless it is written: pass `persist`, or select the account first",
+        ));
+    }
+
     let persisted = if persist {
         write_config(state, |document| {
             let mut document = document.to_owned();
@@ -532,7 +540,15 @@ fn set_tiers(state: &ControlState, params: Option<&Value>) -> Result<Value, Prox
                 // Every value was checked to be a non-blank string above, so
                 // this cannot be reached with anything else.
                 let model = model.as_str().unwrap_or_default();
-                document = crate::config::edit::set_tier(&document, name, model)?;
+                // Written where the value is read from. An account section
+                // shadows the shared table for the tiers it names (§4), so a
+                // change written to the shared one would be in force on this
+                // daemon and gone at the next start — written and left looking
+                // applied, which is the one thing this method must not do.
+                let under = target
+                    .clone()
+                    .or_else(|| shadowing_account(state, |tiers| tier_named(tiers, name)));
+                document = crate::config::edit::set_tier(&document, under.as_deref(), name, model)?;
             }
             Ok(document)
         })?
@@ -540,7 +556,9 @@ fn set_tiers(state: &ControlState, params: Option<&Value>) -> Result<Value, Prox
         false
     };
 
-    state.policy.set_tiers(tiers);
+    if applies_now {
+        state.policy.set_tiers(tiers);
+    }
 
     Ok(json!({
         "tiers": tier_map(state),
@@ -554,6 +572,70 @@ fn set_tiers(state: &ControlState, params: Option<&Value>) -> Result<Value, Prox
             "in effect until the daemon stops; the configuration file is unchanged"
         },
     }))
+}
+
+/// Whose configuration a persisted change belongs in, and whether it takes
+/// effect on this daemon now.
+///
+/// `None` is the shared table, which is what a caller naming no account means
+/// and what a single-account operator wants to see edited. A named account that
+/// is not the one serving turns changes nothing here — the mapping in force
+/// belongs to the account being served — so such a call is only meaningful when
+/// it is written.
+fn write_target(
+    state: &ControlState,
+    params: Option<&Value>,
+) -> Result<(Option<String>, bool), ProxyError> {
+    let Some(named) = params
+        .and_then(|params| params.get("account"))
+        .and_then(Value::as_str)
+    else {
+        return Ok((None, true));
+    };
+
+    let stored = state.credentials.accounts()?;
+    if !stored.iter().any(|account| account.name == named) {
+        return Err(ProxyError::invalid_request(format!(
+            "no account named `{named}`; stored: {}",
+            stored
+                .iter()
+                .map(|account| account.name.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        )));
+    }
+
+    let applies_now = serving_name(state).as_deref() == Some(named);
+    Ok((Some(named.to_owned()), applies_now))
+}
+
+/// The serving account, where its own section already states the thing about to
+/// be written — which is what decides where that value is read from.
+fn shadowing_account(
+    state: &ControlState,
+    states_it: impl Fn(&crate::config::Tiers) -> bool,
+) -> Option<String> {
+    let serving = serving_name(state)?;
+    let section = state.config.accounts.get(&serving)?;
+    states_it(&section.tiers).then_some(serving)
+}
+
+/// The same, for the ceiling.
+fn shadowing_effort(state: &ControlState) -> Option<String> {
+    let serving = serving_name(state)?;
+    let section = state.config.accounts.get(&serving)?;
+    section.effort.is_some().then_some(serving)
+}
+
+/// Whether a mapping states this tier by name.
+fn tier_named(tiers: &crate::config::Tiers, tier: &str) -> bool {
+    match tier {
+        "opus" => tiers.opus.is_some(),
+        "sonnet" => tiers.sonnet.is_some(),
+        "haiku" => tiers.haiku.is_some(),
+        "fable" => tiers.fable.is_some(),
+        _ => false,
+    }
 }
 
 /// Apply an edit to the configuration file's text.
@@ -638,16 +720,31 @@ fn set_effort(state: &ControlState, params: Option<&Value>) -> Result<Value, Pro
         .unwrap_or(false);
 
     // Written before it is applied, for the same reason `tiers.set` is.
+    let (target, applies_now) = write_target(state, params)?;
+    if !applies_now && !persist {
+        return Err(ProxyError::invalid_request(
+            "that account is not the one serving turns, so this would change nothing \
+             unless it is written: pass `persist`, or select the account first",
+        ));
+    }
+
+    // Written before it is applied, for the same reason `tiers.set` is.
     let persisted = if persist {
         let effort = requested.as_str().map(str::to_owned);
+        // Written where the value is read from, exactly as a tier is: an
+        // account section stating `effort` replaces the shared line for that
+        // account (§4).
+        let under = target.or_else(|| shadowing_effort(state));
         write_config(state, |document| {
-            crate::config::edit::set_effort(document, effort.as_deref())
+            crate::config::edit::set_effort(document, under.as_deref(), effort.as_deref())
         })?
     } else {
         false
     };
 
-    state.policy.set_effort_ceiling(ceiling);
+    if applies_now {
+        state.policy.set_effort_ceiling(ceiling);
+    }
 
     Ok(json!({
         "effort": requested.clone(),

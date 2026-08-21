@@ -19,7 +19,18 @@
 use crate::error::ProxyError;
 
 /// Point a tier at a model, in the text of the file.
-pub fn set_tier(document: &str, tier: &str, model: &str) -> Result<String, ProxyError> {
+///
+/// `account` names whose mapping it is: `None` for the shared `[tiers]` table,
+/// a name for that account's own `[accounts.<name>.tiers]`. Written where the
+/// value will be read from — an account section shadows the shared table for
+/// the tiers it names (§4), so writing the shared one there would leave the
+/// change applied on a running daemon and gone at the next start.
+pub fn set_tier(
+    document: &str,
+    account: Option<&str>,
+    tier: &str,
+    model: &str,
+) -> Result<String, ProxyError> {
     if !crate::config::TIER_NAMES.contains(&tier) {
         return Err(ProxyError::invalid_request(format!(
             "unknown tier `{tier}`; expected one of: {}",
@@ -27,15 +38,20 @@ pub fn set_tier(document: &str, tier: &str, model: &str) -> Result<String, Proxy
         )));
     }
 
+    let header = match account {
+        Some(account) => format!("[accounts.{}.tiers]", key(account)),
+        None => "[tiers]".to_owned(),
+    };
+
     let mut lines: Vec<String> = document.lines().map(str::to_owned).collect();
 
-    let table = lines.iter().position(|line| line.trim() == "[tiers]");
+    let table = lines.iter().position(|line| line.trim() == header);
 
     let Some(start) = table else {
         // No table at all. Appending one at the end is safe in a way appending
         // a bare key never is: a table header ends whatever table preceded it.
         let mut written = document.trim_end().to_owned();
-        written.push_str(&format!("\n\n[tiers]\n{tier} = \"{model}\"\n"));
+        written.push_str(&format!("\n\n{header}\n{tier} = \"{model}\"\n"));
         return Ok(written);
     };
 
@@ -83,12 +99,29 @@ pub fn set_tier(document: &str, tier: &str, model: &str) -> Result<String, Proxy
 /// `None` comments the key out rather than deleting the line: the explanation
 /// above it is worth keeping, and a commented key still shows what the setting
 /// is called.
-pub fn set_effort(document: &str, effort: Option<&str>) -> Result<String, ProxyError> {
+pub fn set_effort(
+    document: &str,
+    account: Option<&str>,
+    effort: Option<&str>,
+) -> Result<String, ProxyError> {
     if let Some(effort) = effort {
         // Rejected here rather than written and refused at the next startup,
         // which would leave a daemon that will not start and a file that looks
         // like someone meant it.
         crate::config::parse_effort(effort)?;
+    }
+
+    // An account's ceiling is a key inside its own table, so it is written the
+    // way a tier is rather than the way the shared one is. The shared one is
+    // the special case: it is a bare key, and a bare key belongs to the table
+    // above it.
+    if let Some(account) = account {
+        return set_in_table(
+            document,
+            &format!("[accounts.{}]", key(account)),
+            "effort",
+            effort,
+        );
     }
 
     let mut lines: Vec<String> = document.lines().map(str::to_owned).collect();
@@ -213,4 +246,62 @@ fn key(name: &str) -> String {
         return name.to_owned();
     }
     format!("\"{}\"", name.replace('\\', "\\\\").replace('"', "\\\""))
+}
+
+/// Set or comment out one key inside a named table, creating the table at the
+/// end of the file if it has none.
+///
+/// Appending a table header is safe in a way appending a bare key never is: a
+/// header ends whatever table preceded it.
+fn set_in_table(
+    document: &str,
+    header: &str,
+    name: &str,
+    value: Option<&str>,
+) -> Result<String, ProxyError> {
+    let mut lines: Vec<String> = document.lines().map(str::to_owned).collect();
+    let line = match value {
+        Some(value) => format!("{name} = \"{value}\""),
+        None => format!("# {name} = \"low\""),
+    };
+
+    let Some(start) = lines.iter().position(|line| line.trim() == header) else {
+        let mut written = document.trim_end().to_owned();
+        written.push_str(&format!("\n\n{header}\n{line}\n"));
+        return Ok(written);
+    };
+
+    let end = lines
+        .iter()
+        .skip(start + 1)
+        .position(|line| line.trim_start().starts_with('['))
+        .map_or(lines.len(), |offset| start + 1 + offset);
+
+    let body = lines.get(start + 1..end).unwrap_or_default();
+    // A commented-out key counts, so a second live line cannot end up below one
+    // that still looks like the setting.
+    let existing = body
+        .iter()
+        .position(|line| {
+            let bare = line.trim_start().trim_start_matches('#').trim_start();
+            is_assignment_to(bare, name)
+        })
+        .map(|offset| start + 1 + offset);
+
+    match existing {
+        Some(index) => {
+            if let Some(existing) = lines.get_mut(index) {
+                *existing = line;
+            }
+        }
+        None => {
+            let insert = body
+                .iter()
+                .rposition(|line| !line.trim().is_empty())
+                .map_or(start + 1, |offset| start + 1 + offset + 1);
+            lines.insert(insert, line);
+        }
+    }
+
+    Ok(with_trailing_newline(lines.join("\n")))
 }

@@ -735,6 +735,11 @@ the shared tables answer for everything it does not state. Keyed by the name the
 store files it under, because that is what every account verb takes and a key
 account carries no id to be named by.
 
+**A change is persisted where the value is read from.** An account section
+shadows the shared table for what it names, so writing a change to the shared
+table while such a section exists would leave it in force on the running daemon
+and gone at the next start. `api.md` §3 carries how each method chooses.
+
 **A switch re-resolves the mapping and can be refused by it.** Selecting an
 account resolves that account's tiers and ceiling and validates them against
 the catalog fetched for it, before anything else moves. A mapping naming a

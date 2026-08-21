@@ -472,8 +472,8 @@ A Unix domain socket, or a named pipe on Windows, carrying JSON-RPC:
 | `record.start` / `record.stop` | fixture capture | yes — `{"mode": "ingress"}` by default, `"upstream"` must be named because it bills every turn that follows |
 | `login` | authorization URL, then completion in the background; `status` reports when it landed. `{"label": name}` names the account it produces, and the answer states the label actually in force | yes |
 | `login.cancel` | abandons a flow and releases the callback port | yes |
-| `tiers.set` | tier mapping, validated against the catalog and in effect until the daemon stops | yes |
-| `effort.set` | the effort ceiling, or `null` to remove it; in effect until the daemon stops | yes |
+| `tiers.set` | tier mapping, validated against the catalog and in effect until the daemon stops; `{"account": name}` writes that account's section instead of the shared table | yes |
+| `effort.set` | the effort ceiling, or `null` to remove it; in effect until the daemon stops; `{"account": name}` as for `tiers.set` | yes |
 | `doctor` | probe results | no — `doctor` runs in the CLI, which is where `--live` can be given credentials without a daemon already holding them |
 
 **`disconnect` is gone and `accounts.forget` replaces it**, and the answer's
@@ -501,6 +501,20 @@ reported as a failure, and gone at the next restart.
 same as an operator changing what this daemon is, and only the caller knows
 which it is doing. Without it the change lasts until the daemon stops, and every
 answer says which it was rather than leaving it to be discovered.
+
+**A persisted change is written where the value is read from.** An account
+section shadows the shared table for the tiers it names and for the ceiling it
+states (§4), so a change written to the shared table while such a section exists
+would be in force on this daemon and gone at the next start — written, and left
+looking applied. With no `account` named, each tier goes to the serving
+account's section if that section already names it and to the shared table
+otherwise; the ceiling follows the same rule. `{"account": name}` writes that
+account's section regardless.
+
+A change aimed at an account that is not the one serving turns is **written and
+not applied**: the mapping in force belongs to the account being served. Without
+`persist` such a call would change nothing anywhere, and is refused rather than
+answered as though it had done something.
 
 A persisted change is a **text edit**, not a re-serialization. The file is a
 document whose comments explain why each key is what it is, and most of them
