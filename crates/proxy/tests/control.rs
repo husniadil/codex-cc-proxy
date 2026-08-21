@@ -892,6 +892,25 @@ async fn the_env_payload_carries_the_client_policy_beside_the_variables() {
     );
 }
 
+/// The connector opt-out is the one piece of client policy with an environment
+/// half. `disableClaudeAiConnectors` silences the client's notice; this
+/// variable is the client's documented switch for the claude.ai-hosted servers
+/// themselves. One configuration key, both renderings — an export-only launch
+/// (`proxenos env`) otherwise runs with the connectors it asked to disable.
+#[tokio::test]
+async fn disabling_connectors_also_reaches_the_environment() {
+    let harness = Harness::start().await;
+    let result = harness.call("env").await.unwrap();
+
+    let variables = render::variables(&result);
+    assert!(
+        variables
+            .iter()
+            .any(|(name, value)| name == "ENABLE_CLAUDEAI_MCP_SERVERS" && value == "false"),
+        "the connector half of the policy has an environment variable and it is missing: {result}"
+    );
+}
+
 /// One document, complete on its own.
 ///
 /// Measured: a settings file's `env` key routes without help. A client started
@@ -981,6 +1000,13 @@ async fn a_client_policy_switched_off_leaves_no_trace() {
     assert!(
         !rendered.lines().any(|line| line.starts_with('#')),
         "there is no gap left to warn about: {rendered}"
+    );
+
+    assert!(
+        !render::variables(&result)
+            .iter()
+            .any(|(name, _)| name == "ENABLE_CLAUDEAI_MCP_SERVERS"),
+        "a policy switched off must not leave its environment half behind: {result}"
     );
 }
 

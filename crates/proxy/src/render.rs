@@ -7,9 +7,11 @@ use serde_json::Value;
 
 /// `docs/api.md` §2.2 — shell exports, for a shell.
 ///
-/// Routing only. Client policy lives in the client's settings file and has no
-/// environment variable of any kind, so this rendering cannot carry it and says
-/// so in a comment `eval` steps over.
+/// Routing, plus the one piece of client policy that has an environment
+/// variable: the connector opt-out. The rest — the denied skill, the connector
+/// notice — lives in the client's settings file and has no environment
+/// variable, so this rendering cannot carry it and says so in a comment `eval`
+/// steps over.
 ///
 /// It keeps working against a daemon older than this binary, because routing is
 /// all it ever carried and an older daemon has all of it. That case gets its own
@@ -28,16 +30,20 @@ pub fn env_shell(result: &Value) -> String {
         }
         Some(policy) if !policy.is_empty() => {
             lines.push(
-                "# Client policy (a denied skill, the connector notice) is not below: it lives in \
-                 the client's"
+                "# Client policy is only partly below (the connector switch). The rest — a \
+                 denied skill,"
                     .to_owned(),
             );
             lines.push(
-                "# settings file and has no environment variable. `proxenos settings` \
-                 carries it,"
+                "# the connector notice — lives in the client's settings file and has no \
+                 environment"
                     .to_owned(),
             );
-            lines.push("# and `proxenos exec` applies it for one run.".to_owned());
+            lines.push(
+                "# variable. `proxenos settings` carries it, and `proxenos exec` applies it \
+                 for one run."
+                    .to_owned(),
+            );
         }
         // Present and empty: the daemon knows about this and has nothing to say.
         Some(_) => {}

@@ -888,6 +888,16 @@ whenever an auth token is set, which here is always. Whether the setting still
 silences it on the current client version is **unverified here** — see
 `docs/roadmap.md` §L.
 
+**The connectors themselves are switched off through the environment.** The same
+`disable_connectors` key also emits `ENABLE_CLAUDEAI_MCP_SERVERS=false` among the
+routing exports — the client's own documented opt-out for its claude.ai-hosted
+servers, and the one piece of this policy an export can carry. It matters for the
+launch the settings document never reaches: a client configured by `proxenos env`
+alone would otherwise load connectors against an account the backend here cannot
+serve. The variable does not silence the notice — that is the settings key's half,
+which is why both exist. Whether the current client still honours the variable is
+the same kind of open question as the notice — see `docs/roadmap.md` §L.
+
 **Both are switchable**, in `[client]`, where the comments explaining them live.
 An operator building against that provider's API wants the reference the rest of
 us are paying to avoid, and an empty `deny_skills` gives it back. The default is

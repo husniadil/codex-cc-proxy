@@ -282,11 +282,15 @@ an unmapped haiku breaks it in a way that looks unrelated to tier mapping.
 `[1m]` to an unrecognized id and assumes a million tokens — see
 `proxy-behavior.md` §7.2.
 
-**Shell exports carry routing only.** Client policy (§7.3 of
-`proxy-behavior.md`) lives in the client's settings file and has no environment
-variable of any kind, so this rendering cannot deliver it. It says so in a
-comment, which `eval` steps over, and the comment appears only when there is a
-policy being left out.
+**Shell exports carry routing, plus the connector switch.** When
+`client.disable_connectors` is on, the exports include
+`ENABLE_CLAUDEAI_MCP_SERVERS=false` — the client's documented opt-out for the
+claude.ai-hosted servers, and the one piece of client policy (§7.3 of
+`proxy-behavior.md`) that has an environment variable. The rest — the denied
+skill, the connector notice — lives in the client's settings file and has no
+environment variable of any kind, so this rendering cannot deliver it. It says
+so in a comment, which `eval` steps over, and the comment appears only when
+there is a policy being left out.
 
 `settings` emits one complete client settings document. `env --json` is the same
 verb under the older name and prints the same bytes by running it, rather than
@@ -754,13 +758,17 @@ while a blank is a mistake. Each mapped model is validated against the live
 catalog when one is reachable. That validation happens once, at startup: the
 catalog is not refetched, so a mapping cannot go stale while the daemon runs.
 
-`[client]` is policy the client applies to itself, which no environment variable
-can carry — see `proxy-behavior.md` §7.3 for why each default is what it is.
-`deny_skills` names skills refused for a session served here; the proxy writes
-the `Skill(...)` rule the client understands, because a rule built by hand and
-built wrong denies nothing and reports nothing. An empty list allows everything.
-`disable_connectors` suppresses the connector notice the client prints whenever
-an auth token is set, which here is always.
+`[client]` is policy the client applies to itself, which settings mostly carry
+and environment variables mostly cannot — see `proxy-behavior.md` §7.3 for why
+each default is what it is. `deny_skills` names skills refused for a session
+served here; the proxy writes the `Skill(...)` rule the client understands,
+because a rule built by hand and built wrong denies nothing and reports nothing.
+An empty list allows everything. `disable_connectors` does two things through
+one intent: the settings key (`disableClaudeAiConnectors`) suppresses the
+connector notice the client prints whenever an auth token is set, which here is
+always, and the export (`ENABLE_CLAUDEAI_MCP_SERVERS=false`) is the client's
+documented opt-out for the claude.ai-hosted servers themselves — the half that
+still reaches a client launched from `proxenos env` alone.
 
 `effort` caps reasoning effort on every request, whatever the client asks for —
 one of `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, `ultra`

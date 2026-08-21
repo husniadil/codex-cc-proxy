@@ -373,6 +373,18 @@ pub fn environment(state: &ControlState) -> Vec<(String, String)> {
         ("ANTHROPIC_AUTH_TOKEN".to_owned(), "unused".to_owned()),
     ];
 
+    // The environment half of `client.disable_connectors`. The settings key
+    // (`disableClaudeAiConnectors`) silences the client's connector notice;
+    // this variable is the client's own documented opt-out for the
+    // claude.ai-hosted servers themselves. One configuration key drives both,
+    // because they are one intent — and without this half, a launch configured
+    // by exports alone runs with the connectors it asked to disable. Whether
+    // the current client still honours it is a §L question (`docs/roadmap.md`),
+    // like the notice.
+    if state.config.client.disable_connectors {
+        variables.push(("ENABLE_CLAUDEAI_MCP_SERVERS".to_owned(), "false".to_owned()));
+    }
+
     for tier in state.policy.get().tiers().iter() {
         variables.push((
             format!("ANTHROPIC_DEFAULT_{}_MODEL", tier.tier.to_uppercase()),
