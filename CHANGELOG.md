@@ -6,6 +6,15 @@ in [`docs/api.md`](docs/api.md) §6.
 
 ## [Unreleased]
 
+## [0.8.0]
+
+The proxy's own surface is measured against a real one, and the daemon stops
+being something an operator has to notice is gone. Every emitted shape now has
+a captured answer to be held against, including the two kinds this proxy builds
+rather than passes through; and a `supervisor` verb installs the thing the code
+had been assuming existed since the first release.
+
+
 ### Fixed
 
 - **The supervisor verb compiles where launchd does not.** The helper that

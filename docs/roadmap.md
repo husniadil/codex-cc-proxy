@@ -561,7 +561,55 @@ cannot reach past itself.
 capability probes driven live against the relay, which need the serving account
 switched for the length of a run and stay in §L.
 
-### v0.8.0
+### v0.8.0 — shipped
+
+**What this proxy emits, measured against a real answer — and a daemon that
+comes back.** Two gaps that had the same shape: something the project believed
+without ever having checked it. The Messages surface is the whole product, and
+until this release nothing here had seen one — every conformance claim was
+derived from documentation and from captures of the client side. And the code
+had reasoned about running under a supervisor since the first release, sizing
+the window `stop` waits through for launchd's ten-second respawn hold, while
+nothing installed one; the first sign of a daemon that had simply gone was a
+launch that failed.
+
+`record surface` calls the real endpoint through the same relay code a §9 turn
+takes and writes each exchange as a fixture, and a conformance suite replays the
+corpus through the shipping translator, comparing shapes rather than content:
+which events exist, which fields each carries, which keys an error envelope has.
+The rule is a subset in one direction — a field a real answer carries and this
+proxy omits is one a client already tolerates; a field this proxy emits that no
+real answer carries is something a client was never built to receive. Shapes no
+capture reaches are named rather than skipped, because a skip reads exactly like
+a pass, and the two block kinds this proxy *reconstructs* — reasoning into
+`thinking`, native search into `server_tool_use` and `web_search_tool_result` —
+were exactly the four it could not reach. They have captures of their own now,
+and both came out subsets.
+
+`supervisor install` writes a per-user LaunchAgent and hands it to launchd;
+macOS is the only platform implemented and every other refuses by name, because
+a unit written but never accepted reports success and supervises nothing. The
+socket path was the hazard worth settling first: it is derived from
+`PROXENOS_HOME` and `TMPDIR`, a launchd job does not see the login shell's
+environment, and where the two disagree the daemon serves turns while every CLI
+verb reports connection refused. One function derives it for both ends, the unit
+carries what that derivation used, and `supervisor status` reports a drift
+rather than leaving it to be discovered.
+
+**Done when** every shape the translator emits has a captured answer to be held
+against or is named as unreached, and a daemon that dies comes back without
+anyone noticing it was gone.
+
+**Done.** What is deliberately not here: a systemd unit, which is named in the
+refusal rather than written; and live capability probes against the relay, which
+stay in §L.
+
+### Next
+
+Named rather than numbered. Twice now a section here has worn a version that
+shipped as something else entirely, because what is ready first is not what the
+list guessed — and a roadmap that misnames a released version is read as a
+record and is wrong as one.
 
 **A graphical front-end.** The control socket was built for exactly this: the
 daemon holds authoritative state, the CLI has no privileged path of its own, and
