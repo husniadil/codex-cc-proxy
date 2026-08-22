@@ -251,16 +251,32 @@ One line under the matrix names what the run exercised and what it did not: the
 account whose credential was spent, and — always — that the WebSocket transport
 was not among it. A live run is HTTP only, since a probe is one turn with no
 continuation and the socket's value is entirely in the incremental path. The
-same line says whether the relay path (§9) was exercised. Green rows say
+same line says whether the relay path (§9) was exercised, and as which
+account when it answered live. Green rows say
 nothing about a path no probe drove, and a reader with no line to tell them
 otherwise reads green as coverage of the whole proxy.
 
-The relay path has a probe of its own, and it is replay-only. It drives the §9
-branch against a recording whose marker sits inside a field the proxy does not
-model, so a body round-tripped through the proxy's own types fails it. `--live`
-skips that row: driving the relay against the real backend needs the account
-serving turns switched to the second provider for the length of the run, and
-that is not wired.
+The relay path has a probe of its own, and it runs on both modes. Replayed, it
+drives the §9 branch against a recording whose marker sits inside a field the
+proxy does not model, so a body round-tripped through the proxy's own types
+fails it, and a stand-in backend records the bytes it was sent so both halves
+are checked. Live, it sends a turn of its own to the second provider's real
+endpoint.
+
+The live arm establishes the answer half only, and the row says so. Forwarding
+is the whole behaviour of this path, so the outbound bytes leave on a socket
+this process cannot read; the request-half checks do not run, and the replay arm
+is what covers them. Running them over a stand-in value would report a pass for
+a half nothing looked at.
+
+Which account the live arm relays as is read from the store rather than taken
+from whichever account is serving turns. Exactly one account on the second
+provider is used; several need `--relay-account <name>`; none skips the row
+naming what the store holds. The account is pinned by name, and an authorization
+by name neither reads nor changes the selection — `accounts` reports the same
+serving account before and after a run. The coverage line names the relayed
+account separately from the account the translating probes spent, because they
+are different accounts by construction.
 
 `--probe <name>` runs one at a time, and naming an unknown one lists the
 known ones.

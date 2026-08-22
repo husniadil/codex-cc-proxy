@@ -36,6 +36,21 @@ pub enum Check {
     PositiveInFrame { frame_type: String, pointer: String },
 }
 
+impl Check {
+    /// Whether this reads the request the backend was sent.
+    ///
+    /// The split matters on one arm only: a live relay forwards bytes this
+    /// process cannot watch, so the request half has nothing to read and a
+    /// check applied to a `Null` there would pass without establishing
+    /// anything.
+    pub fn reads_the_request(&self) -> bool {
+        matches!(
+            self,
+            Self::RequestContains { .. } | Self::RequestMentions { .. }
+        )
+    }
+}
+
 /// Which surface a probe exercises.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Surface {
@@ -372,6 +387,9 @@ pub struct Outcome {
     /// the renderer having to look the probe up again.
     pub rationale: &'static str,
     pub status: Status,
+    /// What this run could not establish, where a passing row would otherwise
+    /// claim more than it measured. Printed beside the row.
+    pub note: Option<String>,
 }
 
 /// Evaluate one probe against what was actually sent and received.
@@ -392,6 +410,24 @@ pub fn evaluate(probe: &Probe, upstream_request: &Value, client_frames: &[Value]
 /// is free to answer differently.
 pub fn evaluate_live(probe: &Probe, upstream_request: &Value, client_frames: &[Value]) -> Status {
     check_all(probe.checks.iter(), upstream_request, client_frames)
+}
+
+/// The checks that read the answer, and only those.
+///
+/// A live relay forwards the client's bytes straight through, so there is no
+/// point inside this process where they can be observed. Running the
+/// request-half checks over the `Null` that stands in for them would report a
+/// pass for a half nothing looked at, which is the plausible output §10.3
+/// exists to prevent. What is left out is named on the row instead.
+pub fn evaluate_answer_only(probe: &Probe, client_frames: &[Value]) -> Status {
+    check_all(
+        probe
+            .checks
+            .iter()
+            .filter(|check| !check.reads_the_request()),
+        &Value::Null,
+        client_frames,
+    )
 }
 
 fn check_all<'a>(
@@ -505,7 +541,14 @@ pub enum Evidence {
     Replay { corpus: String },
     /// Answered by the real backend, as this account. `None` is the account
     /// serving turns.
-    Live { account: Option<String> },
+    ///
+    /// `relay` is the account the §9 arm spent, which is a different one by
+    /// construction: a relayed turn is authorized as an account on the second
+    /// provider, named rather than serving. `None` where that arm did not run.
+    Live {
+        account: Option<String>,
+        relay: Option<String>,
+    },
 }
 
 /// One probe run, in the terms the matrix has to state.
@@ -548,13 +591,20 @@ impl Evidence {
 /// a reader with nothing to tell them otherwise reads green as coverage of the
 /// whole proxy. Both absences are named here rather than inferred.
 fn coverage(outcomes: &[Outcome], run: &Run) -> String {
-    let relay = if outcomes
+    let ran = outcomes
         .iter()
-        .any(|outcome| outcome.surface == Surface::Relay && outcome.status == Status::Passed)
-    {
-        "the relay path (§9) was replayed"
-    } else {
-        "the relay path (§9) was not exercised"
+        .any(|outcome| outcome.surface == Surface::Relay && outcome.status == Status::Passed);
+    let relay = match (&run.evidence, ran) {
+        (_, false) => "the relay path (§9) was not exercised".to_owned(),
+        (
+            Evidence::Live {
+                relay: Some(name), ..
+            },
+            true,
+        ) => {
+            format!("the relay path (§9) answered live as `{name}`")
+        }
+        (_, true) => "the relay path (§9) was replayed".to_owned(),
     };
 
     match &run.evidence {
@@ -562,7 +612,7 @@ fn coverage(outcomes: &[Outcome], run: &Run) -> String {
             "Exercised: the translation path, answered from {corpus}; {relay}. \
              Not exercised: the WebSocket transport, and no account was contacted."
         ),
-        Evidence::Live { account } => {
+        Evidence::Live { account, .. } => {
             let whose = match account {
                 Some(account) => format!("as `{account}`"),
                 None => "as the account serving turns".to_owned(),
@@ -596,6 +646,11 @@ pub fn matrix(outcomes: &[Outcome], run: &Run) -> String {
             format!("{detail}  {NEVER_REACHES_THE_BACKEND}")
         } else {
             detail
+        };
+        // What the row did not establish, where it did not establish all of it.
+        let marked = match &outcome.note {
+            Some(note) => format!("{marked}  ({note})"),
+            None => marked,
         };
         lines.push(format!("  {mark:<5} {:<16}{marked}", outcome.name));
 

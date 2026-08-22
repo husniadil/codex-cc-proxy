@@ -181,7 +181,77 @@ enum Backend {
         transport: Arc<dyn Transport>,
         models: Arc<Vec<ModelMapping>>,
         effort_ceiling: Option<proxenos_core::responses::Effort>,
+        /// The §9 arm, or the reason it cannot run. Resolved by the caller,
+        /// because choosing which account a relayed turn is authorized as is a
+        /// decision about whose quota is spent.
+        relay: Result<LiveRelay, String>,
     },
+}
+
+/// What a live §9 turn is sent to, and what it is sent as.
+///
+/// The store and the authorizer are the real ones. The account is named, and
+/// `Authorizer::authorize(Some(name))` reads and refuses by that name, so the
+/// account serving turns is neither read nor changed.
+pub struct LiveRelay {
+    pub endpoint: String,
+    pub store: Arc<dyn crate::auth::store::AccountStore>,
+    pub authorizer: Arc<dyn crate::auth::authorize::Authorizer>,
+    pub account: String,
+}
+
+/// Which stored account the live relay arm would spend.
+///
+/// Exactly one account on the second provider is the answer. Several is a
+/// question for the operator rather than a pick made on their behalf, and none
+/// is a skip that says what the store holds.
+pub fn relay_account(
+    accounts: &[crate::auth::store::Account],
+    requested: Option<&str>,
+) -> Result<String, String> {
+    let provider = crate::auth::store::Provider::Anthropic.as_str();
+    let candidates: Vec<&crate::auth::store::Account> = accounts
+        .iter()
+        .filter(|account| account.provider == provider)
+        .collect();
+
+    if let Some(requested) = requested {
+        return candidates
+            .iter()
+            .find(|account| account.name == requested)
+            .map(|account| account.name.clone())
+            .ok_or_else(|| {
+                format!(
+                    "`{requested}` is not an account on the {provider} provider; \
+                     the store holds {}",
+                    named(&candidates)
+                )
+            });
+    }
+
+    match candidates.as_slice() {
+        [] => Err(format!(
+            "the store holds no account on the {provider} provider, so there is \
+             nothing a relayed turn could be authorized as"
+        )),
+        [only] => Ok(only.name.clone()),
+        several => Err(format!(
+            "the store holds {} on the {provider} provider; name one with \
+             `--relay-account`",
+            named(several)
+        )),
+    }
+}
+
+fn named(accounts: &[&crate::auth::store::Account]) -> String {
+    if accounts.is_empty() {
+        return "none".to_owned();
+    }
+    accounts
+        .iter()
+        .map(|account| format!("`{}`", account.name))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// Run the probe suite against the fixture corpus.
@@ -205,6 +275,7 @@ pub async fn run_live(
     transport: Arc<dyn Transport>,
     models: Arc<Vec<ModelMapping>>,
     effort_ceiling: Option<proxenos_core::responses::Effort>,
+    relay: Result<LiveRelay, String>,
 ) -> Result<Vec<Outcome>, ProxyError> {
     run_against(
         fixtures,
@@ -213,6 +284,7 @@ pub async fn run_live(
             transport,
             models,
             effort_ceiling,
+            relay,
         },
     )
     .await
@@ -249,6 +321,7 @@ async fn run_against(
                     surface: probe.surface,
                     rationale: probe.rationale,
                     status: Status::Skipped(reason),
+                    note: None,
                 });
                 continue;
             }
@@ -263,31 +336,11 @@ async fn run_against(
                     surface: probe.surface,
                     rationale: probe.rationale,
                     status: Status::Skipped(format!("the fixture will not parse: {error}")),
+                    note: None,
                 });
                 continue;
             }
         };
-
-        // §9 live is not wired. Driving the relay against the real backend
-        // needs the account serving turns switched to the second provider for
-        // the length of the run — a change to what the daemon is serving while
-        // it is serving it. Skipped rather than run against the translating
-        // path, which would report the wrong path's health under this name.
-        if matches!(backend, Backend::Live { .. }) && probe.surface == crate::probe::Surface::Relay
-        {
-            outcomes.push(Outcome {
-                name: probe.name.to_owned(),
-                capability: probe.capability,
-                surface: probe.surface,
-                rationale: probe.rationale,
-                status: Status::Skipped(
-                    "a live relay run needs the serving account switched to the second \
-                     provider, which is not wired"
-                        .to_owned(),
-                ),
-            });
-            continue;
-        }
 
         // Only a replayed run needs the recording. Live, the backend supplies
         // the stream and the fixture is only there for its request.
@@ -304,6 +357,7 @@ async fn run_against(
                     "the fixture carries no upstream stream; this path never reaches the backend"
                         .to_owned(),
                 ),
+                note: None,
             });
             continue;
         }
@@ -328,7 +382,7 @@ async fn run_against(
 
 async fn run_one(probe: &probe::Probe, fixture: &Fixture, backend: &Backend) -> Outcome {
     if probe.surface == crate::probe::Surface::Relay {
-        return run_relay(probe, fixture).await;
+        return run_relay(probe, fixture, backend).await;
     }
 
     // Both arms watch the request, because half the checks are about what the
@@ -352,6 +406,7 @@ async fn run_one(probe: &probe::Probe, fixture: &Fixture, backend: &Backend) -> 
             transport,
             models,
             effort_ceiling,
+            ..
         } => (
             Arc::new(WatchingTransport {
                 inner: Arc::clone(transport),
@@ -398,6 +453,7 @@ async fn run_one(probe: &probe::Probe, fixture: &Fixture, backend: &Backend) -> 
             surface: probe.surface,
             rationale: probe.rationale,
             status: Status::Skipped("could not bind a loopback port".to_owned()),
+            note: None,
         };
     };
     let Ok(addr) = listener.local_addr() else {
@@ -407,6 +463,7 @@ async fn run_one(probe: &probe::Probe, fixture: &Fixture, backend: &Backend) -> 
             surface: probe.surface,
             rationale: probe.rationale,
             status: Status::Skipped("could not read the bound port".to_owned()),
+            note: None,
         };
     };
     tokio::spawn(async move {
@@ -446,6 +503,7 @@ async fn run_one(probe: &probe::Probe, fixture: &Fixture, backend: &Backend) -> 
                 surface: probe.surface,
                 rationale: probe.rationale,
                 status: Status::Failed(format!("the proxy did not answer: {error}")),
+                note: None,
             };
         }
     };
@@ -482,6 +540,7 @@ async fn run_one(probe: &probe::Probe, fixture: &Fixture, backend: &Backend) -> 
         surface: probe.surface,
         rationale: probe.rationale,
         status,
+        note: None,
     }
 }
 
@@ -650,7 +709,191 @@ fn run_environment(probe: &probe::Probe) -> Outcome {
         surface: probe.surface,
         rationale: probe.rationale,
         status: probe::check_environment(&translating, &all_relay),
+        note: None,
     }
+}
+
+/// The model a live §9 turn names.
+///
+/// The relay never rewrites the model (§9), so this id is the second
+/// provider's own and has to be one it will answer. The corpus's id is a
+/// placeholder that only a stand-in backend accepts, which is why the live arm
+/// does not reuse it.
+pub const LIVE_RELAY_MODEL: &str = "claude-haiku-4-5-20251001";
+
+/// The marker a probe requires the client to receive.
+///
+/// Read from the probe rather than repeated, so the request the live arm builds
+/// and the check it is graded by cannot drift apart.
+pub fn answer_marker(probe: &probe::Probe) -> Option<String> {
+    probe.checks.iter().find_map(|check| match check {
+        crate::probe::Check::ClientReceives { marker } => Some(marker.clone()),
+        _ => None,
+    })
+}
+
+/// The turn a live §9 run sends.
+///
+/// Built here rather than taken from the corpus: the recorded request carries a
+/// field no real backend models and an id no real backend serves, both of which
+/// exist to prove the bytes were forwarded untouched against a stand-in. A real
+/// backend refuses them, so the live arm asks the one question it can answer —
+/// that a turn routed onto this path reaches the second provider and comes back
+/// — and the marker is what makes the reply evidence rather than plausibility.
+fn live_relay_request(model: &str, marker: &str) -> Value {
+    serde_json::json!({
+        "stream": true,
+        "model": model,
+        "max_tokens": 64,
+        "messages": [{
+            "role": "user",
+            "content": format!("Reply with exactly this code and nothing else: {marker}"),
+        }],
+    })
+}
+
+/// What a live relay row does not establish.
+const OUTBOUND_UNWATCHED: &str =
+    "the outbound bytes are unwatched live; the replay arm covers that half";
+
+async fn run_relay(probe: &probe::Probe, fixture: &Fixture, backend: &Backend) -> Outcome {
+    match backend {
+        Backend::Replay => run_relay_replay(probe, fixture).await,
+        Backend::Live { relay, .. } => match relay {
+            Ok(relay) => run_relay_live(probe, relay).await,
+            Err(reason) => Outcome {
+                name: probe.name.to_owned(),
+                capability: probe.capability,
+                surface: probe.surface,
+                rationale: probe.rationale,
+                status: Status::Skipped(reason.clone()),
+                note: None,
+            },
+        },
+    }
+}
+
+/// Drive the §9 relay branch against the real second provider.
+///
+/// The store and the authorizer are the real ones and the account is named, so
+/// `Authorizer::authorize(Some(name))` reads one account by name and refuses by
+/// name — the account serving turns is neither read nor written. The mapping is
+/// pinned to that same name, which is what puts the turn on this path (§9.1)
+/// without anything being selected.
+///
+/// The outbound bytes cannot be watched from here: forwarding is the whole
+/// behaviour, and the socket they leave on belongs to the HTTP client. So the
+/// request-half checks do not run, and the row says so rather than passing over
+/// a value nothing looked at.
+async fn run_relay_live(probe: &probe::Probe, relay: &LiveRelay) -> Outcome {
+    let outcome = |status: Status, note: Option<String>| Outcome {
+        name: probe.name.to_owned(),
+        capability: probe.capability,
+        surface: probe.surface,
+        rationale: probe.rationale,
+        status,
+        note,
+    };
+
+    let Some(marker) = answer_marker(probe) else {
+        return outcome(
+            Status::Skipped("the probe requires no marker in the answer".to_owned()),
+            None,
+        );
+    };
+
+    let state = AppState {
+        policy: Arc::new(crate::policy::Policy::new(
+            crate::policy::Snapshot::routing_only(
+                vec![ModelMapping {
+                    requested: LIVE_RELAY_MODEL.to_owned(),
+                    upstream: LIVE_RELAY_MODEL.to_owned(),
+                    account: Some(relay.account.clone()),
+                }],
+                None,
+            ),
+        )),
+        catalog: Arc::new(crate::catalog::CatalogSource::fixed(
+            crate::catalog::Catalog::fallback(),
+        )),
+        // Deliberately unreachable, for the same reason as on the replay arm: a
+        // turn that took the translating path would fail to connect rather than
+        // quietly answer as though it had been relayed.
+        transport: Arc::new(crate::upstream::http::HttpTransport::new(
+            "http://127.0.0.1:1/unused",
+        )),
+        conduits: None,
+        recorder: None,
+        capture: Arc::new(crate::recorder::Switches::default()),
+        usage: Arc::new(crate::usage::UsageStore::default()),
+        instructions: Arc::new(crate::config::InstructionsConfig {
+            identity: false,
+            append: None,
+            working_budget: false,
+        }),
+        sessions: Arc::new(crate::session::SessionStore::new()),
+        relay: Some(Arc::new(crate::upstream::relay::Relay::new(
+            relay.endpoint.clone(),
+            Arc::clone(&relay.store),
+            Arc::clone(&relay.authorizer),
+        ))),
+    };
+
+    let Ok(listener) = tokio::net::TcpListener::bind("127.0.0.1:0").await else {
+        return outcome(
+            Status::Skipped("could not bind a loopback port".to_owned()),
+            None,
+        );
+    };
+    let Ok(addr) = listener.local_addr() else {
+        return outcome(
+            Status::Skipped("could not read the bound port".to_owned()),
+            None,
+        );
+    };
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, router(state)).await;
+    });
+
+    let response = reqwest::Client::new()
+        .post(format!("http://{addr}/v1/messages"))
+        .header(axum::http::header::CONTENT_TYPE, "application/json")
+        // §9 forwards the client's headers as sent, so a probe of that path has
+        // to send what a client sends. The endpoint refuses a call without this
+        // one, and the refusal is about the probe rather than about the relay.
+        .header("anthropic-version", "2023-06-01")
+        .body(live_relay_request(LIVE_RELAY_MODEL, &marker).to_string())
+        .send()
+        .await;
+
+    let body = match response {
+        Ok(response) => response.text().await.unwrap_or_default(),
+        Err(error) => {
+            return outcome(
+                Status::Failed(format!("the proxy did not answer: {error}")),
+                None,
+            );
+        }
+    };
+
+    // A refusal arrives as one JSON object rather than as frames, so a run that
+    // never got a stream would otherwise fail with the marker's absence and say
+    // nothing about why. What the backend refused is the useful half.
+    let frames = frames_of(&body);
+    if frames.is_empty() {
+        return outcome(
+            Status::Failed(format!(
+                "the backend returned no frames: {}",
+                body.chars().take(300).collect::<String>()
+            )),
+            Some(OUTBOUND_UNWATCHED.to_owned()),
+        );
+    }
+
+    outcome(
+        probe::evaluate_answer_only(probe, &frames),
+        Some(OUTBOUND_UNWATCHED.to_owned()),
+    )
 }
 
 /// Drive the §9 relay branch against a recording.
@@ -662,13 +905,14 @@ fn run_environment(probe: &probe::Probe) -> Outcome {
 /// ask both halves of the question the relay's claim rests on: that what left
 /// the client arrived unaltered, and that what the backend said came back the
 /// same way.
-async fn run_relay(probe: &probe::Probe, fixture: &Fixture) -> Outcome {
+async fn run_relay_replay(probe: &probe::Probe, fixture: &Fixture) -> Outcome {
     let skipped = |reason: &str| Outcome {
         name: probe.name.to_owned(),
         capability: probe.capability,
         surface: probe.surface,
         rationale: probe.rationale,
         status: Status::Skipped(reason.to_owned()),
+        note: None,
     };
 
     // The id the client sends is the id the backend sees: this path never
@@ -787,6 +1031,7 @@ async fn run_relay(probe: &probe::Probe, fixture: &Fixture) -> Outcome {
                 surface: probe.surface,
                 rationale: probe.rationale,
                 status: Status::Failed(format!("the proxy did not answer: {error}")),
+                note: None,
             };
         }
     };
@@ -807,5 +1052,6 @@ async fn run_relay(probe: &probe::Probe, fixture: &Fixture) -> Outcome {
         surface: probe.surface,
         rationale: probe.rationale,
         status: probe::evaluate(probe, &sent, &frames_of(&body)),
+        note: None,
     }
 }

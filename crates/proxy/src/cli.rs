@@ -182,6 +182,13 @@ pub struct DoctorArgs {
     /// credentials. Without it nothing is contacted and nothing is billed.
     #[arg(long)]
     pub live: bool,
+    /// Which stored account the relay probe (§9) is authorized as.
+    ///
+    /// Only needed where the store holds more than one account on the second
+    /// provider; with exactly one there is nothing to choose. The account
+    /// serving turns is never read for this and never changed.
+    #[arg(long)]
+    pub relay_account: Option<String>,
 }
 
 #[derive(Debug, clap::Args)]

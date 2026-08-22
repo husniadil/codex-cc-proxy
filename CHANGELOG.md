@@ -6,6 +6,24 @@ in [`docs/api.md`](docs/api.md) §6.
 
 ## [Unreleased]
 
+### Added
+
+- **The relay probe (§9) runs under `doctor --live`.** It was skipped, on a
+  rationale that was wrong: the skip said a live run needed the serving account
+  switched to the second provider, while the probe was already building its own
+  store and its own authorizer and never depended on the selection at all. It
+  now sends a turn to the second provider's real endpoint, authorized as a named
+  account read from the store — exactly one on that provider is used, several
+  need the new `--relay-account <name>`, and none skips the row saying what the
+  store holds. Nothing about which account serves turns is read or changed.
+
+  The live arm establishes the answer half only, and the row names the half it
+  cannot: forwarding is the whole behaviour of this path, so the outbound bytes
+  leave on a socket the process cannot read, and the request-half checks stay
+  with the replay arm rather than passing over a value nothing looked at. The
+  coverage line names the relayed account separately, because it is a different
+  account from the one the translating probes spend.
+
 ### Fixed
 
 - **A request that did not ask for a stream is no longer answered with one.**

@@ -1319,9 +1319,13 @@ the bytes that arrive are the bytes that leave.
 The `relay` probe (§10.3) holds that rule. Its marker sits inside a field this
 proxy has no type for, so a body round-tripped through those types fails it,
 and fails it on the one thing a re-encoded body still gets right: the turn
-succeeds and the answer reads correct. It is replay-only. Driving it against
-the real endpoint needs the account serving turns switched to the second
-provider for the length of the run, which is not wired.
+succeeds and the answer reads correct. It runs on both modes. Replayed, a
+stand-in backend records what it was sent and both halves are checked. Against
+the real endpoint only the answer half is: forwarding is the whole behaviour of
+this path, so the outbound bytes leave on a socket this process cannot read, and
+the row names that rather than passing over a value nothing looked at. The turn
+is authorized as a named account on this provider, read from the store, so
+nothing about which account serves turns is read or changed.
 
 Everything §2 does on the translating path is therefore absent here: no
 instructions lead, no tier name rewritten into a model id, no tool flattening,
@@ -1502,8 +1506,9 @@ evidence.
 The matrix these produce says what it did not touch as well as what it did. A
 failed row prints the probe's rationale; a live run marks the `count-tokens`
 row, whose surface never reaches the backend the live header speaks for; and one
-line names the account the run spent and the paths it left alone — the WebSocket
-transport always, and the relay where no relay probe ran. Green rows say nothing
+line names the account the run spent, the account the relay arm spent when it
+ran, and the paths the run left alone — the WebSocket transport always, and the
+relay where no relay probe ran. Green rows say nothing
 about a path nothing drove, and a reader with no line to tell them otherwise
 reads green as coverage of the whole proxy.
 

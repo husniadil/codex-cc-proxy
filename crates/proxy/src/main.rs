@@ -138,11 +138,48 @@ fn live_models() -> Result<Arc<Vec<ModelMapping>>> {
     Ok(Arc::new(models))
 }
 
+/// The authorizer a relayed probe turn is signed with.
+///
+/// The same one the daemon relays with, so the probe measures the shipping
+/// path. It resolves an account by the name it is given and refuses by that
+/// name, which is why naming one here cannot disturb the account serving turns.
+fn relay_authorizer(
+    store: &Arc<dyn proxenos::auth::store::AccountStore>,
+) -> Arc<dyn proxenos::auth::authorize::Authorizer> {
+    Arc::new(proxenos::auth::authorize::AccountAuthorizer::new(
+        Arc::clone(store),
+        Arc::new(proxenos::auth::tokens::TokenSource::new(
+            Arc::clone(store) as Arc<dyn proxenos::auth::store::CredentialStore>,
+            proxenos::auth::flow::token_endpoint(),
+            proxenos::auth::flow::CLIENT_ID,
+            Arc::new(proxenos::auth::tokens::SystemClock),
+        )),
+    ))
+}
+
 /// Probe the capabilities, and say what the answer rests on.
 async fn doctor(args: cli::DoctorArgs) -> Result<()> {
     let fixtures = proxenos::doctor::Corpus::resolve(args.fixtures);
 
     let (outcomes, evidence) = if args.live {
+        // Read once, and read by name from here on. Choosing which account a
+        // relayed turn is authorized as is a decision about whose quota is
+        // spent, so it is resolved here rather than inside the probe.
+        let store: Arc<dyn proxenos::auth::store::AccountStore> =
+            Arc::new(proxenos::auth::store::FileStore::new(credential_path()));
+        let accounts = store.accounts().unwrap_or_default();
+        let relay = proxenos::doctor::relay_account(&accounts, args.relay_account.as_deref()).map(
+            |account| proxenos::doctor::LiveRelay {
+                endpoint: Config::load()
+                    .map(|config| config.upstream.anthropic.endpoint)
+                    .unwrap_or_else(|_| proxenos::config::AnthropicEndpoints::default().endpoint),
+                store: Arc::clone(&store),
+                authorizer: relay_authorizer(&store),
+                account,
+            },
+        );
+        let relayed_as = relay.as_ref().ok().map(|relay| relay.account.clone());
+
         (
             proxenos::doctor::run_live(
                 &fixtures,
@@ -150,6 +187,7 @@ async fn doctor(args: cli::DoctorArgs) -> Result<()> {
                 live_transport().await?,
                 live_models()?,
                 Config::load()?.effort_ceiling()?,
+                relay,
             )
             .await?,
             // Named, because the coverage line has to say whose quota this
@@ -159,10 +197,10 @@ async fn doctor(args: cli::DoctorArgs) -> Result<()> {
                 // Absent rather than guessed where the store cannot be read:
                 // a coverage line naming the wrong account is worse than one
                 // naming none.
-                account: serving_account(
-                    &(Arc::new(proxenos::auth::store::FileStore::new(credential_path()))
-                        as Arc<dyn proxenos::auth::store::AccountStore>),
-                ),
+                account: serving_account(&store),
+                // The §9 arm spends a different account by construction, so it
+                // is named separately or not at all.
+                relay: relayed_as,
             },
         )
     } else {

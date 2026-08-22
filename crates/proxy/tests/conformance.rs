@@ -10,6 +10,7 @@
 mod replay;
 
 use pretty_assertions::assert_eq;
+use proxenos::auth::store::AccountStore;
 use proxenos::doctor::Corpus;
 use proxenos::probe;
 use proxenos::probe::Outcome;
@@ -342,6 +343,7 @@ async fn a_live_run_uses_the_transport_and_labels_itself() {
             account: None,
         }]),
         None,
+        Err("not the probe under test".to_owned()),
     )
     .await
     .expect("the probe should be known");
@@ -359,6 +361,7 @@ async fn a_live_run_uses_the_transport_and_labels_itself() {
         &probe::Run {
             evidence: probe::Evidence::Live {
                 account: Some("work".to_owned()),
+                relay: None,
             },
         },
     );
@@ -393,6 +396,7 @@ async fn a_live_run_honours_the_configured_effort_ceiling() {
             account: None,
         }]),
         Some(proxenos_core::responses::Effort::Low),
+        Err("not the probe under test".to_owned()),
     )
     .await
     .expect("the probe should be known");
@@ -461,6 +465,7 @@ fn the_matrix_counts_outcomes() {
             surface: probe::Surface::Messages,
             rationale: "a",
             status: Status::Passed,
+            note: None,
         },
         Outcome {
             name: "b".to_owned(),
@@ -468,6 +473,7 @@ fn the_matrix_counts_outcomes() {
             surface: probe::Surface::Messages,
             rationale: "b",
             status: Status::Failed("nope".to_owned()),
+            note: None,
         },
         Outcome {
             name: "c".to_owned(),
@@ -475,6 +481,7 @@ fn the_matrix_counts_outcomes() {
             surface: probe::Surface::CountTokens,
             rationale: "c",
             status: Status::Skipped("no stream".to_owned()),
+            note: None,
         },
     ];
 
@@ -501,6 +508,7 @@ fn a_failed_row_prints_its_rationale_and_a_passing_row_does_not() {
             surface: probe::Surface::Messages,
             rationale: "the rationale of a probe that passed",
             status: Status::Passed,
+            note: None,
         },
         Outcome {
             name: "failing".to_owned(),
@@ -508,6 +516,7 @@ fn a_failed_row_prints_its_rationale_and_a_passing_row_does_not() {
             surface: probe::Surface::Messages,
             rationale: "the rationale of a probe that failed",
             status: Status::Failed("nope".to_owned()),
+            note: None,
         },
     ];
 
@@ -535,6 +544,7 @@ fn a_live_run_marks_the_probe_that_never_reaches_the_backend() {
         surface: probe::Surface::CountTokens,
         rationale: "an absent estimate leaves the client sizing nothing",
         status: Status::Passed,
+        note: None,
     }];
 
     let live = probe::matrix(
@@ -542,6 +552,7 @@ fn a_live_run_marks_the_probe_that_never_reaches_the_backend() {
         &probe::Run {
             evidence: probe::Evidence::Live {
                 account: Some("work".to_owned()),
+                relay: None,
             },
         },
     );
@@ -585,6 +596,7 @@ async fn the_matrix_names_what_the_run_exercised() {
         &probe::Run {
             evidence: probe::Evidence::Live {
                 account: Some("work".to_owned()),
+                relay: None,
             },
         },
     );
@@ -609,14 +621,71 @@ async fn the_relay_probe_drives_the_relay_path() {
     assert_eq!(outcome.status, Status::Passed, "{outcome:?}");
 }
 
-/// A live relay run is not wired, and the row says so rather than passing on
-/// evidence it does not have.
+/// The live relay arm picks its account by reading the store, and refuses to
+/// guess.
 ///
-/// Driving it live needs the serving account switched to the second provider
-/// for the length of the run, which is a change to what the daemon is serving
-/// while it is serving it. That is left out of this slice deliberately.
+/// The account it relays as is never the account serving turns — it is named,
+/// and `Authorizer::authorize(Some(name))` reads and refuses by that name — so
+/// the choice is made here, before anything is contacted.
+#[test]
+fn the_live_relay_arm_names_the_account_it_would_spend() {
+    let account = |name: &str, provider: proxenos::auth::store::Provider, selected: bool| {
+        proxenos::auth::store::Account {
+            name: name.to_owned(),
+            kind: "key",
+            provider: provider.as_str(),
+            account_id: None,
+            email: None,
+            plan: None,
+            expires_at: None,
+            selected,
+        }
+    };
+    let codex = account("work", proxenos::auth::store::Provider::Codex, true);
+    let first = account(
+        "personal-claude",
+        proxenos::auth::store::Provider::Anthropic,
+        false,
+    );
+    let second = account(
+        "other-claude",
+        proxenos::auth::store::Provider::Anthropic,
+        false,
+    );
+
+    // Exactly one: no question to ask.
+    assert_eq!(
+        proxenos::doctor::relay_account(&[codex.clone(), first.clone()], None),
+        Ok("personal-claude".to_owned())
+    );
+
+    // None: the reason says what the store holds, never the retired text about
+    // wiring.
+    let reason = proxenos::doctor::relay_account(std::slice::from_ref(&codex), None)
+        .expect_err("no anthropic account, so nothing to relay as");
+    assert!(reason.contains("no account"), "{reason}");
+    assert!(!reason.contains("not wired"), "{reason}");
+
+    // Several: the operator names which, rather than one being picked for them.
+    let reason = proxenos::doctor::relay_account(&[first.clone(), second.clone()], None)
+        .expect_err("two candidates cannot be resolved without being told");
+    assert!(reason.contains("--relay-account"), "{reason}");
+    assert!(reason.contains("personal-claude"), "{reason}");
+    assert_eq!(
+        proxenos::doctor::relay_account(&[first.clone(), second], Some("other-claude")),
+        Ok("other-claude".to_owned())
+    );
+
+    // A name on the wrong provider is refused by name rather than relayed to an
+    // endpoint its credential was never issued for.
+    let reason = proxenos::doctor::relay_account(&[codex, first], Some("work"))
+        .expect_err("`work` is on the translating provider");
+    assert!(reason.contains("work"), "{reason}");
+}
+
+/// A store holding no account on the second provider skips, and says why.
 #[tokio::test]
-async fn a_live_run_skips_the_relay_probe() {
+async fn a_live_run_without_a_second_provider_account_skips_the_relay_probe() {
     let server = replay::ReplayServer::start(replay::Behavior::Events(Vec::new())).await;
     let transport = std::sync::Arc::new(proxenos::upstream::http::HttpTransport::new(
         server.url.clone(),
@@ -628,17 +697,206 @@ async fn a_live_run_skips_the_relay_probe() {
         transport,
         std::sync::Arc::new(Vec::new()),
         None,
+        Err("the store holds no account on the anthropic provider".to_owned()),
     )
     .await
     .expect("the probe should be known");
 
     match &outcomes[0].status {
-        Status::Skipped(reason) => assert!(
-            reason.contains("serving account"),
-            "the skip should say what is missing: {reason}"
-        ),
-        other => panic!("a live relay probe should be skipped, got {other:?}"),
+        Status::Skipped(reason) => {
+            assert!(reason.contains("no account"), "{reason}");
+            assert!(!reason.contains("not wired"), "{reason}");
+        }
+        other => panic!("a relay probe with no account should be skipped, got {other:?}"),
     }
+}
+
+/// The live relay arm runs the probe rather than skipping it, and names the
+/// half it cannot establish.
+///
+/// The endpoint here is a loopback stand-in — no test in this suite reaches the
+/// network — but everything else is the shipping path: the real `Relay`, a real
+/// `FileStore`, and an `AccountAuthorizer` pinned by name. What the arm cannot
+/// do live is watch the outbound bytes, so the request-half checks do not run
+/// and the row says so instead of passing over a `Null`.
+#[tokio::test]
+async fn the_live_relay_arm_answers_and_names_what_it_cannot_establish() {
+    let (store, dir) = relay_store();
+    let serving_before = selected_account(store.as_ref());
+
+    let (backend, backend_headers) = relay_backend().await;
+    let outcomes = proxenos::doctor::run_live(
+        &Corpus::Dir(corpus()),
+        Some("relay"),
+        std::sync::Arc::new(proxenos::upstream::http::HttpTransport::new(
+            "http://127.0.0.1:1/unused",
+        )),
+        std::sync::Arc::new(Vec::new()),
+        None,
+        Ok(proxenos::doctor::LiveRelay {
+            endpoint: backend,
+            store: std::sync::Arc::clone(&store),
+            authorizer: authorizer_for(&store),
+            account: "personal-claude".to_owned(),
+        }),
+    )
+    .await
+    .expect("the probe should be known");
+
+    assert_eq!(outcomes[0].status, Status::Passed, "{:?}", outcomes[0]);
+    let note = outcomes[0]
+        .note
+        .as_deref()
+        .expect("the live arm should name the half it cannot establish");
+    assert!(note.contains("outbound"), "{note}");
+
+    // §9 forwards the client's headers as sent, so the probe has to send what a
+    // client sends. The real endpoint refuses a call without this one, and the
+    // refusal reads as a broken relay rather than as an incomplete probe.
+    let headers = backend_headers
+        .lock()
+        .expect("the stand-in recorded the headers")
+        .clone()
+        .expect("the backend was called");
+    assert_eq!(
+        headers
+            .get("anthropic-version")
+            .and_then(|value| value.to_str().ok()),
+        Some("2023-06-01")
+    );
+
+    // The probe never changes, and never depends on, which account serves turns.
+    assert_eq!(selected_account(store.as_ref()), serving_before);
+    assert_eq!(serving_before.as_deref(), Some("work"));
+    drop(dir);
+}
+
+/// The coverage line names whose account the relay spent.
+#[test]
+fn the_coverage_line_names_the_relayed_account() {
+    let rendered = probe::matrix(
+        &[Outcome {
+            name: "relay".to_owned(),
+            capability: proxenos_core::fixture::Capability::Relay,
+            surface: probe::Surface::Relay,
+            rationale: "",
+            status: Status::Passed,
+            note: None,
+        }],
+        &probe::Run {
+            evidence: probe::Evidence::Live {
+                account: Some("work".to_owned()),
+                relay: Some("personal-claude".to_owned()),
+            },
+        },
+    );
+
+    assert!(rendered.contains("as `personal-claude`"), "{rendered}");
+    assert!(!rendered.contains("was replayed"), "{rendered}");
+}
+
+/// A store with one account on each provider, the translating one serving.
+fn relay_store() -> (
+    std::sync::Arc<dyn proxenos::auth::store::AccountStore>,
+    tempfile::TempDir,
+) {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let store = std::sync::Arc::new(proxenos::auth::store::FileStore::new(
+        dir.path().join("credentials.json"),
+    ));
+    store
+        .add_key("work", "probe-key", proxenos::auth::store::Provider::Codex)
+        .expect("the codex account");
+    store
+        .add_key(
+            "personal-claude",
+            "probe-key",
+            proxenos::auth::store::Provider::Anthropic,
+        )
+        .expect("the anthropic account");
+    store.select("work").expect("the serving account");
+    (
+        store as std::sync::Arc<dyn proxenos::auth::store::AccountStore>,
+        dir,
+    )
+}
+
+fn selected_account(store: &dyn proxenos::auth::store::AccountStore) -> Option<String> {
+    store
+        .accounts()
+        .expect("the store should read")
+        .into_iter()
+        .find(|account| account.selected)
+        .map(|account| account.name)
+}
+
+fn authorizer_for(
+    store: &std::sync::Arc<dyn proxenos::auth::store::AccountStore>,
+) -> std::sync::Arc<dyn proxenos::auth::authorize::Authorizer> {
+    std::sync::Arc::new(proxenos::auth::authorize::AccountAuthorizer::new(
+        std::sync::Arc::clone(store),
+        std::sync::Arc::new(proxenos::auth::tokens::TokenSource::new(
+            std::sync::Arc::clone(store)
+                as std::sync::Arc<dyn proxenos::auth::store::CredentialStore>,
+            proxenos::auth::flow::token_endpoint(),
+            proxenos::auth::flow::CLIENT_ID,
+            std::sync::Arc::new(proxenos::auth::tokens::SystemClock),
+        )),
+    ))
+}
+
+/// A loopback stand-in for the second provider, answering the probe's marker.
+async fn relay_backend() -> (
+    String,
+    std::sync::Arc<std::sync::Mutex<Option<axum::http::HeaderMap>>>,
+) {
+    let marker = proxenos::doctor::answer_marker(
+        &probe::all()
+            .into_iter()
+            .find(|probe| probe.name == "relay")
+            .expect("the relay probe"),
+    )
+    .expect("the relay probe requires a marker in the answer");
+    let stream = format!(
+        "event: message_start\ndata: {}\n\nevent: content_block_delta\ndata: {}\n\n",
+        serde_json::json!({
+            "type": "message_start",
+            "message": {"id": "msg_probe", "type": "message", "role": "assistant",
+                        "model": "probe", "content": [], "stop_reason": null,
+                        "usage": {"input_tokens": 1, "output_tokens": 1}}
+        }),
+        serde_json::json!({
+            "type": "content_block_delta",
+            "index": 0,
+            "delta": {"type": "text_delta", "text": marker}
+        })
+    );
+    let seen: std::sync::Arc<std::sync::Mutex<Option<axum::http::HeaderMap>>> =
+        std::sync::Arc::new(std::sync::Mutex::new(None));
+    let sink = std::sync::Arc::clone(&seen);
+    let app = axum::Router::new().route(
+        "/v1/messages",
+        axum::routing::post(move |headers: axum::http::HeaderMap, _body: String| {
+            if let Ok(mut sink) = sink.lock() {
+                *sink = Some(headers);
+            }
+            let stream = stream.clone();
+            async move {
+                (
+                    [(axum::http::header::CONTENT_TYPE, "text/event-stream")],
+                    stream,
+                )
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("a loopback port");
+    let addr = listener.local_addr().expect("the bound port");
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, app).await;
+    });
+    (format!("http://{addr}/v1/messages"), seen)
 }
 
 /// The launch surface still emits the two variables the client cannot work
@@ -723,6 +981,7 @@ async fn a_live_env_contract_row_says_it_never_reached_the_backend() {
         &probe::Run {
             evidence: probe::Evidence::Live {
                 account: Some("work".to_owned()),
+                relay: None,
             },
         },
     );
