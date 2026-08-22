@@ -707,8 +707,17 @@ install itself is real and is not undone by that, so `install` names what is
 answering, by version, says the supervised job cannot take the port yet, and
 names `proxenos stop` as the way to hand over. It never ends that daemon on its
 own: this verb installs a supervisor, and stopping a process the operator
-started by hand is not what it was asked for. When nothing is answering — the
-normal path — the output is unchanged.
+started by hand is not what it was asked for.
+
+**What it reports is what will still hold the port, not what was answering when
+the verb was typed.** A reinstall — the ordinary case, a new build or a moved
+binary — boots out the unit it had already installed, so the daemon answering a
+moment earlier is one this verb itself ends. Naming that one would tell the
+operator to hand over a port already theirs, for a job that then starts fine.
+The observation is therefore taken between the bootout and the bootstrap: before
+it, a reinstall reports a daemon on its way out; after it, the supervised job
+reports itself. A reinstall over the supervisor's own daemon prints nothing, and
+so does an install with nothing answering.
 
 **What a supervisor changes about `stop` (§2.4):** it is how a running daemon is
 replaced by the build on disk. `stop` asks the daemon to go and reports what it

@@ -620,6 +620,22 @@ async fn watch(
     }
 }
 
+/// What is still answering once the daemon this verb just booted out has gone.
+///
+/// `bootout` returns before the process it signalled has finished exiting, so a
+/// read taken immediately still sees it and the reinstall reports a daemon that
+/// is on its way out. Anything still there when the window closes is one this
+/// verb did not end, which is the only kind worth naming.
+async fn settled_after_bootout() -> Option<Answering> {
+    let mut last = None;
+    watch(STOP_WINDOW, |now| {
+        last = now.clone();
+        now.is_none()
+    })
+    .await;
+    last
+}
+
 async fn answering() -> Option<Answering> {
     let result = control::call(&control::default_path(), "status", None)
         .await
@@ -1332,10 +1348,6 @@ async fn supervisor(args: cli::SupervisorArgs) -> Result<()> {
 
     match args.action {
         cli::SupervisorAction::Install => {
-            // Asked before anything is written, so the report describes the
-            // machine as it was when the operator ran the verb. The socket call
-            // is the edge; what to say about the answer is a pure function.
-            let held = answering().await;
             if let Some(parent) = plist.parent() {
                 std::fs::create_dir_all(parent)
                     .with_context(|| format!("could not create {}", parent.display()))?;
@@ -1347,9 +1359,25 @@ async fn supervisor(args: cli::SupervisorArgs) -> Result<()> {
             // Replacing rather than adding: launchd refuses to bootstrap a
             // label already loaded, and an operator reinstalling after moving
             // the binary means the new one.
-            if existing.is_some() {
+            let booted_out = existing.is_some();
+            if booted_out {
                 let _ = launchctl(&["bootout", &target]);
             }
+
+            // Observed here, between the bootout above and the bootstrap below,
+            // because neither side of that window answers the question. Before
+            // the bootout, a reinstall reports the daemon it is itself about to
+            // end — telling the operator to hand over a port that is already
+            // theirs, for a job that then starts fine. After the bootstrap, the
+            // supervised job has taken the port and reports itself. What is
+            // answering in between is a daemon this verb did not end and will
+            // not.
+            let held = if booted_out {
+                settled_after_bootout().await
+            } else {
+                answering().await
+            };
+
             std::fs::write(&plist, supervisor::render(&unit))
                 .with_context(|| format!("could not write {}", plist.display()))?;
 

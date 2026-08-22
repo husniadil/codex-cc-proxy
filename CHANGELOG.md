@@ -16,7 +16,10 @@ in [`docs/api.md`](docs/api.md) §6.
   control socket rather than by guessing at the port, names its version, says
   the supervised job cannot take the port yet, and names `proxenos stop` as the
   way to hand over. It does not stop that daemon: this verb installs a
-  supervisor. Nothing changes when nothing is answering.
+  supervisor. What it reports is what will still hold the port — the observation
+  is taken between the bootout a reinstall performs and the bootstrap that
+  follows, so a reinstall over the supervisor's own daemon prints nothing, and
+  neither does an install with nothing answering.
 
 ## [0.8.0]
 

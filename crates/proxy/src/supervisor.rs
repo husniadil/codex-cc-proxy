@@ -214,7 +214,7 @@ pub fn compare(existing: Option<&str>, wanted: &Unit) -> Installed {
     }
 }
 
-/// What `install` says about a daemon that is already answering.
+/// What `install` says about a daemon that will still hold the port.
 ///
 /// The supervised job runs `run`, and `run` refuses a port another daemon
 /// holds. So an install performed while a hand-started daemon is up is a real
@@ -224,10 +224,16 @@ pub fn compare(existing: Option<&str>, wanted: &Unit) -> Installed {
 /// by hand is not what was asked for — so what is owed is the observation and
 /// the way to hand over. Under a supervisor, `stop` is that way (§2.4).
 ///
-/// `None` when nothing is answering, which is the normal path and gains no
-/// output.
-pub fn port_notice(answering: Option<&str>) -> Option<String> {
-    let version = answering?;
+/// **The argument is what is answering once the verb has released what it
+/// controls, not what was answering when the operator typed it.** A reinstall
+/// boots out the unit it had already installed, and a daemon that this verb is
+/// about to end is not one the operator has to hand over: reporting it would
+/// name a port that is already theirs, for a job that then starts fine.
+///
+/// `None` when nothing is holding it, which covers both the plain install and
+/// the reinstall, and neither gains output.
+pub fn port_notice(still_answering: Option<&str>) -> Option<String> {
+    let version = still_answering?;
     Some(format!(
         "  {version} is already answering, so the supervised job cannot take the port yet\n  \
          hand it over with `proxenos stop`; the supervisor starts this build in its place"
