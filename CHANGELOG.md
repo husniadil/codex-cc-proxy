@@ -34,6 +34,21 @@ in [`docs/api.md`](docs/api.md) §6.
   receive. Shapes no capture reaches are named rather than skipped silently,
   because a skip reads exactly like a pass.
 
+- **The two reconstructed block kinds are measured.** The corpus named four
+  shapes it could not reach, and all four were the places this proxy builds
+  blocks rather than passing them through: the other provider's reasoning
+  becomes `thinking` and `thinking_delta`, and its native search becomes
+  `server_tool_use` and `web_search_tool_result`. Unmeasured is exactly where a
+  subset check is blind, so two captured exchanges were added — an
+  extended-thinking turn, whose code is spoken back through the thinking
+  deltas, and a turn that runs the `web_search` server tool. The search turn
+  cannot force a code through the model's own search; what it proves is that
+  the block shapes came from a search the server actually ran rather than from
+  a plausible reconstruction. Both emitted shapes are subsets of the real ones:
+  a real `thinking` block start also carries `signature`, a real
+  `web_search_tool_result` also carries `caller`, and no field this proxy emits
+  is absent from a real answer.
+
 ## [0.7.0]
 
 The operator surface catches up with the second provider: a guided login

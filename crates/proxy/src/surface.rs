@@ -124,7 +124,7 @@ pub struct Plan {
 /// capture proves a round trip rather than a plausible answer (non-negotiable
 /// #4): a reply that speaks the code could not have been produced by anything
 /// that did not receive it.
-pub const PLANS: [Plan; 5] = [
+pub const PLANS: [Plan; 7] = [
     Plan {
         name: "plain-generation",
         note: "A non-streaming turn against the real Messages endpoint. This is where the \
@@ -190,6 +190,58 @@ pub const PLANS: [Plan; 5] = [
                 "messages": [{
                     "role": "user",
                     "content": "Reply with exactly this and nothing else: 3PMD8L"
+                }]
+            })
+        },
+    },
+    Plan {
+        name: "streaming-thinking",
+        note: "A streaming turn with extended thinking enabled, which is the only way a \
+               real answer carries a thinking block and a thinking_delta. This proxy does \
+               not pass those through — it reconstructs them from the other provider's \
+               reasoning, so they are among the shapes most likely to carry a field a real \
+               answer never carries, and until this capture nothing had ever measured \
+               them. The code 6WNP4J is spoken back, so the stream answered this request.",
+        sizing: false,
+        request: || {
+            serde_json::json!({
+                "model": "claude-haiku-4-5-20251001",
+                "max_tokens": 1600,
+                "stream": true,
+                "thinking": { "type": "enabled", "budget_tokens": 1024 },
+                "messages": [{
+                    "role": "user",
+                    "content": "Think about it briefly, then reply with exactly this and \
+                                nothing else: 6WNP4J"
+                }]
+            })
+        },
+    },
+    Plan {
+        name: "streaming-server-tool",
+        note: "A streaming turn that runs the web_search server tool, which is the only \
+               way a real answer carries server_tool_use and web_search_tool_result \
+               blocks. This proxy reconstructs both from the other provider's native \
+               search rather than passing them through, so an unmeasured shape here is \
+               exactly where a subset check is blind. No code can be forced through a \
+               model's search, so this capture does not prove a round trip the way the \
+               others do; what it proves is that the block shapes came from a real search \
+               the server actually ran, rather than from a plausible reconstruction.",
+        sizing: false,
+        request: || {
+            serde_json::json!({
+                "model": "claude-haiku-4-5-20251001",
+                "max_tokens": 512,
+                "stream": true,
+                "tools": [{
+                    "type": "web_search_20250305",
+                    "name": "web_search",
+                    "max_uses": 1
+                }],
+                "messages": [{
+                    "role": "user",
+                    "content": "Search the web for the current version of the Rust \
+                                compiler, then answer in one short sentence."
                 }]
             })
         },

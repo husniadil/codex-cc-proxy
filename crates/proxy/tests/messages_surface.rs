@@ -309,10 +309,15 @@ fn the_error_envelope_stays_inside_the_real_one() {
 ///
 /// A subset check is silent about a shape no capture contains: it is skipped,
 /// and a skip reads exactly like a pass. This names the gaps, so a new one has
-/// to be looked at rather than absorbed. Every entry here is a block kind the
-/// five captured exchanges could not produce — extended thinking and the server
-/// tools each need a turn of their own, and neither has a symptom that would
-/// justify the quota today.
+/// to be looked at rather than absorbed.
+///
+/// The set is empty, and empty here is a measurement rather than an omission.
+/// The four addresses it used to hold were the two places this proxy
+/// *reconstructs* blocks rather than passing them through — reasoning into
+/// `thinking`, native search into `server_tool_use` and
+/// `web_search_tool_result` — and each now has a captured exchange of its own.
+/// A shape that appears here again is one the corpus cannot judge, and it must
+/// be looked at rather than added.
 #[test]
 fn the_shapes_no_capture_reaches_are_named() {
     let real = measured();
@@ -329,15 +334,7 @@ fn the_shapes_no_capture_reaches_are_named() {
         }
     }
 
-    let expected: BTreeSet<String> = [
-        "content_block_delta.delta (thinking_delta)",
-        "content_block_start.content_block (server_tool_use)",
-        "content_block_start.content_block (thinking)",
-        "content_block_start.content_block (web_search_tool_result)",
-    ]
-    .into_iter()
-    .map(str::to_owned)
-    .collect();
+    let expected: BTreeSet<String> = BTreeSet::new();
 
     assert_eq!(
         unmeasured, expected,

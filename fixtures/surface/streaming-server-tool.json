@@ -1,0 +1,402 @@
+{
+  "name": "streaming-server-tool",
+  "provenance": "captured",
+  "note": "A streaming turn that runs the web_search server tool, which is the only way a real answer carries server_tool_use and web_search_tool_result blocks. This proxy reconstructs both from the other provider's native search rather than passing them through, so an unmeasured shape here is exactly where a subset check is blind. No code can be forced through a model's search, so this capture does not prove a round trip the way the others do; what it proves is that the block shapes came from a real search the server actually ran, rather than from a plausible reconstruction.",
+  "endpoint": "/v1/messages",
+  "request": {
+    "max_tokens": 512,
+    "messages": [
+      {
+        "content": "Search the web for the current version of the Rust compiler, then answer in one short sentence.",
+        "role": "user"
+      }
+    ],
+    "model": "claude-haiku-4-5-20251001",
+    "stream": true,
+    "tools": [
+      {
+        "max_uses": 1,
+        "name": "web_search",
+        "type": "web_search_20250305"
+      }
+    ]
+  },
+  "status": 200,
+  "headers": [
+    [
+      "date",
+      "Sat, 22 Aug 2026 11:15:59 GMT"
+    ],
+    [
+      "content-type",
+      "text/event-stream; charset=utf-8"
+    ],
+    [
+      "cache-control",
+      "no-cache"
+    ],
+    [
+      "anthropic-ratelimit-unified-status",
+      "allowed"
+    ],
+    [
+      "anthropic-ratelimit-unified-5h-status",
+      "allowed"
+    ],
+    [
+      "anthropic-ratelimit-unified-5h-reset",
+      "1787414400"
+    ],
+    [
+      "anthropic-ratelimit-unified-5h-utilization",
+      "0.01"
+    ],
+    [
+      "anthropic-ratelimit-unified-7d-status",
+      "allowed"
+    ],
+    [
+      "anthropic-ratelimit-unified-7d-reset",
+      "1787976000"
+    ],
+    [
+      "anthropic-ratelimit-unified-7d-utilization",
+      "0.0"
+    ],
+    [
+      "anthropic-ratelimit-unified-overage-status",
+      "allowed"
+    ],
+    [
+      "anthropic-ratelimit-unified-overage-reset",
+      "1788220800"
+    ],
+    [
+      "anthropic-ratelimit-unified-overage-utilization",
+      "0.0"
+    ],
+    [
+      "anthropic-ratelimit-unified-representative-claim",
+      "five_hour"
+    ],
+    [
+      "anthropic-ratelimit-unified-fallback-percentage",
+      "0.5"
+    ],
+    [
+      "anthropic-ratelimit-unified-reset",
+      "1787414400"
+    ],
+    [
+      "request-id",
+      "req_011CeHh5E8WZr5RtNR6jjvUi"
+    ],
+    [
+      "strict-transport-security",
+      "max-age=31536000; includeSubDomains; preload"
+    ],
+    [
+      "anthropic-organization-id",
+      "(withheld)"
+    ],
+    [
+      "anthropic-workspace-id",
+      "(withheld)"
+    ],
+    [
+      "traceresponse",
+      "00-38cbf156077f3f5b542ea233aa794c02-9dc3efb219bc60e0-01"
+    ],
+    [
+      "server",
+      "cloudflare"
+    ],
+    [
+      "content-security-policy",
+      "default-src 'none'; frame-ancestors 'none'"
+    ],
+    [
+      "vary",
+      "Accept-Encoding"
+    ],
+    [
+      "cf-cache-status",
+      "DYNAMIC"
+    ],
+    [
+      "x-robots-tag",
+      "none"
+    ],
+    [
+      "cf-ray",
+      "a2f1766fdf2752ea-SIN"
+    ]
+  ],
+  "events": [
+    {
+      "message": {
+        "content": [],
+        "id": "msg_011CeHh5FGE7UgjGiDZNxaYk",
+        "model": "claude-haiku-4-5-20251001",
+        "role": "assistant",
+        "stop_details": null,
+        "stop_reason": null,
+        "stop_sequence": null,
+        "type": "message",
+        "usage": {
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 0,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "cache_creation_input_tokens": 0,
+          "cache_read_input_tokens": 0,
+          "inference_geo": "not_available",
+          "input_tokens": 2233,
+          "output_tokens": 25,
+          "service_tier": "standard"
+        }
+      },
+      "type": "message_start"
+    },
+    {
+      "content_block": {
+        "id": "srvtoolu_01RaPJ3oagjWi5tTs173MJkd",
+        "input": {},
+        "name": "web_search",
+        "type": "server_tool_use"
+      },
+      "index": 0,
+      "type": "content_block_start"
+    },
+    {
+      "type": "ping"
+    },
+    {
+      "delta": {
+        "partial_json": "",
+        "type": "input_json_delta"
+      },
+      "index": 0,
+      "type": "content_block_delta"
+    },
+    {
+      "delta": {
+        "partial_json": "{\"quer",
+        "type": "input_json_delta"
+      },
+      "index": 0,
+      "type": "content_block_delta"
+    },
+    {
+      "delta": {
+        "partial_json": "y\": \"Rust co",
+        "type": "input_json_delta"
+      },
+      "index": 0,
+      "type": "content_block_delta"
+    },
+    {
+      "delta": {
+        "partial_json": "mpiler ",
+        "type": "input_json_delta"
+      },
+      "index": 0,
+      "type": "content_block_delta"
+    },
+    {
+      "delta": {
+        "partial_json": "curren",
+        "type": "input_json_delta"
+      },
+      "index": 0,
+      "type": "content_block_delta"
+    },
+    {
+      "delta": {
+        "partial_json": "t version",
+        "type": "input_json_delta"
+      },
+      "index": 0,
+      "type": "content_block_delta"
+    },
+    {
+      "delta": {
+        "partial_json": " 20",
+        "type": "input_json_delta"
+      },
+      "index": 0,
+      "type": "content_block_delta"
+    },
+    {
+      "delta": {
+        "partial_json": "26\"}",
+        "type": "input_json_delta"
+      },
+      "index": 0,
+      "type": "content_block_delta"
+    },
+    {
+      "index": 0,
+      "type": "content_block_stop"
+    },
+    {
+      "content_block": {
+        "caller": {
+          "type": "direct"
+        },
+        "content": [
+          {
+            "encrypted_content": "EtUFCioIExgCIiQ3NDA0ZThkZS0xYzM2LTRjNzUtYjc1OC05YTNlZjQ5ZDQwNGESDNEE/9SI8yGQikcr9hoMLLUisYBhjHyhiz+pIjBdh370T8i+eoBaDzC0/APW2w7ue6+2QKYakUfSBoMvcFrvmMm5nQWZcPorbak47coq2AThjIGKg/QmPkLKDdJAS680aKnVUDUJLS0vqGNWAoP7ACBOYANuwJLNhIyM20oaWnTK36PXUZbYJTij0DX1UTvcVEScHSkKfaCj3yA/p21YobtfOpmj6c2B+8mhd1ukejfnjMG74hLlm90i1Y67A3l39D6tN0aFkXytqyRJU4F/oZekIj6A8vCNEQ4Wc8v/k5q341+eAuTpRXRJmf0pyzoGFdQK3AgW2GLXYr+bPOcRVAK1pew5hIaHEyIFitNtd6CILh8A0mXmkXJ7FIRZJhRU6tpzAAF5bb/O62SLW0RyAfmTPrqP8qo6EcxsMrjcc5LjnVWwMFvYIPPUsztQZlg1zJFor7uCCZnUFLEiCEYxduROajsgppKaKUSYEd93SHdit+H97Yo67wnm2sh5T0eE8M3dQX1rtcdKKfEzPpKiI38kPw9Iy2qGyPP2cGre2V4xqoQfQTt3aIR4hUsOymhBli9OMrn8c62smsWIQhFcEbJDXHG4OtMHnSLUVBtP19FsrwvMAsZTkLauAuCaFTD8CN+679dFYUVF2ZUy0JfGuzK2aQQ7VFJjm9KxevClD8BrMc23XWfFIZKBb5nNIK743Z6LyBykSdJHNu6XSo3mTjo1Vnt142Zgz5a1UJroNMivdFdgpDUkuYEPautsXEEWxq79dJN2scpHZCz+hdBNLyi7K5CBNFT+Qv5zoX+hJMBBdq6esztOugUmB1Hrc1TmntTpDwVQ/HAH12brmvnQ+5BIQ9eUh/rHQ1zYtsQv1eGnnRyaasx0txRjaZoC0k6pPqrfISsVuBMYAw==",
+            "page_age": null,
+            "title": "Upcoming Releases — Rust Compiler Versions | version.rs",
+            "type": "web_search_result",
+            "url": "https://version.rs/upcoming/"
+          },
+          {
+            "encrypted_content": "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",
+            "page_age": "March 18, 2026",
+            "title": "March 2026 Monthly report | Alternative Rust Compiler for GCC",
+            "type": "web_search_result",
+            "url": "https://rust-gcc.github.io/2026/04/13/2026-03-monthly-report.html"
+          },
+          {
+            "encrypted_content": "ErUICioIExgCIiQ3NDA0ZThkZS0xYzM2LTRjNzUtYjc1OC05YTNlZjQ5ZDQwNGESDOaJ+OVw0y4EDUqP0BoM3etVzabF8xFmOmZLIjAx/0ToHCShYzZnpLG80ftnUDPuXm8OQ1WBt0dyq5HN0NFWs6QybA2bWkHgS2s274squAeepvRLf6fq9EWVhi2TcXoQSo6iySRdS9CG8im+IQmDp+Bps4cl519jMs3bO6+v9TuU5fiwVFcqRMfUbMvKxpzeFy5/fWlKsHW5x7sNhkmlNwLKHFl2MIqgTq+1SFjDSO9t+q2nKnrDn2ZDheuRhWzRMaj4OsmQPbno4oroQUZOf5C4FWuHDpSNwb6h8NzksOPJql23Jbp5b4rM8UcushBzwSm0A8xAiecmdDU6yTele86uRRuvufRBL865ZokGKLtk14Q2/uVPCgSRQgzUgri19D0+mtHJPTJdMzLdi1PplyewTR0w4OMmhgtx5KIh+tnGYJsfX04n4HgL2+RPZWuFpFA8WAtHwr8PUjMKfUAPSRHWe4QAxsjdp5vbNTYSyKo1Vd2wIeTbaxz5szp3cFDF21GMUXDKyAZxCUfc+8CGs6FxURyQBoLYcnvCJee/2oEZMglwYCPHltnuKX2zeE3RVorM6ZgZWBoowkwwpKtSJFfy1mb11+mEGMOM0/D6BkG6hLkcQTOzbhM/yGBPYzIfr3w6JfSDrKvqZZ/kqz1pxJMwqZPPwpKIZMg4J+kOWyCO46q2E2kNAKIcdFSVrKVvRw6Ij9TQY0F4mEqBf/yjG7b4Me3FTgJd5C76Bcrl7j0QmI1KTiUfOX1WMW+VS7YD0cZ2tqSD+8TwY6Ew234rfhYOugn8erz3HPwZDCB0zgs4LhYvqqHxRbN+2M21JYTnrZBk91p+RFaxBfFN+esBeTeEwHwuBA+f9tQn1sGwjhG9lnewUaHTMvt7nigIkbzUN9b7JTB3DZ83yVKotYI8XePN63qkaV88x/K/0bsKpPHLpKxxUEApQxPtLjMr1rRzi8KnSyxbHhGeXIq5hCsuI1Kx6wLaLLdDD/OhzhiFR4iwX2q/UmLrwWW+Kx/XJNN8LNZx7r+Ivz0gGjEaqGDkLgVtOcwah8q7Ex8AKMXbW4vQ8puiOLX/mugqRs5eTSgYemI9NMmjVinfZciN/zLFpg2/AVjaNHVfxq1jSc+B1oUcpTnlhocAGtNt0ADZCFZpu+pr3Q2MdVosf94Z9q1hKN8lglLsn4fIZ1KWzwHfMJqTxOSbmFeuw/hV6QBH3QN+UBmVk7ikJXdwoknDFCQ8PsUnVWf2U97Ag0AdfZwtfVtUhP9MXbhP1UvLuyz5sbs8Muorkn6gtIitIFt6mwAfOhEP+OOq7eVwUondYV1EiD60Zn2hPUNozZVOj+aOy4gIb7phXHfOD7FR9oi5jwAZ8sBE+tHR7CdIGAM=",
+            "page_age": "5 hours ago",
+            "title": "Rust Versions | Rust Changelogs",
+            "type": "web_search_result",
+            "url": "https://releases.rs/"
+          },
+          {
+            "encrypted_content": "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",
+            "page_age": "2 days ago",
+            "title": "Rust 1.97 and Go 1.26 in 2026: Tooling, Versions, What Changed",
+            "type": "web_search_result",
+            "url": "https://rustvsgo.com/tooling/"
+          },
+          {
+            "encrypted_content": "EqcKCioIExgCIiQ3NDA0ZThkZS0xYzM2LTRjNzUtYjc1OC05YTNlZjQ5ZDQwNGESDIPtFWJJs1Q5U5gtrhoMavrczAkPKFJhEBWAIjB9EYUDdhWLVd4KJ/fTKvGuGFklt8camT7CMuM1sC3sN5tsrr78oS+RsAq3W3HVC8cqqgmeODBETjMYeyxFgzjpLgAMikpTUwWENm42davXtycuMP64kv3ECzAFN3cZgkcOmYQdwFSFlVK3KkerFuLNDrQaTsZiuYu13LQIco0q9qy3a8etSxAyr6kBlyjLZLpygNnlkULt1v3oy/2cnu8N/bPx5o3CH48PuSr7WCP27dv4LZMbLtUfDaUW358w7IbeIPzT/mI477UD97sWY8DkoXeVgiUR9g8t52mVexVkfvKqxLD8zxz/MehhE3+atDY1csVkowAaoO1noRDiOZB2hcsBdDCQBR0wuH6eUzlbgT0RekDj4s/qf0biVvM9qYZdt/mPBYDOlpwvxS/AZ7u5K62OeDXZJkw6aeZY64Hn1OkTbxB+J5uefKf1jbRbzTe0cemseRijGhoRsyIsV0AdT279jE/FQtZypHXJdzdjxZARzmcNpQ5zNr/NReIy/R9aTYszP30s5Nqw+DVq+F572BdE/ID+047HtBgNwfCtSknhRWmYASv0aANUpqLqSLOK/ihef0XVUloeiU5DH4zPWVR9kHFN/svelQKfkcnpI2Y9nbxrguc5NTdpm22CmajP/nE6UliExRu88cmTtZyUnb9ppeVVeB1BH+T4lqqU1NU4F+zmch5uv88ALiZaSFEFcRt4xDyce+CKbt5/gXP6FGFnqDZOPKSxcAROaz/u4rQ7O96vuY7SoDS4xc879BZLXzj9LpjztkBtbVuPnm8mIGfVw+vGYoeftA8iY4kJ6NctxH4KtXeY6I6ECKVGfqhVzEwLmNVS1JFjqJ5340n4t88t2IIgXX4Hhv5xm700Qeh6Lqb5egMlL+mR45+FPlrhe/Oz5Hj/WzQt24UAT8xgHwdqfSoyipgMCW/FUMyGDXEJi6YTEAk5v4OhuBkI5HjI3xGVocBb063WPIFBdqBLRpzNl8s0RpSLqO/Xoms08Iwj3njgMxvxFiqQdgd70LpLcWDUO9mwKfvEU35MhHcx6kPff5At32bPtCoPuwhvwFvAilrxUSUDB/0Tk9zKMGCAa4dB7REUP9C6ywlPrED4VxowhHk6/Jbj9Sy3M6zSgLZP8/17K9U3h0hpkJk/+/udk8ER2F6h7q4S7shailiSJiqTNSsx5WjNjECwy0Ohl7G3AGOzOPzN9gTvv4uG5O2/cMW/o03uwEgu9/VUbZiNKfr60uKObwTpGmfpBFPOly1HiRJIhAllsHzXvG70KqRSTYd2QKjHotlhq09MkvDSchOEDjTlg7VmrtusxKUuPkGXH/ZdvGczkq+VV6ywoLhvW9j7hxi5Tz2oBxvzdYPrwOsK5Tq7fatsZlsOPZuj+0d6UKxwudTPFh73MVqP52/vwFSFKEmvz8VPBICa8yPKx1+hcUPOrxRzVzCOUxcu4noXzinGBEDKODabZ5YelqFxoStGp1QFKWyQ/1aRd8YTLz5L/BGh2eaTsJiyiyhbNMePbc0/pXNUzZdlTcuVZyWhnrL82M1S/yv6WE/gyywTyrOgas71LZYHULRY45SCnbE9pXFg6iRLkgLFJGYK+W+qmjDTUBSNaYEbcq3p3rzbKVxwXzTm51q+cf8rPbxlto8A/XiuwOWOhStTtwYYAw==",
+            "page_age": "July 17, 2026",
+            "title": "Rust | endoflife.date",
+            "type": "web_search_result",
+            "url": "https://endoflife.date/rust"
+          },
+          {
+            "encrypted_content": "Eu0HCioIExgCIiQ3NDA0ZThkZS0xYzM2LTRjNzUtYjc1OC05YTNlZjQ5ZDQwNGESDBMzJmI1xtAIY+VQmxoMMTJXQAJd5nXOWhlaIjAD8DYdHq5f8NAeyBUVufeZgCU8KXeJzmW0xWDdW49UgkDEhntWeu1Mep9ypYM1Dskq8AalWD3B+7hG4quQxYn0uH+qO3n3CiWz1fpzK8BOrWDLgdFewGDuPOguXwL2laLzdMzBbDRjObOPOTRoarOwtHlnNMWorljmeN9DitQLjTXPjzhYnEFoMisQA5PtK2q1Jx8cB/4iMUQUmwqNraRz42OPxv2qXyc3w9uAtuqgj2lq4Tl2FnqQtr6xgCptymSc5pUvSg+TD8LnKRhwlbQkAITYGQ0pWPZa4kPwxHixE51eSy1bwkOSYUDEcDtOcdjoZ9TX/fFt/jecB3e1aYrc4oepTDtAk5ZwpmmHChmIgs+QFevGqBawjLb/EhjKMhtYvPg45UAOPVRV9XWyyg41yYwY8SuIbKjRKIzQAqn/LQALxc3QKniJSjo4F2ICdkCpxnspxWyC76SR3tGJix2h0nr2uxUgIDaOre7kso8LNK/n2sw7UJyRn82Q8SF73L2bKvbaoCkPAnOPMYfB+7tSe73Nx6fSZG2fx8AXOMLjArwj2sEXE0p0j6lmr9U6Fui2UFm1LzTV1PXsigdhngP1WEDizgA1gS+9/KiWe4JfDQcv1FHa+jn/if7QxAOvHUWsH897AzVdmh66s+aRJCBN9mI4qD60XWORBcVjfxejw8QZdEUfzL/QkIVBauEEA0xmH0IXfuCRfpLyLzSnDT+2KBoKSyxnEoj4YVZpSPsIsKFoWuQQTaHZMEIRSN4SC2W4GWl2DnMNObvBcs0+7pzmedHAXjPbkScmYq+7XuxXciSm7mU9z4VUfTC+9RMeiygwupL3JACxWPP6dGNikYvcQvBuEzVNtSvMOa5zg7Kjy1vHzlBg7Za5+QPmYMjX5DV/rbU1spSrVJIQ8ptEAIeq1FL8rOrG+LB4Bamt2SkLw1SdjiyejwvAugyGXKw3BxB98nq4j8RUTtoifmq3JVu5QDRsTGM8xNwBJXnCRYpDZS7VXvyS4pWW16dV5amg0gWv421JrU2N8LbNK64x9X6ndo/j3R0YbUCrFt8RwIBWvgEhcLMSsY3h6agp1wrBqNjnZkoDzetN0gYqLUW0xFutd3nYZyDI9q+6dZzufe0p4ibxm6n2cbgSqXEe5LONcRLaUm0noI7Mf8YrlqhyeS+ZikS6MY2KU3YWpSOuflu9JMipYgPuxQGh82GPHP9NYJqdQckBkFtWyO7Wufbr09D7UuaOGAM=",
+            "page_age": "2 weeks ago",
+            "title": "What's New in Rust in 2026: The Most Important Changes - Rustify",
+            "type": "web_search_result",
+            "url": "https://rustify.rs/articles/whats-new-in-rust-2026"
+          },
+          {
+            "encrypted_content": "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",
+            "page_age": "June 25, 2026",
+            "title": "React Compiler Is Now in Rust — Next.js 16.4 Gets >40% Faster Builds | byteiota",
+            "type": "web_search_result",
+            "url": "https://byteiota.com/react-compiler-rust-nextjs-16-4-faster-builds/"
+          },
+          {
+            "encrypted_content": "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",
+            "page_age": "May 18, 2026",
+            "title": "Project goals update — April 2026 (end of 2025H2) | Rust Blog",
+            "type": "web_search_result",
+            "url": "https://blog.rust-lang.org/2026/05/18/project-goals-2026-04/"
+          },
+          {
+            "encrypted_content": "EvUHCioIExgCIiQ3NDA0ZThkZS0xYzM2LTRjNzUtYjc1OC05YTNlZjQ5ZDQwNGESDHXRJWVqQtZxApjUexoM1ePAIE2nzG0gCVemIjCQYoyICgz3tcgegqRiosf78rPzIEBMgSJv65Z4d2d+ljjE0dm/pShLZTO52qYxITwq+AYSUPRf1k6lGjSoj6+YPIgqIHk5+sqsUbGKd2S2y0ZiZU2tSbP8SsUjT2+ZTbquCAt5cCk3Xn+BPOTOXHIG94lgmLpYLL48JqjmL+SHccze3samrvg6ySOCkVUHdjqlCX51gFZLbiiX3ct64hDGAPdbc3fRgPmB/+GFk8w3yMUO8CSGnYkVMyayoacjrory1vEnBqZD2NWTonIw/kvKORnn+h4EBdJ7M9OTddYYNs1hWWsbXKiq++4zr12OgKqV4GCqr6yj9AixbnT/WsxcNNqn5OpdWxnMMemWUUkyBdgNrko9RWIt69GhSNTuOiafZwR7MV3RRXUXc4SOnMcCtyHJxoAPYL8VjmJM+54Y7vLc7WWwuvMno8xrm/GCbzmP8SlAtgWoZTVWQRUXE9wVWUGxvQ04R+Nk6wgC950djZnxpblNy/2PiwXVCck4dyBKhK0hc+1KgYDVaG4fj6Utp6FyLJRElpfiVlW1a1WGBjuNRLpEmxGFwak9/ZKBycSS3uNq3jGxuEVYIcRDqrs5CcV4aaJx+NT5goEolDJ4krVPyq7IVVEUvfupCevEVN4jHVr3aSHH2ZrWKuD9qMF2+4ndp3OqlReA3xVbzMMCCQEufv7ye6WVPse/z5ZvhYoAJ+VgW+7//j+ZQufjm0FXOGkcmqvVSTIVlB7bnwyOA+TKsT2OfjqXbuhZR3mnDBqepuNa1z2K7/nK2yv0u/CokuBaSYK2gwxwMA3ucrcZRQgMVbghbnp6Q95TK2e5V7Rq+21+pz0OAKu3XY0/B8W/2gK0+5qQ33Q6y2Uz+AaAplhjlC+sVI7zHqHeCHbWYOxJvwIjzub4vwgw9t9mGyFGhVwEm3Ysxdk35kOE+Ny2aSlgGvAQX7MzEDl9eau/neQ6rvIgKm0HuJcENw8poJG2A9JKMj16BGjLZV5wIcObhY0gwrxA2lp2TsH/y1/YFJRP/9VSkrUo56gf2nofGXiKB2nBOC3W5QdwvkeP3Pfq3L6RWRmwbyPWR20n+OUoaK9rvrb0oJKfZ38bC1TbPxWiuGds3C3cq3v9TUEhQZluqKdYlj4eLyFX6QzWQ4MddJaA531sPryd0IC1k9cff6e845Rhivd2A7pGl9F0kPLN7j+Qow6Iz4kbTsto1YK4Ohyg+QhuSKrcFM+zBSbGhNgIBhaIrXA65JmxyDcYAw==",
+            "page_age": "May 28, 2026",
+            "title": "Rust Release Notes",
+            "type": "web_search_result",
+            "url": "https://doc.rust-lang.org/beta/releases.html"
+          },
+          {
+            "encrypted_content": "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",
+            "page_age": null,
+            "title": "Rust version requirement (was: [PATCH V2 3/3] powerpc: Enable Rust for ppc64le)",
+            "type": "web_search_result",
+            "url": "https://lkml.iu.edu/2602.2/00316.html"
+          }
+        ],
+        "tool_use_id": "srvtoolu_01RaPJ3oagjWi5tTs173MJkd",
+        "type": "web_search_tool_result"
+      },
+      "index": 1,
+      "type": "content_block_start"
+    },
+    {
+      "index": 1,
+      "type": "content_block_stop"
+    },
+    {
+      "content_block": {
+        "citations": [],
+        "text": "",
+        "type": "text"
+      },
+      "index": 2,
+      "type": "content_block_start"
+    },
+    {
+      "delta": {
+        "citation": {
+          "cited_text": "Current versions August 2026: Rust 1.97 (2024 edition, released 9 July 2026), Go 1.26 (Feb 2026, crypto/hpke, experimental SIMD). ",
+          "encrypted_index": "Eo8BCioIExgCIiQ3NDA0ZThkZS0xYzM2LTRjNzUtYjc1OC05YTNlZjQ5ZDQwNGESDIWZqMWKEgzsJAr4/xoMAran/rdbA/ZIpT5cIjCt/l67KsiLDv7EjD4gAVpWnqTAGVpIBUbOVv3lwIcEPpbn/exAWXTfcqBpoj9pFk8qE958iDDlDXMYpGTY21TXmagU758YBA==",
+          "title": "Rust 1.97 and Go 1.26 in 2026: Tooling, Versions, What Changed",
+          "type": "web_search_result_location",
+          "url": "https://rustvsgo.com/tooling/"
+        },
+        "type": "citations_delta"
+      },
+      "index": 2,
+      "type": "content_block_delta"
+    },
+    {
+      "delta": {
+        "text": "The current",
+        "type": "text_delta"
+      },
+      "index": 2,
+      "type": "content_block_delta"
+    },
+    {
+      "delta": {
+        "text": " stable",
+        "type": "text_delta"
+      },
+      "index": 2,
+      "type": "content_block_delta"
+    },
+    {
+      "delta": {
+        "text": " version of the Rust compiler is 1.97, released on July 9, 2026.",
+        "type": "text_delta"
+      },
+      "index": 2,
+      "type": "content_block_delta"
+    },
+    {
+      "index": 2,
+      "type": "content_block_stop"
+    },
+    {
+      "delta": {
+        "stop_details": null,
+        "stop_reason": "end_turn",
+        "stop_sequence": null
+      },
+      "type": "message_delta",
+      "usage": {
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 11260,
+        "output_tokens": 105,
+        "server_tool_use": {
+          "web_fetch_requests": 0,
+          "web_search_requests": 1
+        }
+      }
+    },
+    {
+      "type": "message_stop"
+    }
+  ]
+}

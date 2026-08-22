@@ -1,0 +1,247 @@
+{
+  "name": "streaming-thinking",
+  "provenance": "captured",
+  "note": "A streaming turn with extended thinking enabled, which is the only way a real answer carries a thinking block and a thinking_delta. This proxy does not pass those through — it reconstructs them from the other provider's reasoning, so they are among the shapes most likely to carry a field a real answer never carries, and until this capture nothing had ever measured them. The code 6WNP4J is spoken back, so the stream answered this request.",
+  "endpoint": "/v1/messages",
+  "request": {
+    "max_tokens": 1600,
+    "messages": [
+      {
+        "content": "Think about it briefly, then reply with exactly this and nothing else: 6WNP4J",
+        "role": "user"
+      }
+    ],
+    "model": "claude-haiku-4-5-20251001",
+    "stream": true,
+    "thinking": {
+      "budget_tokens": 1024,
+      "type": "enabled"
+    }
+  },
+  "status": 200,
+  "headers": [
+    [
+      "date",
+      "Sat, 22 Aug 2026 11:15:46 GMT"
+    ],
+    [
+      "content-type",
+      "text/event-stream; charset=utf-8"
+    ],
+    [
+      "cache-control",
+      "no-cache"
+    ],
+    [
+      "anthropic-ratelimit-unified-status",
+      "allowed"
+    ],
+    [
+      "anthropic-ratelimit-unified-5h-status",
+      "allowed"
+    ],
+    [
+      "anthropic-ratelimit-unified-5h-reset",
+      "1787414400"
+    ],
+    [
+      "anthropic-ratelimit-unified-5h-utilization",
+      "0.01"
+    ],
+    [
+      "anthropic-ratelimit-unified-7d-status",
+      "allowed"
+    ],
+    [
+      "anthropic-ratelimit-unified-7d-reset",
+      "1787976000"
+    ],
+    [
+      "anthropic-ratelimit-unified-7d-utilization",
+      "0.0"
+    ],
+    [
+      "anthropic-ratelimit-unified-overage-status",
+      "allowed"
+    ],
+    [
+      "anthropic-ratelimit-unified-overage-reset",
+      "1788220800"
+    ],
+    [
+      "anthropic-ratelimit-unified-overage-utilization",
+      "0.0"
+    ],
+    [
+      "anthropic-ratelimit-unified-representative-claim",
+      "five_hour"
+    ],
+    [
+      "anthropic-ratelimit-unified-fallback-percentage",
+      "0.5"
+    ],
+    [
+      "anthropic-ratelimit-unified-reset",
+      "1787414400"
+    ],
+    [
+      "request-id",
+      "req_011CeHh4JgLFcx89TAUN6nPs"
+    ],
+    [
+      "strict-transport-security",
+      "max-age=31536000; includeSubDomains; preload"
+    ],
+    [
+      "anthropic-organization-id",
+      "(withheld)"
+    ],
+    [
+      "anthropic-workspace-id",
+      "(withheld)"
+    ],
+    [
+      "traceresponse",
+      "00-3fd6879ac50a8dec4a0acea943da79d5-7434bfdf33b6ec88-01"
+    ],
+    [
+      "server",
+      "cloudflare"
+    ],
+    [
+      "vary",
+      "Accept-Encoding"
+    ],
+    [
+      "x-robots-tag",
+      "none"
+    ],
+    [
+      "content-security-policy",
+      "default-src 'none'; frame-ancestors 'none'"
+    ],
+    [
+      "cf-cache-status",
+      "DYNAMIC"
+    ],
+    [
+      "cf-ray",
+      "a2f176227c64926c-SIN"
+    ]
+  ],
+  "events": [
+    {
+      "message": {
+        "content": [],
+        "id": "msg_011CeHh4KH3SaLBCnjAaMt3L",
+        "model": "claude-haiku-4-5-20251001",
+        "role": "assistant",
+        "stop_details": null,
+        "stop_reason": null,
+        "stop_sequence": null,
+        "type": "message",
+        "usage": {
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 0,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "cache_creation_input_tokens": 0,
+          "cache_read_input_tokens": 0,
+          "inference_geo": "not_available",
+          "input_tokens": 57,
+          "output_tokens": 4,
+          "service_tier": "standard"
+        }
+      },
+      "type": "message_start"
+    },
+    {
+      "content_block": {
+        "signature": "",
+        "thinking": "",
+        "type": "thinking"
+      },
+      "index": 0,
+      "type": "content_block_start"
+    },
+    {
+      "type": "ping"
+    },
+    {
+      "delta": {
+        "thinking": "The user is asking",
+        "type": "thinking_delta"
+      },
+      "index": 0,
+      "type": "content_block_delta"
+    },
+    {
+      "delta": {
+        "thinking": " me to think about something briefly, then reply with exactly \"6WNP4J\" and nothing else. This seems straightforward - they want me to respond with",
+        "type": "thinking_delta"
+      },
+      "index": 0,
+      "type": "content_block_delta"
+    },
+    {
+      "delta": {
+        "thinking": " that exact string.\n\nLet me follow the instructions exactly as stated.",
+        "type": "thinking_delta"
+      },
+      "index": 0,
+      "type": "content_block_delta"
+    },
+    {
+      "delta": {
+        "signature": "EugDCpoBCBEYAipAr2xd+GW+K34ndNkmECR1AHd7idzt5hnRzKkh4j3iTQnn5uPmyeZy/XcPcgV8bs+YxiAfqEV//E63GX+4zlerIzIZY2xhdWRlLWhhaWt1LTQtNS0yMDI1MTAwMTgAQgh0aGlua2luZ1okNzQwNGU4ZGUtMWMzNi00Yzc1LWI3NTgtOWEzZWY0OWQ0MDRhqAHiiabUBhIMuL4A5cFugl9/FBfoGgx3QcnWmalHrFI7BaMiMNhyTSlTkH/5pdMENKwWYYvuGD1wKhqaPnsnH4l3/1/ClwuhLsE7QK75r4TnDT8QJCr6AeJtavOe3m4w4QIpiYRmYx7OYB7CmSy+iF4VULGcnUBzlphj31BuRxHbxz/sXc5ns5L3rH5cEGc/3dd2NedJ3T5Uxfr5MBTOdlxomKkiFkFaqT65G+3sCnDW8cKIY5qfHgxvKLIwVSYo1ADLgGrgp8phIV4JE6f29aY3hYl/4nClK9BZV6aGzT8l0GBLgEW+VocQGMYrcArLsQoXYpTuLTO/10krl51B7hhQgy07a4n48RGnzxqLy5D5GBhyLhl9HGPabQrjo4LsodybGV9m+6K+GNLeesBdvVbZGR6L9PO2gYDKJBruD/L4no4ZnRDL/6eRhl3apWHj3RAYAQ==",
+        "type": "signature_delta"
+      },
+      "index": 0,
+      "type": "content_block_delta"
+    },
+    {
+      "index": 0,
+      "type": "content_block_stop"
+    },
+    {
+      "content_block": {
+        "text": "",
+        "type": "text"
+      },
+      "index": 1,
+      "type": "content_block_start"
+    },
+    {
+      "delta": {
+        "text": "6WNP4J",
+        "type": "text_delta"
+      },
+      "index": 1,
+      "type": "content_block_delta"
+    },
+    {
+      "index": 1,
+      "type": "content_block_stop"
+    },
+    {
+      "delta": {
+        "stop_details": null,
+        "stop_reason": "end_turn",
+        "stop_sequence": null
+      },
+      "type": "message_delta",
+      "usage": {
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 57,
+        "output_tokens": 69,
+        "output_tokens_details": {
+          "thinking_tokens": 57
+        }
+      }
+    },
+    {
+      "type": "message_stop"
+    }
+  ]
+}
