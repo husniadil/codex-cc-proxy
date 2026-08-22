@@ -40,9 +40,27 @@ pub const PATH_LIMIT: usize = 107;
 /// With no home named, the path is unchanged: an operator's running daemon is
 /// addressed by the path it already bound.
 pub fn default_path() -> PathBuf {
-    match std::env::var_os("PROXENOS_HOME") {
-        Some(home) => PathBuf::from(home).join("proxenos.sock"),
-        None => std::env::temp_dir().join("proxenos.sock"),
+    path_for(
+        std::env::var_os("PROXENOS_HOME").map(PathBuf::from).as_deref(),
+        Some(std::env::temp_dir()).as_deref(),
+    )
+}
+
+/// The same derivation, over an environment named rather than read.
+///
+/// **This exists so a supervisor unit and the operator's shell cannot split.**
+/// A process launchd starts does not necessarily see the `TMPDIR` a login shell
+/// does, and a daemon that binds one path while the CLI dials another comes up
+/// healthy on the HTTP port while every verb reports connection refused. The
+/// unit is rendered by putting the installing shell's values through this
+/// function and carrying them explicitly, so both halves are the same call over
+/// the same inputs rather than two derivations that happen to agree.
+pub fn path_for(home: Option<&Path>, tmpdir: Option<&Path>) -> PathBuf {
+    match home {
+        Some(home) => home.join("proxenos.sock"),
+        None => tmpdir
+            .unwrap_or_else(|| Path::new("/tmp"))
+            .join("proxenos.sock"),
     }
 }
 
