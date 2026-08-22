@@ -26,6 +26,15 @@ in [`docs/api.md`](docs/api.md) §6.
 
 ### Fixed
 
+- **The coverage line no longer claims a path no probe ran on.** Under the
+  matrix, the relay half was derived from the outcomes while the translation
+  half was a constant, so `doctor --probe relay` reported the translation path
+  as exercised and named the account it spent, on a run that spent nothing of
+  it. Both halves are read off the outcomes now, and a path has three states: a
+  passing row means exercised and its account is named, every probe failing
+  means the path was run and established nothing, and nothing running (or
+  everything skipping) means it was not exercised and no account is named. A
+  full run still says plainly that the translation path was exercised.
 - **A request that did not ask for a stream is no longer answered with one.**
   `POST /v1/messages` returned `text/event-stream` whatever the caller sent,
   including for `"stream": false` and for a body with no `stream` field at all —

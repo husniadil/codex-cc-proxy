@@ -990,3 +990,124 @@ async fn a_live_env_contract_row_says_it_never_reached_the_backend() {
         "{rendered}"
     );
 }
+
+/// Build one outcome on a surface, for the coverage-line states.
+fn outcome_on(surface: probe::Surface, status: Status) -> Outcome {
+    Outcome {
+        name: match surface {
+            probe::Surface::Relay => "relay".to_owned(),
+            _ => "messages".to_owned(),
+        },
+        capability: proxenos_core::fixture::Capability::ToolCalling,
+        surface,
+        rationale: "the rationale is not what this test reads",
+        status,
+        note: None,
+    }
+}
+
+/// A path with no probe on it is not exercised, and its account is not named.
+///
+/// `--probe relay` runs one row on §9 and nothing on the translation path. The
+/// line used to claim the translation path anyway, naming an account the run
+/// never spent.
+#[test]
+fn a_path_with_no_probe_on_it_is_not_claimed_as_exercised() {
+    let outcomes = vec![outcome_on(probe::Surface::Relay, Status::Passed)];
+
+    let replay = probe::matrix(&outcomes, &replayed("a corpus"));
+    assert!(
+        replay.contains("the translation path was not exercised"),
+        "{replay}"
+    );
+    assert!(
+        replay.contains("the relay path (§9) was replayed"),
+        "{replay}"
+    );
+
+    let live = probe::matrix(
+        &outcomes,
+        &probe::Run {
+            evidence: probe::Evidence::Live {
+                account: Some("work-codex".to_owned()),
+                relay: Some("personal-claude".to_owned()),
+            },
+        },
+    );
+    assert!(
+        live.contains("the translation path was not exercised"),
+        "{live}"
+    );
+    assert!(!live.contains("work-codex"), "{live}");
+    assert!(live.contains("as `personal-claude`"), "{live}");
+}
+
+/// A path every one of whose probes failed was run and established nothing.
+///
+/// That is not the same as a path nothing ran on, and the line does not say
+/// the same thing about the two.
+#[test]
+fn a_path_whose_every_probe_failed_reads_differently_from_one_never_run() {
+    let failed = vec![
+        outcome_on(
+            probe::Surface::Messages,
+            Status::Failed("the stream carried no text".to_owned()),
+        ),
+        outcome_on(
+            probe::Surface::Relay,
+            Status::Failed("the marker did not survive".to_owned()),
+        ),
+    ];
+    let rendered = probe::matrix(&failed, &replayed("a corpus"));
+    assert!(
+        rendered.contains("the translation path established nothing (every probe on it failed)"),
+        "{rendered}"
+    );
+    assert!(
+        rendered.contains("the relay path (§9) established nothing (every probe on it failed)"),
+        "{rendered}"
+    );
+    assert!(!rendered.contains("was not exercised"), "{rendered}");
+
+    // A live failure does not name the account as spent either.
+    let live = probe::matrix(
+        &failed,
+        &probe::Run {
+            evidence: probe::Evidence::Live {
+                account: Some("work-codex".to_owned()),
+                relay: None,
+            },
+        },
+    );
+    assert!(!live.contains("work-codex"), "{live}");
+}
+
+/// A skipped row is not a contacted path.
+#[test]
+fn a_path_whose_probes_all_skipped_was_not_exercised() {
+    let outcomes = vec![outcome_on(
+        probe::Surface::Messages,
+        Status::Skipped("the corpus holds no recording".to_owned()),
+    )];
+    let rendered = probe::matrix(&outcomes, &replayed("a corpus"));
+    assert!(
+        rendered.contains("the translation path was not exercised"),
+        "{rendered}"
+    );
+}
+
+/// A full run still says plainly that the translation path was exercised.
+///
+/// Understating is the same defect as overstating: the line exists so a green
+/// matrix is read for what it covers, in both directions.
+#[tokio::test]
+async fn a_full_run_still_claims_the_translation_path() {
+    let outcomes = proxenos::doctor::run(&Corpus::Dir(corpus()), None)
+        .await
+        .unwrap();
+    let rendered = probe::matrix(&outcomes, &replayed("the checkout's fixtures"));
+    assert!(
+        rendered.contains("Exercised: the translation path, answered from"),
+        "{rendered}"
+    );
+}

@@ -256,6 +256,14 @@ account when it answered live. Green rows say
 nothing about a path no probe drove, and a reader with no line to tell them
 otherwise reads green as coverage of the whole proxy.
 
+Both halves of that line are read off the outcomes, so a partial run states a
+partial result. `--probe` is one way to get one, and a skipped or failed row is
+another. A path with a passing row was exercised and its account is named. A
+path whose probes all ran and all failed established nothing, and is said to
+have established nothing rather than to have been skipped. A path nothing ran
+on — no probe, or every probe skipped — was not exercised, and no account is
+named as spent on it.
+
 The relay path has a probe of its own, and it runs on both modes. Replayed, it
 drives the §9 branch against a recording whose marker sits inside a field the
 proxy does not model, so a body round-tripped through the proxy's own types

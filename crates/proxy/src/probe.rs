@@ -585,43 +585,91 @@ impl Evidence {
     }
 }
 
+/// What a run established about one path.
+///
+/// A path nothing ran on and a path whose every probe failed are different
+/// facts, and the line does not say the same thing about them.
+#[derive(PartialEq)]
+enum Reach {
+    /// At least one probe on the path passed.
+    Exercised,
+    /// Probes on the path ran and every one of them failed.
+    Nothing,
+    /// Nothing on the path ran, or everything on it was skipped.
+    Absent,
+}
+
+fn reach(outcomes: &[Outcome], on_relay: bool) -> Reach {
+    let rows = outcomes
+        .iter()
+        .filter(|outcome| (outcome.surface == Surface::Relay) == on_relay);
+    let mut failed = false;
+    for outcome in rows {
+        match outcome.status {
+            Status::Passed => return Reach::Exercised,
+            Status::Failed(_) => failed = true,
+            Status::Skipped(_) => {}
+        }
+    }
+    if failed {
+        Reach::Nothing
+    } else {
+        Reach::Absent
+    }
+}
+
 /// One line naming what the run exercised, and what it did not.
 ///
 /// A green matrix says nothing about the WebSocket transport or the relay, and
 /// a reader with nothing to tell them otherwise reads green as coverage of the
-/// whole proxy. Both absences are named here rather than inferred.
+/// whole proxy. Both absences are named here rather than inferred. Both halves
+/// are derived from the outcomes: a path with no passing row is not exercised,
+/// and its account is not named as spent.
 fn coverage(outcomes: &[Outcome], run: &Run) -> String {
-    let ran = outcomes
-        .iter()
-        .any(|outcome| outcome.surface == Surface::Relay && outcome.status == Status::Passed);
-    let relay = match (&run.evidence, ran) {
-        (_, false) => "the relay path (§9) was not exercised".to_owned(),
+    let relay = match (&run.evidence, reach(outcomes, true)) {
+        (_, Reach::Absent) => "the relay path (§9) was not exercised".to_owned(),
+        (_, Reach::Nothing) => {
+            "the relay path (§9) established nothing (every probe on it failed)".to_owned()
+        }
         (
             Evidence::Live {
                 relay: Some(name), ..
             },
-            true,
+            Reach::Exercised,
         ) => {
             format!("the relay path (§9) answered live as `{name}`")
         }
-        (_, true) => "the relay path (§9) was replayed".to_owned(),
+        (_, Reach::Exercised) => "the relay path (§9) was replayed".to_owned(),
+    };
+
+    let translation = match reach(outcomes, false) {
+        Reach::Absent => "the translation path was not exercised".to_owned(),
+        Reach::Nothing => {
+            "the translation path established nothing (every probe on it failed)".to_owned()
+        }
+        Reach::Exercised => match &run.evidence {
+            Evidence::Replay { corpus } => {
+                format!("the translation path, answered from {corpus}")
+            }
+            Evidence::Live { account, .. } => {
+                let whose = match account {
+                    Some(account) => format!("as `{account}`"),
+                    None => "as the account serving turns".to_owned(),
+                };
+                format!("the translation path over the HTTP transport, {whose}")
+            }
+        },
     };
 
     match &run.evidence {
-        Evidence::Replay { corpus } => format!(
-            "Exercised: the translation path, answered from {corpus}; {relay}. \
+        Evidence::Replay { .. } => format!(
+            "Exercised: {translation}; {relay}. \
              Not exercised: the WebSocket transport, and no account was contacted."
         ),
-        Evidence::Live { account, .. } => {
-            let whose = match account {
-                Some(account) => format!("as `{account}`"),
-                None => "as the account serving turns".to_owned(),
-            };
-            format!(
-                "Exercised: the translation path over the HTTP transport, {whose}; {relay}. \
-                 Not exercised: the WebSocket transport."
-            )
-        }
+        Evidence::Live { .. } => format!(
+            "Exercised: {translation}; {relay}. \
+             Not exercised: the WebSocket transport."
+        ),
     }
 }
 

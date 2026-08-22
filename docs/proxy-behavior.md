@@ -1507,10 +1507,19 @@ The matrix these produce says what it did not touch as well as what it did. A
 failed row prints the probe's rationale; a live run marks the `count-tokens`
 row, whose surface never reaches the backend the live header speaks for; and one
 line names the account the run spent, the account the relay arm spent when it
-ran, and the paths the run left alone — the WebSocket transport always, and the
-relay where no relay probe ran. Green rows say nothing
+ran, and the paths the run left alone — the WebSocket transport always, and
+either of the other two paths where no probe on it passed. Green rows say nothing
 about a path nothing drove, and a reader with no line to tell them otherwise
 reads green as coverage of the whole proxy.
+
+Both halves of that line are derived from the outcomes, and a path has three
+states rather than two. A path with a passing row was exercised, and only then
+is the account it spent named. A path whose probes all ran and all failed was
+run and established nothing, which the line says in those terms — reporting it
+as unexercised would hide that the path was reached. A path nothing ran on, or
+whose every row was skipped, was not exercised and names no account.
+Overstating and understating are the same defect here, so a run that did drive
+the translation path still says so plainly.
 
 ### 10.4 Transport and sessions
 
