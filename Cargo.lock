@@ -1104,7 +1104,7 @@ dependencies = [
 
 [[package]]
 name = "proxenos"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1141,7 +1141,7 @@ dependencies = [
 
 [[package]]
 name = "proxenos-core"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "insta",
  "pretty_assertions",

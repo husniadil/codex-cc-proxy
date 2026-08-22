@@ -4,7 +4,13 @@ All notable changes to this project are recorded here. This project follows
 [semantic versioning](https://semver.org). The semver-bound surfaces are listed
 in [`docs/api.md`](docs/api.md) §6.
 
-## [Unreleased]
+## [0.9.0]
+
+The `doctor` matrix stops claiming more than it measured. The relay path (§9)
+had no live arm at all, on a rationale the code beside it disproved, and the
+line under the matrix named the translation path and the account it spent
+whether or not anything ran there. Both now say what the run actually
+established, and name what it left alone.
 
 ### Added
 

@@ -604,6 +604,39 @@ anyone noticing it was gone.
 refusal rather than written; and live capability probes against the relay, which
 stay in §L.
 
+### v0.9.0 — shipped
+
+**A matrix that claims only what the run established.** Two defects with one
+shape: `doctor` reporting coverage it had not measured. The relay path had no
+live arm, skipped on a rationale the code beside it disproved — the skip said a
+live run needed the account serving turns switched to the second provider, while
+the probe was already building its own store and its own authorizer and never
+depended on the selection at all. And the line under the matrix named the
+translation path, and the account it spent, whether or not a probe on that path
+had run; narrowing a run with `--probe` made it say so out loud.
+
+The live arm relays a turn to the second provider's real endpoint, authorized as
+an account read from the store by name. Exactly one account on that provider is
+used, several need `--relay-account`, and none skips the row saying what the
+store holds. An authorization by name neither reads nor writes the selection, so
+`accounts` reports the same serving account before and after. Live it
+establishes the answer half only, and the row names the half it cannot:
+forwarding is the whole behaviour of this path, so the outbound bytes leave on a
+socket the process cannot watch, and the request-half checks stay with the
+replay arm rather than passing over a value nothing looked at.
+
+The coverage line is assembled from what the outcomes say rather than poured
+into fixed halves. Every path appears once, under the heading true of it; a path
+whose every probe failed was reached and established nothing, which is not the
+same fact as a path nothing ran on; and a heading with nothing under it is not
+printed.
+
+**Done when** a relayed turn is measured against the real second provider, and
+no line under the matrix names a path the run did not touch.
+
+**Done.** What the live arm deliberately does not establish is the outbound
+half, and it says so on the row rather than leaving a reader to assume it.
+
 ### Next
 
 Named rather than numbered. Twice now a section here has worn a version that
