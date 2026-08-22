@@ -198,7 +198,9 @@ nothing.
 ### 2.7 Request fields
 
 Every request sets `stream: true`, `store: false`, `parallel_tool_calls: true`,
-and includes `reasoning.encrypted_content`.
+and includes `reasoning.encrypted_content`. That is the upstream request and is
+unconditional: the backend is always asked to stream, whatever shape the caller
+asked to be answered with (§5.5).
 
 `reasoning.effort` derives from the inbound `output_config.effort`, under an
 optional ceiling the operator sets. The client cannot choose that ceiling: it
@@ -569,6 +571,35 @@ spending quota on output nobody receives.
 A stream that completes having produced no content frames is recorded with its
 request and the raw upstream bytes. It is always a defect, and it is otherwise
 invisible.
+
+### 5.5 A request that did not ask for a stream
+
+`stream` is the caller's choice and the endpoint's default is not a stream. A
+request that omits it, or sets it `false`, is answered with one
+`application/json` message body.
+
+There is only one thing to build that body out of: the frame sequence of §5.1.
+It is folded shut — content blocks closed, deltas concatenated, tool arguments
+parsed back from the fragments that spelled them. The fold is pure over the
+frames and invents nothing: arguments that do not parse are a failure in the
+error shape of `docs/api.md` §1.1, never an object that looks plausible.
+
+The usage reported is the one `message_delta` carries and never the estimate in
+`message_start` (§6.1, §6.2). A body is a completed turn, and a completed turn
+has upstream's own figures.
+
+Which shape the caller asked for changes what is written and nothing else.
+Calibration, session bookkeeping (§3.3, §4.3) and capture (§5.4) run off the
+same sequence either way, so a non-streaming turn advances a conversation
+exactly as a streaming one does.
+
+Because nothing is written until the fold is done, a failure on this path is a
+status and an error body — the opposite of the streaming path's constraint, for
+the same reason: the status is still the proxy's to choose.
+
+Claude Code always streams, so the harness never takes this path. It exists
+because the ingress claims to be a Messages API, and a caller that did not ask
+for `text/event-stream` did not agree to parse one.
 
 ---
 

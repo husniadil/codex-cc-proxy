@@ -1,7 +1,9 @@
 //! The Anthropic Messages API surface.
 
+mod aggregate;
 mod stream;
 
+pub use aggregate::*;
 pub use stream::*;
 
 use serde::Deserialize;
@@ -20,6 +22,18 @@ pub struct MessagesRequest {
     pub tool_choice: Option<ToolChoice>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub output_config: Option<OutputConfig>,
+    /// Whether the caller asked to be answered with an event stream. Absent
+    /// means it did not: the Messages endpoint's default is one JSON body, and
+    /// `docs/api.md` §1 holds this proxy to that (§5.5).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stream: Option<bool>,
+}
+
+impl MessagesRequest {
+    /// Whether this turn is answered with an event stream.
+    pub fn wants_stream(&self) -> bool {
+        self.stream.unwrap_or(false)
+    }
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
