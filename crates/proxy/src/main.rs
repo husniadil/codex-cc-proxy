@@ -1287,9 +1287,22 @@ fn supervisor_origin() -> Result<proxenos::supervisor::Origin> {
 /// The uid comes from the owner of the home directory being written into,
 /// which is the same question asked a different way and needs no dependency:
 /// the agent is installed for whoever owns that directory.
+#[cfg(unix)]
 fn gui_domain(home: &std::path::Path) -> std::io::Result<String> {
     use std::os::unix::fs::MetadataExt;
     Ok(format!("gui/{}", std::fs::metadata(home)?.uid()))
+}
+
+/// The same question where there is no launchd to ask it of.
+///
+/// Never reached: `plan` refuses a platform without launchd before anything
+/// here runs. It exists because the refusal is a runtime decision while the
+/// file still has to compile everywhere this ships, and a uid is a Unix idea.
+#[cfg(not(unix))]
+fn gui_domain(_home: &std::path::Path) -> std::io::Result<String> {
+    Err(std::io::Error::other(
+        "launchd is not this platform's supervisor",
+    ))
 }
 
 fn launchctl(arguments: &[&str]) -> std::io::Result<std::process::Output> {

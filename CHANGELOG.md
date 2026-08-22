@@ -6,6 +6,13 @@ in [`docs/api.md`](docs/api.md) §6.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The supervisor verb compiles where launchd does not.** The helper that
+  reads a home directory's owner is a Unix idea, and it was written without a
+  guard, so a Windows build failed to compile a verb that refuses at runtime on
+  that platform anyway. The refusal is a runtime decision; compiling is not.
+
 ### Added
 
 - **`supervisor` brings the daemon back when it dies.** Nothing did. The code
