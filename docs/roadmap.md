@@ -518,7 +518,50 @@ one live — repeated 200 generations, streaming included (§L). What has not
 landed: capability probes against this path, live-gated, since a probe fixture
 that was not recorded from the real endpoint proves nothing (§L).
 
-### v0.7.0
+### v0.7.0 — shipped
+
+**The operator surface catches up with the second provider.** v0.6.0 made a
+second provider serve turns; what it did not do was make the surfaces an
+operator reads tell the truth about one. `status` printed four tier rows for a
+mapping that decided nothing, `accounts` and `usage` described a provider by
+its role rather than its name, `doctor` had never driven the relay branch at
+all, and the credential that path needs could only be stored through a pipe.
+None of that is a translation defect, which is why none of it showed up as a
+failing test: every one of them reads as working output.
+
+Three things this release treats as one problem. **An operator has to be able
+to see what the next turn will do** — hence an inert tier row marked inert, a
+`routing` line naming where ids relay to, and every operator-facing string
+carrying a real provider id rather than "the second provider". **A figure has
+to come from somewhere real or be absent** — hence per-account quota read off
+the `anthropic-ratelimit-unified-*` headers of turns the relay already makes,
+with an account that has relayed nothing saying so instead of reporting zero.
+**A diagnostic has to state its own coverage** — hence a relay probe, an
+`env-contract` probe over the two launch variables that fail silently, a
+rationale printed on failure, and a line naming the paths a green run left
+alone.
+
+Two isolation holes surfaced by live use closed alongside them: the control
+socket follows `PROXENOS_HOME`, so an isolated daemon can no longer reach the
+operator's real one and switch what it serves; and a key re-store that would
+change an account's provider is refused by name instead of silently replacing
+the credential. `login` also stopped taking over what serves turns — storing a
+credential and choosing what spends quota are two decisions, and one login
+making both moved every turn onto a new account with nothing said.
+
+**Done when** every operator-facing surface names the provider it is talking
+about, a relayed account's quota and tier mapping are reported as what they
+actually are rather than as zeros and live rows, `doctor` covers the relay path
+and says what a run did not touch, and an isolated home or a mistaken re-store
+cannot reach past itself.
+
+**Done.** The control socket's method names are frozen from this release on —
+`docs/api.md` §6 names the nineteen that are bound — which is what made
+`tiers.get` → `tiers` the last free rename. What is deliberately not here:
+capability probes driven live against the relay, which need the serving account
+switched for the length of a run and stay in §L.
+
+### v0.8.0
 
 **A graphical front-end.** The control socket was built for exactly this: the
 daemon holds authoritative state, the CLI has no privileged path of its own, and
