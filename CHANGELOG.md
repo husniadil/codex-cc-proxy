@@ -33,7 +33,12 @@ in [`docs/api.md`](docs/api.md) §6.
   they differ the daemon comes up healthy on its port while every CLI verb
   reports connection refused. Both are now carried in the unit explicitly, and
   the derivation moved into one function (`control::path_for`) that the unit
-  and the CLI both call, so the two agree by construction. `supervisor status`
+  and the CLI both call, so the two agree by construction. `TMPDIR` is carried
+  whether or not the installing shell names one: launchd does not hand a job an
+  empty environment, so omitting it would mean launchd's value rather than
+  none, while the path planned at install time had fallen back to `/tmp` — the
+  same drift, arrived at from the inside. The unit records the value the
+  derivation actually used, fallback included. `supervisor status`
   compares the installed unit against the one the current environment would
   write and says plainly when they have drifted apart.
 

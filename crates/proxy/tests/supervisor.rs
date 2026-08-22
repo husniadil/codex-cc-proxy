@@ -9,6 +9,7 @@ use proxenos::supervisor::Origin;
 use proxenos::supervisor::Platform;
 use proxenos::supervisor::plan;
 use proxenos::supervisor::render;
+use std::ffi::OsString;
 use std::path::PathBuf;
 
 fn origin() -> Origin {
@@ -44,45 +45,81 @@ fn a_platform_this_cannot_supervise_is_refused_by_name() {
     );
 }
 
+/// What the supervised daemon's environment actually is.
+///
+/// **launchd does not hand a job an empty environment.** It supplies its own
+/// `TMPDIR` — measured on this machine as byte-identical to the login shell's —
+/// and what the unit carries goes on top of that rather than instead of it. A
+/// test that models the daemon's environment as exactly what the unit carries
+/// cannot express the failure this verb exists to catch, because the case that
+/// fails is the one where the unit carries nothing and launchd fills the gap.
+fn as_launchd_hands_it_over(
+    unit: &proxenos::supervisor::Unit,
+    supplied_tmpdir: &str,
+) -> (Option<PathBuf>, Option<PathBuf>) {
+    let carried = |key: &str| {
+        unit.environment
+            .iter()
+            .find(|(name, _)| name == key)
+            .map(|(_, value)| PathBuf::from(value))
+    };
+    (
+        carried("PROXENOS_HOME"),
+        carried("TMPDIR").or_else(|| Some(PathBuf::from(supplied_tmpdir))),
+    )
+}
+
 /// The hazard this verb exists to avoid: a supervised daemon binding one socket
-/// path while the operator's CLI dials another. Both halves derive the path from
-/// the same function, and the unit carries the inputs explicitly so a launchd
-/// process cannot be handed a different `TMPDIR` than the shell that installed
-/// it.
+/// path while the operator's CLI dials another. The daemon answers turns on the
+/// port and every verb reports connection refused, which reads as a dead daemon
+/// and is not one.
+///
+/// Every combination of the two inputs the path is derived from, against a
+/// supervisor that supplies a `TMPDIR` of its own — deliberately not the
+/// installing shell's, since a value that happened to match would prove nothing
+/// about the case where they differ.
 #[test]
 fn the_socket_the_unit_binds_is_the_one_the_cli_dials() {
-    for home in [None, Some("/Users/someone/px".into())] {
-        let origin = Origin {
-            proxenos_home: home,
-            ..origin()
-        };
-        let unit = plan(&Platform::MacOs, &origin).unwrap();
+    const SUPPLIED_BY_LAUNCHD: &str = "/var/folders/zz/launchd-supplied/T/";
 
-        let carried: Vec<(String, String)> = unit.environment.clone();
-        let tmpdir = carried
-            .iter()
-            .find(|(key, _)| key == "TMPDIR")
-            .map(|(_, value)| PathBuf::from(value));
-        let named_home = carried
-            .iter()
-            .find(|(key, _)| key == "PROXENOS_HOME")
-            .map(|(_, value)| PathBuf::from(value));
+    for home in [None, Some(OsString::from("/Users/someone/px"))] {
+        for tmpdir in [None, Some(OsString::from("/var/folders/j2/abcdef/T/"))] {
+            let origin = Origin {
+                proxenos_home: home.clone(),
+                tmpdir: tmpdir.clone(),
+                ..origin()
+            };
+            let unit = plan(&Platform::MacOs, &origin).unwrap();
 
-        // What the supervised daemon will derive, from what the unit hands it.
-        let bound = proxenos::control::path_for(named_home.as_deref(), tmpdir.as_deref());
+            // What the supervised daemon derives, from the environment launchd
+            // actually gives it.
+            let (daemon_home, daemon_tmpdir) = as_launchd_hands_it_over(&unit, SUPPLIED_BY_LAUNCHD);
+            let bound =
+                proxenos::control::path_for(daemon_home.as_deref(), daemon_tmpdir.as_deref());
 
-        assert_eq!(
-            unit.socket, bound,
-            "the unit's own socket and the one its environment produces must agree"
-        );
-        assert_eq!(
-            bound,
-            proxenos::control::path_for(
-                origin.proxenos_home.as_ref().map(PathBuf::from).as_deref(),
-                origin.tmpdir.as_ref().map(PathBuf::from).as_deref(),
-            ),
-            "and both must equal what the installing shell's CLI dials"
-        );
+            // What the installing shell's own CLI dials.
+            let dialed = proxenos::control::path_for(
+                home.as_ref().map(PathBuf::from).as_deref(),
+                tmpdir.as_ref().map(PathBuf::from).as_deref(),
+            );
+
+            assert_eq!(
+                bound,
+                dialed,
+                "home {home:?}, tmpdir {tmpdir:?}: the daemon binds {} and the CLI dials {}",
+                bound.display(),
+                dialed.display()
+            );
+            assert_eq!(
+                unit.socket, bound,
+                "home {home:?}, tmpdir {tmpdir:?}: the unit reports a socket it does not bind"
+            );
+            assert!(
+                unit.environment.iter().any(|(key, _)| key == "TMPDIR"),
+                "home {home:?}, tmpdir {tmpdir:?}: the unit must carry the TMPDIR the \
+                 derivation used, or launchd supplies one of its own and the two ends drift"
+            );
+        }
     }
 }
 

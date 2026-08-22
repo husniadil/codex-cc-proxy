@@ -95,8 +95,22 @@ pub fn plan(platform: &Platform, origin: &Origin) -> Result<Unit, ProxyError> {
     }
 
     let home = origin.proxenos_home.as_ref().map(PathBuf::from);
-    let tmpdir = origin.tmpdir.as_ref().map(PathBuf::from);
-    let socket = control::path_for(home.as_deref(), tmpdir.as_deref());
+
+    // **Resolved, never left absent.** `TMPDIR` is carried whether or not the
+    // installing shell names one, because launchd does not hand a job an empty
+    // environment: it supplies a `TMPDIR` of its own. Carrying nothing would
+    // therefore not mean "no `TMPDIR`" to the daemon — it would mean launchd's,
+    // while the path planned here fell back to `/tmp` and the operator's CLI
+    // went on dialing whatever its own shell says. That is the failure this
+    // whole verb exists to prevent, arrived at from the inside. Carrying the
+    // value the derivation actually used is what closes it.
+    let tmpdir = origin
+        .tmpdir
+        .as_ref()
+        .map(PathBuf::from)
+        .unwrap_or_else(|| control::FALLBACK_TMPDIR.into());
+
+    let socket = control::path_for(home.as_deref(), Some(&tmpdir));
     control::ensure_addressable(&socket)?;
 
     // Carried explicitly rather than inherited. A launchd job's environment is
@@ -107,9 +121,7 @@ pub fn plan(platform: &Platform, origin: &Origin) -> Result<Unit, ProxyError> {
     if let Some(home) = &home {
         environment.push(("PROXENOS_HOME".to_owned(), home.display().to_string()));
     }
-    if let Some(tmpdir) = &tmpdir {
-        environment.push(("TMPDIR".to_owned(), tmpdir.display().to_string()));
-    }
+    environment.push(("TMPDIR".to_owned(), tmpdir.display().to_string()));
 
     Ok(Unit {
         label: LABEL.to_owned(),

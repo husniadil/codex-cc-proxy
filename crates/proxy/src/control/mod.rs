@@ -61,10 +61,17 @@ pub fn path_for(home: Option<&Path>, tmpdir: Option<&Path>) -> PathBuf {
     match home {
         Some(home) => home.join("proxenos.sock"),
         None => tmpdir
-            .unwrap_or_else(|| Path::new("/tmp"))
+            .unwrap_or_else(|| Path::new(FALLBACK_TMPDIR))
             .join("proxenos.sock"),
     }
 }
+
+/// Where the socket goes when nothing names a temporary directory.
+///
+/// Named rather than inlined because a caller that has to *record* the
+/// derivation's fallback — a supervisor unit, whose job is started with an
+/// environment it did not choose — needs the same value the derivation used.
+pub const FALLBACK_TMPDIR: &str = "/tmp";
 
 /// Refuse a path the platform cannot address, by name.
 ///

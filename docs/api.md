@@ -672,7 +672,7 @@ cannot see. `KeepAlive` is what brings it back.
 
 **It carries no credential.** A plist in the user's home is a world-readable
 file, and the store is what holds credentials. The job's environment is a closed
-set of two — `PROXENOS_HOME` when the installing shell names one, and `TMPDIR` —
+set of two — `TMPDIR`, and `PROXENOS_HOME` when the installing shell names one —
 so adding to it is a deliberate edit rather than a filter that widened.
 
 **Those two are carried for one reason: the socket path.** It is derived from
@@ -684,6 +684,14 @@ different path. Naming both in the unit makes the daemon's bind and the CLI's
 dial the same derivation over the same inputs. A path too long for the
 platform's socket address is refused when the unit is planned, rather than at a
 bind that happens after the HTTP listener is already up.
+
+**`TMPDIR` is carried whether or not the installing shell names one**, and that
+is the subtle half. launchd does not hand a job an empty environment — it
+supplies a `TMPDIR` of its own. So omitting it would not mean "no `TMPDIR`" to
+the supervised daemon; it would mean launchd's, while the path planned at
+install time fell back to `/tmp` and the operator's CLI went on dialing whatever
+its own shell says. The unit therefore records the value the derivation actually
+used, including the fallback, which is what leaves the two ends unable to drift.
 
 **`status` compares the installed unit against the one this environment would
 write, and says so when they differ.** That is the same hazard seen from the
