@@ -45,6 +45,7 @@ async fn main() -> Result<()> {
         Command::Usage(args) => print_usage(args).await,
         Command::Statusline(args) => statusline(args).await,
         Command::Record(args) => record(args).await,
+        Command::Supervisor(args) => supervisor(args).await,
     }
 }
 
@@ -1268,4 +1269,157 @@ fn init_tracing() {
         .with_env_filter(filter)
         .with_writer(std::io::stderr)
         .init();
+}
+
+/// The origin this machine and this shell describe, for the unit.
+fn supervisor_origin() -> Result<proxenos::supervisor::Origin> {
+    use anyhow::Context;
+    Ok(proxenos::supervisor::Origin {
+        program: std::env::current_exe().context("could not find this binary's own path")?,
+        log: proxenos::config::config_dir().join("daemon.log"),
+        proxenos_home: std::env::var_os("PROXENOS_HOME"),
+        tmpdir: std::env::var_os("TMPDIR"),
+    })
+}
+
+/// The launchd domain a per-user LaunchAgent lives in.
+///
+/// The uid comes from the owner of the home directory being written into,
+/// which is the same question asked a different way and needs no dependency:
+/// the agent is installed for whoever owns that directory.
+fn gui_domain(home: &std::path::Path) -> std::io::Result<String> {
+    use std::os::unix::fs::MetadataExt;
+    Ok(format!("gui/{}", std::fs::metadata(home)?.uid()))
+}
+
+fn launchctl(arguments: &[&str]) -> std::io::Result<std::process::Output> {
+    std::process::Command::new("launchctl")
+        .args(arguments)
+        .output()
+}
+
+/// Install, remove, or report the supervisor.
+///
+/// The decisions all happened in `proxenos::supervisor`; what is left here is
+/// the part that touches the machine.
+async fn supervisor(args: cli::SupervisorArgs) -> Result<()> {
+    use anyhow::Context;
+    use proxenos::supervisor;
+
+    let origin = supervisor_origin()?;
+    let unit = supervisor::plan(&supervisor::Platform::current(), &origin)?;
+    let home = std::env::var_os("HOME")
+        .map(std::path::PathBuf::from)
+        .context("HOME names nothing, so there is no per-user agent directory to write into")?;
+    let plist = supervisor::plist_path(&home);
+    let domain = gui_domain(&home)
+        .with_context(|| format!("could not read the owner of {}", home.display()))?;
+    let existing = std::fs::read_to_string(&plist).ok();
+    let target = format!("{domain}/{}", unit.label);
+
+    match args.action {
+        cli::SupervisorAction::Install => {
+            if let Some(parent) = plist.parent() {
+                std::fs::create_dir_all(parent)
+                    .with_context(|| format!("could not create {}", parent.display()))?;
+            }
+            if let Some(parent) = unit.log.parent() {
+                std::fs::create_dir_all(parent)
+                    .with_context(|| format!("could not create {}", parent.display()))?;
+            }
+            // Replacing rather than adding: launchd refuses to bootstrap a
+            // label already loaded, and an operator reinstalling after moving
+            // the binary means the new one.
+            if existing.is_some() {
+                let _ = launchctl(&["bootout", &target]);
+            }
+            std::fs::write(&plist, supervisor::render(&unit))
+                .with_context(|| format!("could not write {}", plist.display()))?;
+
+            let output = launchctl(&["bootstrap", &domain, &plist.to_string_lossy()])
+                .context("could not run launchctl")?;
+            if !output.status.success() {
+                // A unit on disk that the supervisor never accepted is the
+                // half-installed state this verb exists to avoid, so it does
+                // not survive the failure that produced it.
+                let _ = std::fs::remove_file(&plist);
+                bail!(
+                    "launchctl refused the unit, so nothing was installed: {}",
+                    String::from_utf8_lossy(&output.stderr).trim()
+                );
+            }
+
+            println!("supervising {}, from {}", unit.label, plist.display());
+            println!("  runs {} run", unit.program.display());
+            println!("  logs to {}", unit.log.display());
+            println!("  control socket {}", unit.socket.display());
+            println!("stop it for good with `proxenos supervisor uninstall`");
+        }
+        cli::SupervisorAction::Uninstall => {
+            if existing.is_none() {
+                println!("nothing installed at {}", plist.display());
+                return Ok(());
+            }
+            let output = launchctl(&["bootout", &target]).context("could not run launchctl")?;
+            std::fs::remove_file(&plist)
+                .with_context(|| format!("could not remove {}", plist.display()))?;
+            if !output.status.success() {
+                println!(
+                    "removed {}; launchctl said: {}",
+                    plist.display(),
+                    String::from_utf8_lossy(&output.stderr).trim()
+                );
+                return Ok(());
+            }
+            println!(
+                "removed {}; the daemon it supervised is stopped",
+                plist.display()
+            );
+        }
+        cli::SupervisorAction::Status => {
+            match supervisor::compare(existing.as_deref(), &unit) {
+                supervisor::Installed::Absent => {
+                    println!("not supervised; install it with `proxenos supervisor install`");
+                    return Ok(());
+                }
+                supervisor::Installed::Current => {
+                    println!("supervised, from {}", plist.display());
+                }
+                // The failure this verb is here to make visible rather than
+                // let an operator discover as a daemon that answers turns while
+                // every CLI verb reports connection refused.
+                supervisor::Installed::Divergent => {
+                    println!(
+                        "supervised from {}, but by a unit this environment would not write.",
+                        plist.display()
+                    );
+                    println!(
+                        "  the daemon it starts may bind a control socket other than the {} \
+                         this shell dials, in which case it serves turns on the port while every \
+                         verb here reports connection refused.",
+                        unit.socket.display()
+                    );
+                    println!("  reinstall it with `proxenos supervisor install`");
+                }
+            }
+            println!("  control socket {}", unit.socket.display());
+
+            let output = launchctl(&["print", &target]).context("could not run launchctl")?;
+            let printed = String::from_utf8_lossy(&output.stdout);
+            let state = printed
+                .lines()
+                .find_map(|line| line.trim().strip_prefix("state = "))
+                .unwrap_or("unknown to the supervisor");
+            let pid = printed
+                .lines()
+                .find_map(|line| line.trim().strip_prefix("pid = "))
+                .unwrap_or("none");
+            println!(
+                "  the supervisor says: state {}, pid {}",
+                state.trim(),
+                pid.trim()
+            );
+        }
+    }
+    Ok(())
 }

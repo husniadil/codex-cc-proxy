@@ -52,6 +52,28 @@ pub enum Command {
     Statusline(StatuslineArgs),
     /// Capture exchanges as fixtures.
     Record(RecordArgs),
+    /// Install, remove, or inspect the supervisor that keeps the daemon alive.
+    ///
+    /// Named for what supervises rather than for launchd, because the one
+    /// platform this implements is not the only one it will be asked about, and
+    /// a verb named after an implementation cannot grow a second one.
+    Supervisor(SupervisorArgs),
+}
+
+#[derive(Debug, clap::Args)]
+pub struct SupervisorArgs {
+    #[command(subcommand)]
+    pub action: SupervisorAction,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum SupervisorAction {
+    /// Write the unit for this user and hand it to the supervisor.
+    Install,
+    /// Remove it. The daemon it was supervising stops with it.
+    Uninstall,
+    /// Whether it is installed, and what the supervisor makes of it.
+    Status,
 }
 
 #[derive(Debug, clap::Args)]

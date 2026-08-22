@@ -639,6 +639,65 @@ socket is one per socket path, and a second daemon would take over the socket
 file of the first, leaving the CLI answering for one daemon while another holds
 the port. The refusal names `stop` as the way forward.
 
+### 2.6 `supervisor`
+
+Installs, removes, and reports the thing that brings the daemon back when it
+dies.
+
+```
+$ proxenos supervisor install
+supervising proxenos.daemon, from ~/Library/LaunchAgents/proxenos.daemon.plist
+  runs /Users/someone/.local/bin/proxenos run
+  logs to ~/.config/proxenos/daemon.log
+  control socket /var/folders/j2/…/T/proxenos.sock
+stop it for good with `proxenos supervisor uninstall`
+```
+
+`install` writes a per-user LaunchAgent and hands it to launchd; `uninstall`
+removes both, stopping the daemon with it; `status` says whether it is installed
+and what the supervisor makes of it. The verb and its three actions are
+semver-bound like the rest of §6.
+
+**macOS is the only platform implemented, and every other one refuses by name.**
+The refusal says what supervising that platform would take — a systemd user
+unit with `Restart=always` — and names `run --detach` as the way to start the
+daemon meanwhile. Nothing writes a file it cannot hand to a supervisor: a unit
+that is installed but never runs reports success and supervises nothing, which
+is worse than having no verb at all.
+
+**The job runs `run` in the foreground, and logs where the daemon already
+logs.** Not `--detach`: a process that forks away leaves launchd supervising
+something that has already exited, and its respawn then fights the daemon it
+cannot see. `KeepAlive` is what brings it back.
+
+**It carries no credential.** A plist in the user's home is a world-readable
+file, and the store is what holds credentials. The job's environment is a closed
+set of two — `PROXENOS_HOME` when the installing shell names one, and `TMPDIR` —
+so adding to it is a deliberate edit rather than a filter that widened.
+
+**Those two are carried for one reason: the socket path.** It is derived from
+`PROXENOS_HOME` when set and from `TMPDIR` otherwise (§3), and a process launchd
+starts does not necessarily see the `TMPDIR` a login shell does. If the two
+disagree the daemon comes up healthy on its port while every CLI verb in the
+operator's terminal reports connection refused, because it is dialing a
+different path. Naming both in the unit makes the daemon's bind and the CLI's
+dial the same derivation over the same inputs. A path too long for the
+platform's socket address is refused when the unit is planned, rather than at a
+bind that happens after the HTTP listener is already up.
+
+**`status` compares the installed unit against the one this environment would
+write, and says so when they differ.** That is the same hazard seen from the
+other side: an environment that has moved since install leaves a unit whose
+daemon binds one socket while the shell dials another, and the symptom reads as
+a dead daemon when it is not.
+
+**What a supervisor changes about `stop` (§2.4):** it is how a running daemon is
+replaced by the build on disk. `stop` asks the daemon to go and reports what it
+saw afterwards; under a supervisor what it sees is the new build answering.
+Without one, nothing comes back and `stop` says that too.
+
+---
+
 ---
 
 ## 3. Control socket

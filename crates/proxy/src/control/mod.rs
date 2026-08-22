@@ -41,7 +41,9 @@ pub const PATH_LIMIT: usize = 107;
 /// addressed by the path it already bound.
 pub fn default_path() -> PathBuf {
     path_for(
-        std::env::var_os("PROXENOS_HOME").map(PathBuf::from).as_deref(),
+        std::env::var_os("PROXENOS_HOME")
+            .map(PathBuf::from)
+            .as_deref(),
         Some(std::env::temp_dir()).as_deref(),
     )
 }

@@ -146,7 +146,10 @@ fn the_unit_logs_where_the_daemon_already_logs() {
     let unit = plan(&Platform::MacOs, &origin()).unwrap();
     let document = render(&unit);
 
-    assert_eq!(unit.log, PathBuf::from("/Users/someone/.config/proxenos/daemon.log"));
+    assert_eq!(
+        unit.log,
+        PathBuf::from("/Users/someone/.config/proxenos/daemon.log")
+    );
     assert!(
         document.contains("<key>StandardOutPath</key>\n    <string>/Users/someone/.config/proxenos/daemon.log</string>"),
         "{document}"
@@ -193,7 +196,10 @@ fn a_path_carrying_markup_is_escaped() {
     };
     let document = render(&plan(&Platform::MacOs, &origin).unwrap());
 
-    assert!(document.contains("/Users/a&amp;b/&lt;x&gt;/daemon.log"), "{document}");
+    assert!(
+        document.contains("/Users/a&amp;b/&lt;x&gt;/daemon.log"),
+        "{document}"
+    );
     assert!(!document.contains("/Users/a&b/"), "{document}");
 }
 

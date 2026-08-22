@@ -8,6 +8,35 @@ in [`docs/api.md`](docs/api.md) §6.
 
 ### Added
 
+- **`supervisor` brings the daemon back when it dies.** Nothing did. The code
+  already reasoned about living under a supervisor — the window `stop` waits
+  through is sized for launchd holding a respawn for ten seconds — and the
+  thing that would satisfy that assumption was never built, so the first sign
+  of a daemon that had simply gone was a launch that failed. `supervisor
+  install` writes a per-user LaunchAgent and hands it to launchd, `uninstall`
+  removes both, and `status` reports what the supervisor makes of it. The job
+  runs `run` in the foreground, because a process that forks away leaves
+  launchd supervising something that has already exited; it logs where the
+  daemon already logs; and it carries no credential, because a plist in the
+  user's home is world-readable and the store is what holds those.
+
+  **macOS is the only platform implemented, and every other one refuses by
+  name**, saying what a systemd user unit would take and naming `run --detach`
+  as the way to start the daemon meanwhile. A unit written but never accepted
+  by a supervisor reports success and supervises nothing, so nothing writes
+  one — and an install that launchd refuses removes the file it had just
+  written rather than leaving that state behind.
+
+  **The socket path was the hazard worth settling before writing anything.** It
+  is derived from `PROXENOS_HOME` when set and from `TMPDIR` otherwise, and a
+  launchd job does not necessarily see the `TMPDIR` a login shell does; where
+  they differ the daemon comes up healthy on its port while every CLI verb
+  reports connection refused. Both are now carried in the unit explicitly, and
+  the derivation moved into one function (`control::path_for`) that the unit
+  and the CLI both call, so the two agree by construction. `supervisor status`
+  compares the installed unit against the one the current environment would
+  write and says plainly when they have drifted apart.
+
 - **`record surface` captures the real Messages surface.** The proxy's whole
   product is an Anthropic Messages surface, and until now nothing here had ever
   seen one: every conformance claim was derived from documentation and from
