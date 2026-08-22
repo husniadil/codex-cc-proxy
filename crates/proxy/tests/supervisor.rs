@@ -278,29 +278,42 @@ fn a_unit_installed_from_a_different_environment_is_reported_as_divergent() {
 ///
 /// It does not stop that daemon. This verb installs a supervisor; ending a
 /// process the operator started by hand was not asked for.
-///
-/// **The question is about the future, not the present.** A reinstall boots out
-/// the unit it had already installed, so a daemon answering when the operator
-/// typed the verb may be one this verb is about to end — and reporting that one
-/// tells the operator to hand over a port that is already theirs, for a job that
-/// then starts fine. What decides the notice is therefore what is still
-/// answering once this verb has released what it controls, which is the third
-/// case below and the one two cases let through.
 #[test]
-fn install_reports_only_a_daemon_it_will_not_end_itself() {
-    // Nothing answering: the normal path, and its output does not grow.
-    assert_eq!(proxenos::supervisor::port_notice(None), None);
-
-    // Something answering that this install does not end — a daemon started by
-    // hand. It still holds the port when the supervised job starts.
+fn a_daemon_holding_the_port_is_named_and_nothing_is_said_when_none_is() {
     let notice = proxenos::supervisor::port_notice(Some("0.8.0"))
-        .expect("a daemon this install will not end must be reported");
+        .expect("a daemon holding the port must be reported");
     assert!(notice.contains("0.8.0"), "{notice}");
     assert!(notice.contains("proxenos stop"), "{notice}");
 
-    // Something answering that this install DOES end: the ordinary reinstall
-    // over an existing supervised unit. The bootout frees the port, so nothing
-    // is answering by the time the observation is taken, and the caller hands in
-    // that observation rather than the one from before it.
     assert_eq!(proxenos::supervisor::port_notice(None), None);
+}
+
+/// The regression, and the reason the notice needs a timing rule rather than
+/// just a message. A reinstall — the ordinary case, a new build or a moved
+/// binary — boots out the unit it had already installed. The daemon answering a
+/// moment before that is the one this verb ends, and the first version of this
+/// feature named it: the operator was told to hand over a port already theirs,
+/// for a job that then started fine.
+///
+/// The middle two cases are the whole finding. They hand in the same `before`
+/// and differ only in whether this install freed the port itself.
+#[test]
+fn only_a_daemon_this_install_does_not_end_holds_the_port() {
+    use proxenos::supervisor::holder;
+
+    // Nothing installed before, nothing answering: the normal path.
+    assert_eq!(holder(false, None, None), None);
+
+    // Nothing installed before, something answering: started by hand, and this
+    // verb frees nothing, so it is still there when the job starts.
+    assert_eq!(holder(false, Some("0.8.0"), None), Some("0.8.0"));
+
+    // A unit was installed, so the bootout ended what was answering. Same
+    // `before` as above; naming it is what regressed.
+    assert_eq!(holder(true, Some("0.8.0"), None), None);
+
+    // A unit was installed AND something is still answering after the bootout —
+    // a hand-started daemon holding the port while the supervised job crash
+    // loops behind it. That one this verb did not end.
+    assert_eq!(holder(true, Some("0.7.0"), Some("0.8.0")), Some("0.8.0"));
 }

@@ -1359,24 +1359,24 @@ async fn supervisor(args: cli::SupervisorArgs) -> Result<()> {
             // Replacing rather than adding: launchd refuses to bootstrap a
             // label already loaded, and an operator reinstalling after moving
             // the binary means the new one.
+            let before = answering().await;
             let booted_out = existing.is_some();
             if booted_out {
                 let _ = launchctl(&["bootout", &target]);
             }
-
-            // Observed here, between the bootout above and the bootstrap below,
-            // because neither side of that window answers the question. Before
-            // the bootout, a reinstall reports the daemon it is itself about to
-            // end — telling the operator to hand over a port that is already
-            // theirs, for a job that then starts fine. After the bootstrap, the
-            // supervised job has taken the port and reports itself. What is
-            // answering in between is a daemon this verb did not end and will
-            // not.
-            let held = if booted_out {
+            // The second read is worth taking only where a bootout freed
+            // something, and it happens here rather than after the bootstrap
+            // below: once the job is loaded, what answers is the job itself.
+            let after = if booted_out {
                 settled_after_bootout().await
             } else {
-                answering().await
+                None
             };
+            let held = supervisor::holder(
+                booted_out,
+                before.as_ref().map(|a| a.version.as_str()),
+                after.as_ref().map(|a| a.version.as_str()),
+            );
 
             std::fs::write(&plist, supervisor::render(&unit))
                 .with_context(|| format!("could not write {}", plist.display()))?;
@@ -1398,8 +1398,7 @@ async fn supervisor(args: cli::SupervisorArgs) -> Result<()> {
             println!("  runs {} run", unit.program.display());
             println!("  logs to {}", unit.log.display());
             println!("  control socket {}", unit.socket.display());
-            if let Some(notice) = supervisor::port_notice(held.as_ref().map(|a| a.version.as_str()))
-            {
+            if let Some(notice) = supervisor::port_notice(held) {
                 println!("{notice}");
             }
             println!("stop it for good with `proxenos supervisor uninstall`");

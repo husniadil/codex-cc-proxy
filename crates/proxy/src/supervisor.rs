@@ -239,3 +239,24 @@ pub fn port_notice(still_answering: Option<&str>) -> Option<String> {
          hand it over with `proxenos stop`; the supervisor starts this build in its place"
     ))
 }
+
+/// Which observation the port notice may name, if any.
+///
+/// The notice's own decision is easy and was never wrong. What went wrong is
+/// *when* the caller reads: a reinstall boots out the unit it had already
+/// installed, so a daemon answering before that is one this verb ends itself,
+/// and naming it tells the operator to hand over a port already theirs for a
+/// job that then starts fine.
+///
+/// So the rule is about which read counts. When this install booted a unit out
+/// it freed the port itself, and only what is *still* answering afterwards is a
+/// daemon it did not end. When it booted nothing out there was no window and
+/// nothing was freed, so the read taken at the start is already the truth and
+/// `after` is not taken at all.
+pub fn holder<'a>(
+    booted_out: bool,
+    before: Option<&'a str>,
+    after: Option<&'a str>,
+) -> Option<&'a str> {
+    if booted_out { after } else { before }
+}
