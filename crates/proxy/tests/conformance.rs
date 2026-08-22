@@ -1006,6 +1006,17 @@ fn outcome_on(surface: probe::Surface, status: Status) -> Outcome {
     }
 }
 
+/// The coverage line, verbatim. It is one line, and every assertion here is on
+/// the whole of it: an assembled sentence breaks at the seams, and a substring
+/// check reads right past a heading with nothing under it.
+fn coverage_line(rendered: &str) -> String {
+    rendered
+        .lines()
+        .find(|line| line.contains("Not exercised:"))
+        .expect("the matrix always renders a coverage line")
+        .to_owned()
+}
+
 /// A path with no probe on it is not exercised, and its account is not named.
 ///
 /// `--probe relay` runs one row on §9 and nothing on the translation path. The
@@ -1015,39 +1026,33 @@ fn outcome_on(surface: probe::Surface, status: Status) -> Outcome {
 fn a_path_with_no_probe_on_it_is_not_claimed_as_exercised() {
     let outcomes = vec![outcome_on(probe::Surface::Relay, Status::Passed)];
 
-    let replay = probe::matrix(&outcomes, &replayed("a corpus"));
-    assert!(
-        replay.contains("the translation path was not exercised"),
-        "{replay}"
-    );
-    assert!(
-        replay.contains("the relay path (§9) was replayed"),
-        "{replay}"
+    assert_eq!(
+        coverage_line(&probe::matrix(&outcomes, &replayed("a corpus"))),
+        "Exercised: the relay path (§9) was replayed. \
+         Not exercised: the translation path and the WebSocket transport, \
+         and no account was contacted."
     );
 
-    let live = probe::matrix(
-        &outcomes,
-        &probe::Run {
-            evidence: probe::Evidence::Live {
-                account: Some("work-codex".to_owned()),
-                relay: Some("personal-claude".to_owned()),
+    assert_eq!(
+        coverage_line(&probe::matrix(
+            &outcomes,
+            &probe::Run {
+                evidence: probe::Evidence::Live {
+                    account: Some("work-codex".to_owned()),
+                    relay: Some("personal-claude".to_owned()),
+                },
             },
-        },
+        )),
+        "Exercised: the relay path (§9) answered live as `personal-claude`. \
+         Not exercised: the translation path and the WebSocket transport."
     );
-    assert!(
-        live.contains("the translation path was not exercised"),
-        "{live}"
-    );
-    assert!(!live.contains("work-codex"), "{live}");
-    assert!(live.contains("as `personal-claude`"), "{live}");
 }
 
 /// A path every one of whose probes failed was run and established nothing.
 ///
-/// That is not the same as a path nothing ran on, and the line does not say
-/// the same thing about the two.
+/// That is neither exercised nor unexercised, so it sits under neither heading.
 #[test]
-fn a_path_whose_every_probe_failed_reads_differently_from_one_never_run() {
+fn a_path_whose_every_probe_failed_sits_under_neither_heading() {
     let failed = vec![
         outcome_on(
             probe::Surface::Messages,
@@ -1058,19 +1063,17 @@ fn a_path_whose_every_probe_failed_reads_differently_from_one_never_run() {
             Status::Failed("the marker did not survive".to_owned()),
         ),
     ];
-    let rendered = probe::matrix(&failed, &replayed("a corpus"));
-    assert!(
-        rendered.contains("the translation path established nothing (every probe on it failed)"),
-        "{rendered}"
+
+    // Nothing was exercised, so no bare `Exercised:` heading is printed.
+    assert_eq!(
+        coverage_line(&probe::matrix(&failed, &replayed("a corpus"))),
+        "The translation path established nothing (every probe on it failed); \
+         the relay path (§9) established nothing (every probe on it failed). \
+         Not exercised: the WebSocket transport, and no account was contacted."
     );
-    assert!(
-        rendered.contains("the relay path (§9) established nothing (every probe on it failed)"),
-        "{rendered}"
-    );
-    assert!(!rendered.contains("was not exercised"), "{rendered}");
 
     // A live failure does not name the account as spent either.
-    let live = probe::matrix(
+    let live = coverage_line(&probe::matrix(
         &failed,
         &probe::Run {
             evidence: probe::Evidence::Live {
@@ -1078,21 +1081,40 @@ fn a_path_whose_every_probe_failed_reads_differently_from_one_never_run() {
                 relay: None,
             },
         },
-    );
+    ));
     assert!(!live.contains("work-codex"), "{live}");
+    assert!(!live.contains("Exercised:"), "{live}");
 }
 
-/// A skipped row is not a contacted path.
+/// One path reached and one path exercised, each under its own heading.
+#[test]
+fn a_reached_path_and_an_exercised_one_are_stated_separately() {
+    let mixed = vec![
+        outcome_on(probe::Surface::Messages, Status::Passed),
+        outcome_on(
+            probe::Surface::Relay,
+            Status::Failed("the marker did not survive".to_owned()),
+        ),
+    ];
+    assert_eq!(
+        coverage_line(&probe::matrix(&mixed, &replayed("a corpus"))),
+        "Exercised: the translation path, answered from a corpus. \
+         The relay path (§9) established nothing (every probe on it failed). \
+         Not exercised: the WebSocket transport, and no account was contacted."
+    );
+}
+
+/// A skipped row is not a reached path.
 #[test]
 fn a_path_whose_probes_all_skipped_was_not_exercised() {
     let outcomes = vec![outcome_on(
         probe::Surface::Messages,
         Status::Skipped("the corpus holds no recording".to_owned()),
     )];
-    let rendered = probe::matrix(&outcomes, &replayed("a corpus"));
-    assert!(
-        rendered.contains("the translation path was not exercised"),
-        "{rendered}"
+    assert_eq!(
+        coverage_line(&probe::matrix(&outcomes, &replayed("a corpus"))),
+        "Not exercised: the translation path, the relay path (§9), \
+         and the WebSocket transport, and no account was contacted."
     );
 }
 
@@ -1106,8 +1128,10 @@ async fn a_full_run_still_claims_the_translation_path() {
         .await
         .unwrap();
     let rendered = probe::matrix(&outcomes, &replayed("the checkout's fixtures"));
-    assert!(
-        rendered.contains("Exercised: the translation path, answered from"),
-        "{rendered}"
+    assert_eq!(
+        coverage_line(&rendered),
+        "Exercised: the translation path, answered from the checkout's fixtures; \
+         the relay path (§9) was replayed. \
+         Not exercised: the WebSocket transport, and no account was contacted."
     );
 }

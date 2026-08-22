@@ -618,39 +618,34 @@ fn reach(outcomes: &[Outcome], on_relay: bool) -> Reach {
     }
 }
 
+/// Join names into one English list.
+fn listed(names: &[String]) -> String {
+    match names {
+        [] => String::new(),
+        [only] => only.clone(),
+        [first, second] => format!("{first} and {second}"),
+        [rest @ .., last] => format!("{}, and {last}", rest.join(", ")),
+    }
+}
+
 /// One line naming what the run exercised, and what it did not.
 ///
 /// A green matrix says nothing about the WebSocket transport or the relay, and
 /// a reader with nothing to tell them otherwise reads green as coverage of the
-/// whole proxy. Both absences are named here rather than inferred. Both halves
-/// are derived from the outcomes: a path with no passing row is not exercised,
-/// and its account is not named as spent.
+/// whole proxy. Both absences are named here rather than inferred.
+///
+/// The line is assembled from the states rather than poured into fixed halves,
+/// so every path is named exactly once, under the heading that is true of it,
+/// and a heading with nothing under it is not printed at all. A path with no
+/// passing row is not exercised, and its account is not named as spent.
 fn coverage(outcomes: &[Outcome], run: &Run) -> String {
-    let relay = match (&run.evidence, reach(outcomes, true)) {
-        (_, Reach::Absent) => "the relay path (§9) was not exercised".to_owned(),
-        (_, Reach::Nothing) => {
-            "the relay path (§9) established nothing (every probe on it failed)".to_owned()
-        }
-        (
-            Evidence::Live {
-                relay: Some(name), ..
-            },
-            Reach::Exercised,
-        ) => {
-            format!("the relay path (§9) answered live as `{name}`")
-        }
-        (_, Reach::Exercised) => "the relay path (§9) was replayed".to_owned(),
-    };
+    let mut exercised = Vec::new();
+    let mut reached = Vec::new();
+    let mut absent = Vec::new();
 
-    let translation = match reach(outcomes, false) {
-        Reach::Absent => "the translation path was not exercised".to_owned(),
-        Reach::Nothing => {
-            "the translation path established nothing (every probe on it failed)".to_owned()
-        }
-        Reach::Exercised => match &run.evidence {
-            Evidence::Replay { corpus } => {
-                format!("the translation path, answered from {corpus}")
-            }
+    match reach(outcomes, false) {
+        Reach::Exercised => exercised.push(match &run.evidence {
+            Evidence::Replay { corpus } => format!("the translation path, answered from {corpus}"),
             Evidence::Live { account, .. } => {
                 let whose = match account {
                     Some(account) => format!("as `{account}`"),
@@ -658,19 +653,45 @@ fn coverage(outcomes: &[Outcome], run: &Run) -> String {
                 };
                 format!("the translation path over the HTTP transport, {whose}")
             }
-        },
-    };
-
-    match &run.evidence {
-        Evidence::Replay { .. } => format!(
-            "Exercised: {translation}; {relay}. \
-             Not exercised: the WebSocket transport, and no account was contacted."
-        ),
-        Evidence::Live { .. } => format!(
-            "Exercised: {translation}; {relay}. \
-             Not exercised: the WebSocket transport."
-        ),
+        }),
+        Reach::Nothing => reached
+            .push("the translation path established nothing (every probe on it failed)".to_owned()),
+        Reach::Absent => absent.push("the translation path".to_owned()),
     }
+
+    match (&run.evidence, reach(outcomes, true)) {
+        (
+            Evidence::Live {
+                relay: Some(name), ..
+            },
+            Reach::Exercised,
+        ) => exercised.push(format!("the relay path (§9) answered live as `{name}`")),
+        (_, Reach::Exercised) => exercised.push("the relay path (§9) was replayed".to_owned()),
+        (_, Reach::Nothing) => reached
+            .push("the relay path (§9) established nothing (every probe on it failed)".to_owned()),
+        (_, Reach::Absent) => absent.push("the relay path (§9)".to_owned()),
+    }
+
+    // Always in it: a probe is one turn with no continuation, and the socket's
+    // value is entirely in the incremental path.
+    absent.push("the WebSocket transport".to_owned());
+
+    let mut sentences = Vec::new();
+    if !exercised.is_empty() {
+        sentences.push(format!("Exercised: {}.", exercised.join("; ")));
+    }
+    if !reached.is_empty() {
+        let mut clause = reached.join("; ");
+        clause.replace_range(..1, &clause[..1].to_uppercase());
+        sentences.push(format!("{clause}."));
+    }
+    // No account is contacted on a replayed run, whatever it exercised.
+    let tail = match &run.evidence {
+        Evidence::Replay { .. } => ", and no account was contacted",
+        Evidence::Live { .. } => "",
+    };
+    sentences.push(format!("Not exercised: {}{tail}.", listed(&absent)));
+    sentences.join(" ")
 }
 
 /// Render the capability matrix.
