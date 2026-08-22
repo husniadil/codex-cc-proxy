@@ -534,9 +534,8 @@ async fn messages(
         .clone()
         .zip(serde_json::to_value(&request).ok());
 
-    sse_response(
+    let frames = frame_stream(
         events,
-        rate_limit_headers,
         translator,
         empty_stream_watch,
         Calibration {
@@ -546,24 +545,32 @@ async fn messages(
         Arc::clone(&session),
         translated.input,
         state.capture.upstream(),
-    )
+    );
+
+    // §5.5 — the caller's own choice. The client always streams, so this is the
+    // only fork in the response path it never takes.
+    if request.wants_stream() {
+        sse_response(frames, rate_limit_headers)
+    } else {
+        json_response(frames, rate_limit_headers).await
+    }
 }
 
-/// Turn upstream events into Anthropic frames on the wire.
+/// Turn upstream events into Anthropic frames.
 ///
-/// Dropping this response cancels the upstream request with it: the stream is
-/// owned by the response body, so a client that disconnects drops the whole
-/// chain rather than leaving the backend generating into nothing (§5.3).
-fn sse_response(
+/// One state machine serves both answers: an event stream renders these to the
+/// wire as they arrive, and a non-streaming answer folds the whole sequence
+/// into one body. Calibration, session bookkeeping, and capture happen here, so
+/// which shape the caller asked for changes what is written and nothing else.
+fn frame_stream(
     events: crate::upstream::EventStream,
-    rate_limit_headers: Vec<(&'static str, String)>,
     translator: ResponseTranslator,
     empty_stream_watch: Option<(crate::recorder::Recorder, Value)>,
     calibration: Calibration,
     session: Arc<crate::session::Session>,
     sent_input: Vec<proxenos_core::responses::InputItem>,
     record_upstream: bool,
-) -> Response {
+) -> impl futures::Stream<Item = Vec<proxenos_core::anthropic::Frame>> {
     let state = StreamState {
         translator,
         done: false,
@@ -576,7 +583,7 @@ fn sse_response(
         sent_input,
     };
 
-    let body = stream::unfold((events, state), |(mut events, mut state)| async move {
+    stream::unfold((events, state), |(mut events, mut state)| async move {
         if state.done {
             return None;
         }
@@ -595,18 +602,19 @@ fn sse_response(
                 }) {
                     state.produced_content = true;
                 }
-                let chunk = render(&frames);
-                Some((Ok::<_, std::io::Error>(chunk), (events, state)))
+                Some((frames, (events, state)))
             }
             Some(Err(error)) => {
-                // The status is already sent, so a mid-stream failure is an
-                // error frame rather than a status change (§1.1).
+                // On the streaming path the status is already sent, so a
+                // mid-stream failure is an error frame rather than a status
+                // change (§1.1). The fold reads the same frame and turns it
+                // back into a status, which it still may: it has written
+                // nothing.
                 let frame = proxenos_core::anthropic::Frame::Error {
                     error: error.body(),
                 };
-                let chunk = encode_frame(&frame);
                 state.done = true;
-                Some((Ok(chunk), (events, state)))
+                Some((vec![frame], (events, state)))
             }
             None => {
                 let frames = state.translator.finish();
@@ -614,13 +622,26 @@ fn sse_response(
                 state.calibrate();
                 state.close_turn();
                 state.record_upstream_exchange();
-                if frames.is_empty() {
-                    return None;
-                }
-                let chunk = render(&frames);
-                Some((Ok(chunk), (events, state)))
+                Some((frames, (events, state)))
             }
         }
+    })
+}
+
+/// Render frames to the wire as they arrive.
+///
+/// Dropping this response cancels the upstream request with it: the stream is
+/// owned by the response body, so a client that disconnects drops the whole
+/// chain rather than leaving the backend generating into nothing (§5.3).
+fn sse_response(
+    frames: impl futures::Stream<Item = Vec<proxenos_core::anthropic::Frame>> + Send + 'static,
+    rate_limit_headers: Vec<(&'static str, String)>,
+) -> Response {
+    let body = frames.filter_map(|frames| async move {
+        if frames.is_empty() {
+            return None;
+        }
+        Some(Ok::<_, std::io::Error>(render(&frames)))
     });
 
     let mut response = Response::new(Body::from_stream(body));
@@ -645,6 +666,35 @@ fn sse_response(
         }
     }
     *response.status_mut() = StatusCode::OK;
+    response
+}
+
+/// Fold the whole sequence into the one body the caller asked for.
+///
+/// Nothing is written until the turn is over, so a failure here is still a
+/// status with an error body rather than a 200 carrying an error frame — the
+/// opposite of the streaming path's constraint, for the same reason (§1.1).
+async fn json_response(
+    frames: impl futures::Stream<Item = Vec<proxenos_core::anthropic::Frame>>,
+    rate_limit_headers: Vec<(&'static str, String)>,
+) -> Response {
+    let collected: Vec<proxenos_core::anthropic::Frame> =
+        frames.flat_map(stream::iter).collect().await;
+
+    let body = match proxenos_core::anthropic::aggregate(&collected) {
+        Ok(body) => body,
+        Err(error) => return ProxyError::from_frame(&error).into_response(),
+    };
+
+    let mut response = Json(body).into_response();
+    for (name, value) in rate_limit_headers {
+        if let (Ok(name), Ok(value)) = (
+            header::HeaderName::from_bytes(name.as_bytes()),
+            HeaderValue::from_str(&value),
+        ) {
+            response.headers_mut().insert(name, value);
+        }
+    }
     response
 }
 

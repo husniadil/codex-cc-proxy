@@ -192,6 +192,7 @@ async fn a_streaming_request_returns_a_valid_frame_sequence() {
             json!({
                 "model": "claude-sonnet-5",
                 "max_tokens": 512,
+                "stream": true,
                 "messages": [{ "role": "user", "content": "hi" }],
             }),
         )
@@ -242,6 +243,7 @@ async fn the_request_is_translated_and_the_tier_is_mapped() {
             json!({
                 "model": "claude-sonnet-5",
                 "max_tokens": 512,
+                "stream": true,
                 "system": "Be brief.",
                 "messages": [{ "role": "user", "content": "hi" }],
             }),
@@ -282,6 +284,7 @@ async fn a_tool_call_survives_the_round_trip() {
             json!({
                 "model": "claude-sonnet-5",
                 "max_tokens": 512,
+                "stream": true,
                 "messages": [{ "role": "user", "content": "read it" }],
                 "tools": [{
                     "name": "Read",
@@ -336,6 +339,7 @@ async fn an_event_split_across_data_lines_survives_the_transport() {
             json!({
                 "model": "claude-sonnet-5",
                 "max_tokens": 512,
+                "stream": true,
                 "messages": [{ "role": "user", "content": "hi" }],
             }),
         )
@@ -596,6 +600,7 @@ async fn cancelling_the_client_stream_aborts_the_upstream_request() {
             json!({
                 "model": "claude-sonnet-5",
                 "max_tokens": 512,
+                "stream": true,
                 "messages": [{ "role": "user", "content": "hi" }],
             }),
         )
@@ -1276,6 +1281,7 @@ async fn a_conversation_calibrates_across_turns() {
     let first_body = json!({
         "model": "claude-sonnet-5",
         "max_tokens": 512,
+        "stream": true,
         "system": "You are Claude Code.",
         "messages": [{ "role": "user", "content": "opening turn" }],
     });
@@ -1291,6 +1297,7 @@ async fn a_conversation_calibrates_across_turns() {
     let second_body = json!({
         "model": "claude-sonnet-5",
         "max_tokens": 512,
+        "stream": true,
         "system": "You are Claude Code.",
         "messages": [
             { "role": "user", "content": "opening turn" },
@@ -1336,6 +1343,7 @@ async fn an_unrelated_conversation_starts_uncalibrated() {
     let one = json!({
         "model": "claude-sonnet-5",
         "max_tokens": 512,
+        "stream": true,
         "messages": [{ "role": "user", "content": "first conversation" }],
     });
     let _ = harness
@@ -1348,6 +1356,7 @@ async fn an_unrelated_conversation_starts_uncalibrated() {
     let two = json!({
         "model": "claude-sonnet-5",
         "max_tokens": 512,
+        "stream": true,
         "messages": [{ "role": "user", "content": "an entirely separate conversation" }],
     });
     let body = harness
@@ -2390,6 +2399,7 @@ async fn a_refusal_after_content_is_still_a_frame() {
             json!({
                 "model": "claude-sonnet-5",
                 "max_tokens": 64,
+                "stream": true,
                 "messages": [{ "role": "user", "content": "hello" }],
             }),
         )
@@ -2689,5 +2699,127 @@ async fn every_turn_of_a_conversation_carries_one_session_id() {
     assert_ne!(
         ids[0], ids[2],
         "a different conversation must not share the cache scope"
+    );
+}
+
+/// A request that did not ask for a stream is answered with one JSON body.
+///
+/// The real endpoint's default is not streaming, and a caller that never asked
+/// for `text/event-stream` did not agree to parse one. Claude Code always
+/// streams, so nothing in the harness sees this path — every other local caller
+/// does.
+#[tokio::test]
+async fn a_non_streaming_request_is_answered_with_one_json_body() {
+    let harness = Harness::start(Behavior::Events(vec![
+        json!({ "type": "response.created", "response": { "id": "resp_1" } }),
+        json!({ "type": "response.output_text.delta", "delta": "7VQ" }),
+        json!({ "type": "response.output_text.delta", "delta": "K2M" }),
+        completed(),
+    ]))
+    .await;
+
+    let response = harness
+        .post(
+            "/v1/messages",
+            json!({
+                "model": "claude-sonnet-5",
+                "max_tokens": 512,
+                "stream": false,
+                "messages": [{ "role": "user", "content": "hi" }],
+            }),
+        )
+        .await;
+
+    assert_eq!(response.status(), 200);
+    assert_eq!(
+        response
+            .headers()
+            .get("content-type")
+            .and_then(|value| value.to_str().ok())
+            .map(|value| value.split(';').next().unwrap_or(value).trim().to_owned()),
+        Some("application/json".to_owned())
+    );
+
+    let body: Value = response.json().await.unwrap();
+    assert_eq!(body["type"], json!("message"));
+    assert_eq!(body["role"], json!("assistant"));
+    // The tier the client asked for, not the upstream id it mapped to.
+    assert_eq!(body["model"], json!("claude-sonnet-5"));
+    assert_eq!(
+        body["content"],
+        json!([{ "type": "text", "text": "7VQK2M" }])
+    );
+    assert_eq!(body["stop_reason"], json!("end_turn"));
+    // Upstream's own figures: 900 charged, 400 of them cached (§6.1).
+    assert_eq!(body["usage"]["input_tokens"], json!(500));
+    assert_eq!(body["usage"]["output_tokens"], json!(7));
+    assert_eq!(body["usage"]["cache_read_input_tokens"], json!(400));
+}
+
+/// No `stream` field is the same as `false`. This is the shape the endpoint
+/// documents as its default, and the one a curl with no flag sends.
+#[tokio::test]
+async fn an_omitted_stream_field_is_not_a_stream() {
+    let harness = Harness::start(Behavior::Events(vec![
+        json!({ "type": "response.created", "response": { "id": "resp_1" } }),
+        json!({ "type": "response.output_text.delta", "delta": "hi" }),
+        completed(),
+    ]))
+    .await;
+
+    let response = harness
+        .post(
+            "/v1/messages",
+            json!({
+                "model": "claude-sonnet-5",
+                "max_tokens": 512,
+                "messages": [{ "role": "user", "content": "hi" }],
+            }),
+        )
+        .await;
+
+    assert_eq!(
+        response
+            .headers()
+            .get("content-type")
+            .and_then(|value| value.to_str().ok())
+            .map(|value| value.split(';').next().unwrap_or(value).trim().to_owned()),
+        Some("application/json".to_owned())
+    );
+}
+
+/// A failure on the non-streaming path is a status and an error body, not a
+/// 200 carrying an error frame: nothing was written before the fold, so the
+/// status is still the proxy's to choose (§1.1).
+#[tokio::test]
+async fn a_non_streaming_failure_is_an_error_body() {
+    let harness = Harness::start(Behavior::Events(vec![
+        json!({ "type": "response.created", "response": { "id": "resp_1" } }),
+        json!({ "type": "response.output_text.delta", "delta": "partial" }),
+    ]))
+    .await;
+
+    let response = harness
+        .post(
+            "/v1/messages",
+            json!({
+                "model": "claude-sonnet-5",
+                "max_tokens": 512,
+                "stream": false,
+                "messages": [{ "role": "user", "content": "hi" }],
+            }),
+        )
+        .await;
+
+    // A stream that simply ends without completing still describes a turn: the
+    // fold closes what is open rather than failing. What must never happen is
+    // an event stream reaching a caller that asked for JSON.
+    assert_eq!(
+        response
+            .headers()
+            .get("content-type")
+            .and_then(|value| value.to_str().ok())
+            .map(|value| value.split(';').next().unwrap_or(value).trim().to_owned()),
+        Some("application/json".to_owned())
     );
 }

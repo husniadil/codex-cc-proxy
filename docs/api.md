@@ -22,7 +22,7 @@ ignored.
 
 | Endpoint | Purpose |
 |---|---|
-| `POST /v1/messages` | The only endpoint carrying real load. Streams SSE in both directions. |
+| `POST /v1/messages` | The only endpoint carrying real load. Answers with SSE where `stream` is true, and with one JSON body otherwise. |
 | `POST /v1/messages/count_tokens` | Pre-flight sizing. Returns an estimate. |
 | `GET /v1/models` | The mapped models, in the Anthropic list shape — `{"data": [{"id", "display_name", "type": "model"}]}`. Ids are the upstream model ids the tiers map to. |
 
@@ -34,6 +34,15 @@ and the header delta. Nothing about the endpoint changes — the same URL serves
 both paths, and which one a turn takes is decided from the model id it carries.
 This path is proven against fixtures and not yet confirmed against the second
 provider's live endpoint (`proxy-behavior.md` §9, `roadmap.md` §L).
+
+`stream` decides the shape of the answer, and its default is the endpoint's:
+absent or `false` is **not** a stream, and is answered with a single
+`application/json` message body. Claude Code always sets it, so the harness only
+ever takes the streaming path; every other local caller gets what it asked for.
+The non-streaming body is the frame sequence folded shut — `proxy-behavior.md`
+§5.5 — and its field set is held against a captured answer from the real
+endpoint. The one field a real answer carries that this one does not is
+`stop_details`.
 
 `run` fails immediately if the port is already bound, naming the conflict, rather
 than retrying or selecting another port. A second daemon on a different port
@@ -75,6 +84,11 @@ retry loop on top of the client's.
 
 An error arising mid-stream is emitted as an SSE `error` frame rather than
 changing an already-sent status.
+
+On the non-streaming path nothing is written until the turn is over, so the same
+failure is a status and an error body rather than a 200 carrying an error frame.
+A frame and a status describing one failure never disagree: both are built from
+the vocabulary above.
 
 ---
 

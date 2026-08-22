@@ -8,6 +8,22 @@ in [`docs/api.md`](docs/api.md) §6.
 
 ### Fixed
 
+- **A request that did not ask for a stream is no longer answered with one.**
+  `POST /v1/messages` returned `text/event-stream` whatever the caller sent,
+  including for `"stream": false` and for a body with no `stream` field at all —
+  a content type the caller never asked for and did not agree to parse. It is
+  now answered with a single `application/json` message body, folded out of the
+  same frame sequence the streaming path renders: blocks closed, deltas
+  concatenated, tool arguments parsed back into values. The field set is held
+  against `fixtures/surface/plain-generation.json`, a captured answer from the
+  real endpoint, in both directions — no key it never carries, and every key it
+  does except `stop_details`. A failure on this path is a status and an error
+  body rather than a 200 carrying an error frame, since nothing has been
+  written when it happens. Claude Code always streams, so no harness behavior
+  changes; what changes is that the ingress now answers every other local
+  caller the way it claims to. `docs/api.md` §1 and
+  `docs/proxy-behavior.md` §5.5.
+
 - **`supervisor install` no longer reports success over a job that cannot
   start.** The supervised job runs `run`, and `run` refuses a port another
   daemon holds, so installing while a hand-started daemon is up left launchd

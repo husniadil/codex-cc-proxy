@@ -88,6 +88,25 @@ impl ProxyError {
         }
     }
 
+    /// Recover a status from an error frame.
+    ///
+    /// The inverse of `body`, for the non-streaming path: the frame is the only
+    /// account of the failure the fold has, and a caller expecting one JSON
+    /// body must be told by the status that it is not getting one. The status
+    /// is built by this vocabulary's own constructors, so a frame and a status
+    /// describing the same failure never disagree.
+    pub fn from_frame(body: &ErrorBody) -> Self {
+        let message = body.message.clone();
+        match body.kind {
+            ErrorKind::InvalidRequestError => Self::invalid_request(message),
+            ErrorKind::AuthenticationError => Self::authentication(message),
+            ErrorKind::NotFoundError => Self::not_found(message),
+            ErrorKind::RateLimitError => Self::rate_limited(message),
+            ErrorKind::OverloadedError => Self::overloaded(message),
+            ErrorKind::ApiError => Self::upstream(StatusCode::BAD_GATEWAY, message),
+        }
+    }
+
     /// Map an upstream HTTP status onto the vocabulary.
     ///
     /// A credential failure upstream is *this* proxy's authentication problem

@@ -420,9 +420,20 @@ async fn run_one(probe: &probe::Probe, fixture: &Fixture, backend: &Backend) -> 
         crate::probe::Surface::Relay | crate::probe::Surface::Environment => "/v1/messages",
     };
 
+    // The probe reads frames, so it asks for them. A fixture's recorded request
+    // is the client's, and the client always streams; the field is set here
+    // rather than edited into the recordings, which are evidence of what was
+    // sent and not a place to add what was not.
+    let mut request = fixture.request.clone();
+    if matches!(probe.surface, crate::probe::Surface::Messages)
+        && let Some(object) = request.as_object_mut()
+    {
+        object.insert("stream".to_owned(), Value::Bool(true));
+    }
+
     let response = reqwest::Client::new()
         .post(format!("http://{addr}{path}"))
-        .json(&fixture.request)
+        .json(&request)
         .send()
         .await;
 
