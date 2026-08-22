@@ -341,3 +341,140 @@ fn the_shapes_no_capture_reaches_are_named() {
         "the set of shapes no captured exchange reaches has changed"
     );
 }
+
+/// The captured non-streaming answer: the shape a request that did not ask for
+/// a stream is measured against.
+fn measured_body() -> Value {
+    captures()
+        .into_iter()
+        .find(|capture| capture.name == "plain-generation")
+        .and_then(|capture| capture.body)
+        .expect("fixtures/surface/plain-generation.json carries a non-streaming body")
+}
+
+/// Every corpus exchange, folded the way the ingress folds one for a caller
+/// that did not ask for a stream.
+fn aggregated_bodies() -> Vec<Value> {
+    let fixtures: Vec<Fixture> = read_json_dir(root().join("fixtures"));
+    let mut bodies = Vec::new();
+
+    for fixture in &fixtures {
+        let Ok(request) = serde_json::from_value::<MessagesRequest>(fixture.request.clone()) else {
+            continue;
+        };
+        let mut translator = ResponseTranslator::new(ResponseOptions {
+            message_id: format!("msg_{}", fixture.name),
+            model: request.model.clone(),
+            estimated_input_tokens: 100,
+        });
+        let mut frames = Vec::new();
+        for event in &fixture.upstream {
+            frames.extend(translator.push(&event.to_string()));
+        }
+        frames.extend(translator.finish());
+
+        // An exchange whose frames are a refusal has no body to compare, and
+        // that is the error envelope's shape, not this one's.
+        if let Ok(body) = proxenos_core::anthropic::aggregate(&frames)
+            && let Ok(value) = serde_json::to_value(&body)
+        {
+            bodies.push(value);
+        }
+    }
+    assert!(
+        !bodies.is_empty(),
+        "the corpus folded into no non-streaming body at all"
+    );
+    bodies
+}
+
+/// Which keys a folded body carries that the captured one never does.
+///
+/// Same rule and same direction as the streaming check: a field the real answer
+/// carries and this proxy omits (`stop_details`) is one a client already
+/// tolerates being absent. A field this proxy emits that the real endpoint
+/// never does is a name the client was never built to receive.
+fn body_drift(body: &Value, real: &Value) -> Vec<String> {
+    let mut found = Vec::new();
+    for field in keys(body).difference(&keys(real)) {
+        found.push(format!(
+            "the folded body carries `{field}`, which a real one does not"
+        ));
+    }
+    for (path, emitted, measured) in [(
+        "usage",
+        body.get("usage").cloned().unwrap_or(Value::Null),
+        real.get("usage").cloned().unwrap_or(Value::Null),
+    )] {
+        for field in keys(&emitted).difference(&keys(&measured)) {
+            found.push(format!(
+                "the folded body's `{path}` carries `{field}`, which a real one does not"
+            ));
+        }
+    }
+    found.sort();
+    found.dedup();
+    found
+}
+
+/// The non-streaming answer, held against the captured one the same way the
+/// streaming frames are held against theirs.
+#[test]
+fn the_non_streaming_body_emits_no_key_the_real_one_never_carries() {
+    let real = measured_body();
+    let mut violations = Vec::new();
+    for body in aggregated_bodies() {
+        violations.extend(body_drift(&body, &real));
+    }
+    violations.sort();
+    violations.dedup();
+    assert!(
+        violations.is_empty(),
+        "the folded body has drifted from the measured one:\n  {}",
+        violations.join("\n  ")
+    );
+}
+
+/// The keys a real answer carries that the fold must actually produce.
+///
+/// The subset rule alone is satisfied by an empty object, which is why the
+/// required set is asserted rather than left implied — `stop_details` is the
+/// one measured key deliberately not produced, and it is named here as such.
+#[test]
+fn the_non_streaming_body_carries_what_a_real_one_carries() {
+    let real = measured_body();
+    let unreached: BTreeSet<String> = ["stop_details".to_owned()].into_iter().collect();
+
+    for body in aggregated_bodies() {
+        let missing: Vec<String> = keys(&real)
+            .difference(&keys(&body))
+            .filter(|field| !unreached.contains(*field))
+            .cloned()
+            .collect();
+        assert!(
+            missing.is_empty(),
+            "the folded body omits {missing:?}, which a real answer carries"
+        );
+    }
+}
+
+/// The check has to be able to fail.
+#[test]
+fn a_drifted_body_is_reported() {
+    let real = measured_body();
+
+    let invented = serde_json::json!({
+        "type": "message",
+        "invented": true,
+        "usage": { "input_tokens": 1, "conjured": 2 },
+    });
+    let reported = body_drift(&invented, &real);
+    assert!(
+        reported.iter().any(|entry| entry.contains("invented")),
+        "an invented key passed as conforming: {reported:?}"
+    );
+    assert!(
+        reported.iter().any(|entry| entry.contains("conjured")),
+        "an invented usage key passed as conforming: {reported:?}"
+    );
+}
