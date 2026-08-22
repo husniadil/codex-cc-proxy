@@ -6,6 +6,18 @@ in [`docs/api.md`](docs/api.md) §6.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`supervisor install` no longer reports success over a job that cannot
+  start.** The supervised job runs `run`, and `run` refuses a port another
+  daemon holds, so installing while a hand-started daemon is up left launchd
+  respawning into the same refusal every ten seconds while the install had
+  already printed "supervising". It now observes what is answering, over the
+  control socket rather than by guessing at the port, names its version, says
+  the supervised job cannot take the port yet, and names `proxenos stop` as the
+  way to hand over. It does not stop that daemon: this verb installs a
+  supervisor. Nothing changes when nothing is answering.
+
 ## [0.8.0]
 
 The proxy's own surface is measured against a real one, and the daemon stops

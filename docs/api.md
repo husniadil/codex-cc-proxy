@@ -699,6 +699,17 @@ other side: an environment that has moved since install leaves a unit whose
 daemon binds one socket while the shell dials another, and the symptom reads as
 a dead daemon when it is not.
 
+**`install` says when a daemon is already answering, and does not stop it.** The
+supervised job runs `run`, and `run` refuses a port another daemon holds, so
+installing while a hand-started daemon is up installs a job that cannot start
+yet — launchd respawns it into the same refusal until the port is free. The
+install itself is real and is not undone by that, so `install` names what is
+answering, by version, says the supervised job cannot take the port yet, and
+names `proxenos stop` as the way to hand over. It never ends that daemon on its
+own: this verb installs a supervisor, and stopping a process the operator
+started by hand is not what it was asked for. When nothing is answering — the
+normal path — the output is unchanged.
+
 **What a supervisor changes about `stop` (§2.4):** it is how a running daemon is
 replaced by the build on disk. `stop` asks the daemon to go and reports what it
 saw afterwards; under a supervisor what it sees is the new build answering.

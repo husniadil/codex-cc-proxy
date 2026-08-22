@@ -1332,6 +1332,10 @@ async fn supervisor(args: cli::SupervisorArgs) -> Result<()> {
 
     match args.action {
         cli::SupervisorAction::Install => {
+            // Asked before anything is written, so the report describes the
+            // machine as it was when the operator ran the verb. The socket call
+            // is the edge; what to say about the answer is a pure function.
+            let held = answering().await;
             if let Some(parent) = plist.parent() {
                 std::fs::create_dir_all(parent)
                     .with_context(|| format!("could not create {}", parent.display()))?;
@@ -1366,6 +1370,10 @@ async fn supervisor(args: cli::SupervisorArgs) -> Result<()> {
             println!("  runs {} run", unit.program.display());
             println!("  logs to {}", unit.log.display());
             println!("  control socket {}", unit.socket.display());
+            if let Some(notice) = supervisor::port_notice(held.as_ref().map(|a| a.version.as_str()))
+            {
+                println!("{notice}");
+            }
             println!("stop it for good with `proxenos supervisor uninstall`");
         }
         cli::SupervisorAction::Uninstall => {

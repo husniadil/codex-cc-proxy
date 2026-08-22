@@ -213,3 +213,23 @@ pub fn compare(existing: Option<&str>, wanted: &Unit) -> Installed {
         Some(_) => Installed::Divergent,
     }
 }
+
+/// What `install` says about a daemon that is already answering.
+///
+/// The supervised job runs `run`, and `run` refuses a port another daemon
+/// holds. So an install performed while a hand-started daemon is up is a real
+/// install of a job that cannot start yet: launchd respawns it into the same
+/// refusal until the port is free. The install is not undone by that and the
+/// daemon is not stopped by this verb — ending a process the operator started
+/// by hand is not what was asked for — so what is owed is the observation and
+/// the way to hand over. Under a supervisor, `stop` is that way (§2.4).
+///
+/// `None` when nothing is answering, which is the normal path and gains no
+/// output.
+pub fn port_notice(answering: Option<&str>) -> Option<String> {
+    let version = answering?;
+    Some(format!(
+        "  {version} is already answering, so the supervised job cannot take the port yet\n  \
+         hand it over with `proxenos stop`; the supervisor starts this build in its place"
+    ))
+}

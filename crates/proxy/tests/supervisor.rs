@@ -268,3 +268,23 @@ fn a_unit_installed_from_a_different_environment_is_reported_as_divergent() {
         proxenos::supervisor::Installed::Divergent
     );
 }
+
+/// `install` never asked what was already answering, so an operator who had
+/// started the daemon by hand got "supervising ..." for a job that could not
+/// take the port: `run` refuses a busy one, and the supervisor respawns it into
+/// the same refusal every ten seconds. The install is real either way — the unit
+/// is written and accepted — so what is owed is an accurate report, naming what
+/// holds the port and how to hand it over.
+///
+/// It does not stop that daemon. This verb installs a supervisor; ending a
+/// process the operator started by hand was not asked for.
+#[test]
+fn install_reports_a_daemon_already_answering_and_says_nothing_when_none_is() {
+    let held = proxenos::supervisor::port_notice(Some("0.8.0"));
+    let notice = held.expect("a daemon answering must be reported");
+
+    assert!(notice.contains("0.8.0"), "{notice}");
+    assert!(notice.contains("proxenos stop"), "{notice}");
+
+    assert_eq!(proxenos::supervisor::port_notice(None), None);
+}
